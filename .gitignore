@@ -1,78 +1,55 @@
-#env
-.env
-.env.*
-!.env.example
-
-#python
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
+*.pyo
+*.pyd
 
-#venv
+# Virtual environments
 .venv/
 venv/
 env/
-ENV/
+.env/
+.venv
 
-#pytoolds
+# Environment / secrets
+.env
+.env.*
+!.env.example   
+
+# Testing
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
 .coverage
 .coverage.*
 htmlcov/
-.tox/
-.nox/
+.pytest_cache/
 
-#packages
+# Type checking / linting caches
+.mypy_cache/
+.ruff_cache/
+
+# Build / packaging
 build/
 dist/
 *.egg-info/
 .eggs/
 
-#node
-node_modules/
-.npm/
-.pnpm-store/
-.yarn/
-.yarn-cache/
-
-#build
-dist/
-build/
-.next/
-.nuxt/
-.vite/
-
-#ide
+# IDE / editor
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
-#os
+# OS
 .DS_Store
 Thumbs.db
 
-#logs
+# Logs
 *.log
-logs/
 
-#temp
-tmp/
-temp/
-.cache/
+# Node / frontend dependencies
+node_modules/
+frontend/dist/
+frontend/.vite/
 
-#tests
-coverage/
-.pytest_cache/
-
-#db
-*.sqlite
-*.sqlite3
-*.db
-
-#docker
-docker-data/
+# Local Docker data
+*.pid
