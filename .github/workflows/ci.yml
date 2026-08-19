@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - p1-foundation
-      - "feature/**"
+      - "feature_*"
   pull_request:
     branches:
       - main
