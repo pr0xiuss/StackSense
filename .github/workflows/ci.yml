@@ -9,7 +9,7 @@ on:
   pull_request:
     branches:
       - main
-      - "phase/**"
+      - p1-foundation
 
 jobs:
   backend:
@@ -20,13 +20,13 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: stacksense
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: pr0xy
+          POSTGRES_DB: stacksense_test
+          POSTGRES_USER: stacksense_ci
+          POSTGRES_PASSWORD: stacksense_ci
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d stacksense"
+          --health-cmd "pg_isready -U stacksense_ci -d stacksense_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
@@ -57,5 +57,5 @@ jobs:
 
       - name: Run tests
         env:
-          DATABASE_URL: postgresql://postgres:pr0xy@localhost:5432/stacksense
+          DATABASE_URL: postgresql://stacksense_ci:stacksense_ci@localhost:5432/stacksense_test
         run: pytest
