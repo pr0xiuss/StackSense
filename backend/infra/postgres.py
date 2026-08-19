@@ -27,7 +27,7 @@ class Database:
             autoflush=False,
         )
 
-    def session(self) -> Generator[Session, None, None]:
+    def session(self) -> Generator[Session]:
         """Provide a database session for one unit of work."""
         session = self._session_factory()
 
