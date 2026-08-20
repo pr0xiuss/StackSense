@@ -11,6 +11,11 @@ select = [
     "UP",
 ]
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+]
+
 [tool.black]
 line-length = 88
 target-version = ["py314"]
