@@ -32,4 +32,14 @@ def get_database_session() -> Generator[Session]:
     """Provide a PostgreSQL session for one API request."""
     database = get_database()
 
-    yield from database.session()
+    session_generator = database.session()
+    session = next(session_generator)
+
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session_generator.close()
