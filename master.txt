@@ -1,3 +1,545 @@
+# 0. CURRENT ARCHITECTURAL BASELINE & SUPERSEDING DECISIONS
+
+## 0.1 Purpose
+
+This section establishes the current authoritative architectural baseline for StackSense.
+
+It exists to explicitly record architectural decisions that supersede earlier decisions in this document while preserving the historical reasoning behind those decisions.
+
+Where an earlier section of this document conflicts with the current architectural baseline defined here, this section represents the current authoritative direction for implementation.
+
+This section does not replace detailed architectural definitions elsewhere in the document. Those sections remain authoritative for their respective technical domains and should be interpreted consistently with the current baseline established here.
+
+---
+
+## 0.2 Current Core Resource Hierarchy
+
+StackSense does not currently expose Organization as a first-class product, domain, ownership, tenancy, or authorization entity.
+
+The canonical resource hierarchy is:
+
+User
+  ↓
+Project
+  ↓
+Repository
+
+A Project is the primary product and resource boundary below the User.
+
+A Project may contain multiple Repositories:
+
+Project
+  ├── Repository
+  ├── Repository
+  └── Repository
+
+A User may participate in multiple Projects, with project-scoped roles and permissions.
+
+Conceptually:
+
+User
+  ├── Project A → Owner
+  ├── Project B → Developer
+  └── Project C → Viewer
+
+Repository access normally derives from the user's authorized access to its parent Project.
+
+Repository-specific membership or independent repository-level RBAC should not be introduced unless a concrete product or security requirement later establishes the need for it.
+
+---
+
+## 0.3 Project as the Primary Boundary
+
+Project is the primary:
+
+- ownership boundary
+- collaboration boundary
+- authorization boundary
+- access-control boundary
+- resource-isolation boundary
+- repository boundary
+
+The canonical access relationship is therefore:
+
+User
+  ↓
+Project Membership / Project Role
+  ↓
+Project
+  ↓
+Repository
+
+A user's access to a Repository is normally determined through the user's access to the Repository's parent Project.
+
+Projects are independent authorization boundaries.
+
+Access to one Project must not implicitly grant access to another Project.
+
+For example:
+
+Project A
+  ├── Repository 1
+  └── Repository 2
+
+Project B
+  ├── Repository 3
+  └── Repository 4
+
+A user authorized for Project A must not automatically receive access to Project B or its Repositories.
+
+---
+
+## 0.4 Project Roles
+
+Project-scoped roles remain part of the architecture.
+
+The conceptual role model may include:
+
+- Owner
+- Admin
+- Developer
+- Viewer
+
+These roles are associated with Project membership rather than Organization membership.
+
+The exact permission matrix remains governed by the authorization architecture defined elsewhere in this document.
+
+The removal of Organization does not remove RBAC.
+
+It changes the primary scope at which RBAC is applied.
+
+---
+
+## 0.5 Enterprise-Grade Capability Is Preserved
+
+Removing Organization as a first-class domain entity does not mean that StackSense is being simplified into a single-user or non-enterprise application.
+
+StackSense remains an enterprise-grade PostgreSQL workload intelligence platform.
+
+The following capabilities remain part of the architecture:
+
+- authentication
+- authorization
+- project-scoped RBAC
+- project isolation
+- multi-user collaboration
+- audit logging
+- API keys
+- secrets management
+- secure credential handling
+- SSO/extensible identity capabilities where supported
+- rate limiting
+- observability
+- reliability controls
+- secure deployment
+- Kubernetes deployment
+- cloud deployment
+- production security controls
+- scalable background processing
+- enterprise deployment options
+- CI/CD
+- operational monitoring
+
+Enterprise capability is not dependent on the existence of an Organization entity.
+
+The architecture intentionally separates:
+
+Enterprise capability
+    ≠
+Organization entity
+
+StackSense achieves enterprise-grade behavior through its security, authorization, isolation, observability, auditability, deployment, reliability, and operational architecture.
+
+---
+
+## 0.6 Individual / DIY Usage
+
+The architecture intentionally supports independent developers, students, researchers, and other individual users without requiring an Organization to be created first.
+
+The minimum product workflow is:
+
+User
+  ↓
+Create Project
+  ↓
+Add Repository
+  ↓
+Repository Ingestion
+  ↓
+Repository READY
+  ↓
+Analysis
+
+An individual user must therefore be able to use StackSense without:
+
+- creating an Organization
+- joining an Organization
+- selecting an Organization
+- configuring Organization settings
+- creating Organization memberships
+
+The Organization abstraction must not be a prerequisite for the core StackSense workflow.
+
+---
+
+## 0.7 Enterprise / Team Usage
+
+The same Project-first architecture supports enterprise and team usage.
+
+A team or company may use multiple Projects with multiple users:
+
+Users
+  │
+  ├── Project A → Owner / Admin / Developer / Viewer
+  ├── Project B → Owner / Admin / Developer / Viewer
+  └── Project C → Owner / Admin / Developer / Viewer
+
+Each Project may contain multiple Repositories.
+
+For example:
+
+Payments Platform
+  ├── payments-api
+  ├── payment-worker
+  └── payment-dashboard
+
+Analytics Platform
+  ├── analytics-api
+  └── analytics-worker
+
+Enterprise collaboration is therefore achieved through project-scoped membership, roles, authorization, and isolation.
+
+An enterprise does not require an Organization entity in order to use StackSense as a multi-user, secure, collaborative platform.
+
+---
+
+## 0.8 Security and Isolation Principle
+
+The removal of Organization must not weaken security or isolation.
+
+The canonical security boundary is now Project.
+
+Protected resources must be traceable to an authorized Project context where Project is their owning resource boundary.
+
+This includes, where applicable:
+
+- Repositories
+- Repository artifacts
+- Analysis jobs
+- Analysis results
+- Architecture models
+- Knowledge projections
+- Search indexes
+- Retrieval context
+- AI requests
+- Reports
+- Diagrams
+- Project-scoped secrets
+- Project-scoped API credentials
+- Project-scoped audit information
+
+Cross-project access must be explicitly authorized.
+
+A user's access to one Project must not provide implicit access to another Project.
+
+Security controls must therefore be project-scoped where Project is the appropriate resource boundary.
+
+---
+
+## 0.9 Organization Is Not a Current Domain Entity
+
+The following concepts are not part of the current StackSense product/domain model:
+
+- Organization
+- Organization Membership
+- Organization Role
+- Organization Settings
+- Organization Switcher
+- Organization Invitations
+- Organization-level Project Ownership
+- Organization-level Repository Ownership
+- Organization-level RBAC
+
+These must not be introduced merely to preserve the previous hierarchy.
+
+However, generic references to companies, teams, enterprises, institutions, or organizational usage in product positioning do not imply the existence of an Organization domain entity.
+
+For example:
+
+"Enterprise teams may use StackSense across multiple Projects."
+
+is valid product language.
+
+"Organization is the parent entity of every Project."
+
+is not part of the current architecture.
+
+---
+
+## 0.10 API and Resource Scoping Principle
+
+The current resource hierarchy must be reflected consistently in API design.
+
+The canonical resource relationship is:
+
+Project
+  ↓
+Repository
+
+Therefore, API designs should be project-centric rather than organization-centric.
+
+Conceptually:
+
+/api/v1/projects
+/api/v1/projects/{project_id}
+/api/v1/projects/{project_id}/repositories
+/api/v1/projects/{project_id}/repositories/{repository_id}
+
+The exact endpoint structure remains governed by the API conventions defined elsewhere in this document.
+
+Organization must not appear as a required resource layer in API paths or request contracts.
+
+---
+
+## 0.11 Data Model Principle
+
+The core relational/domain relationship is:
+
+Project
+  └── Repository
+
+Repository ownership is represented through its Project relationship.
+
+Conceptually:
+
+Repository
+  └── project_id
+
+Project must not require:
+
+organization_id
+
+as part of the current architecture.
+
+Organization entities, OrganizationMembership entities, or equivalent structures that exist solely to support the previous Organization → Project → Repository hierarchy are not part of the target architecture.
+
+Existing structures must not be blindly deleted if they serve another independent architectural purpose. Their responsibility must be evaluated before removal.
+
+---
+
+## 0.12 Background Processing and Derived Data
+
+The Project boundary must propagate through background processing and derived-data systems where resource isolation is required.
+
+This includes, where applicable:
+
+- job context
+- worker context
+- artifact processing
+- analysis execution
+- knowledge projection
+- graph storage
+- search indexing
+- retrieval
+- AI context
+- report generation
+- diagram generation
+- caches
+
+Derived systems must not accidentally reintroduce Organization as a required isolation key.
+
+Where Project is the authoritative boundary, Project identity should be used as the relevant scope.
+
+---
+
+## 0.13 Frontend Product Model
+
+The primary product navigation should follow:
+
+Login / Signup
+    ↓
+Projects
+    ↓
+Project Details
+    ↓
+Repositories
+    ↓
+Repository Details
+    ↓
+Ingestion / Analysis
+
+The frontend must not require:
+
+- Organization creation
+- Organization selection
+- Organization switching
+- Organization settings
+- Organization members
+- Organization invitations
+
+Project management, Project membership, Project roles, Repository management, and Repository status remain part of the product.
+
+---
+
+## 0.14 Preservation of Existing Architecture
+
+This architectural change is intentionally narrow.
+
+It changes the ownership, access, collaboration, and isolation hierarchy from:
+
+User
+  ↓
+Organization
+  ↓
+Project
+  ↓
+Repository
+
+to:
+
+User
+  ↓
+Project
+  ↓
+Repository
+
+It does not remove or redesign unrelated architectural capabilities.
+
+The following remain unchanged unless explicitly affected by the Project-first boundary:
+
+- Domain-Driven Design
+- SOLID principles
+- Dependency Injection
+- layered architecture
+- modularity
+- API versioning
+- analysis engine
+- analysis lifecycle
+- IR architecture
+- identity resolution
+- Architecture Model
+- Knowledge Graph
+- retrieval architecture
+- RAG
+- AI provider architecture
+- AI responsibility boundary
+- diagram engine
+- report engine
+- background processing
+- scheduler
+- observability
+- audit logging
+- secrets management
+- API keys
+- rate limiting
+- deployment architecture
+- Kubernetes support
+- cloud deployment
+- testing strategy
+- CI/CD
+- production NFRs
+- reliability architecture
+
+Only the Organization-dependent portions of these systems should be changed where necessary to enforce the new Project-first boundary.
+
+---
+
+## 0.15 Historical Architecture Decision
+
+Earlier versions of the StackSense architecture defined an Organization → Project → Repository hierarchy.
+
+That decision is now superseded.
+
+The previous decision is retained for architectural history and traceability but must not be treated as the current implementation target.
+
+The superseding decision is:
+
+User
+  ↓
+Project
+  ↓
+Repository
+
+This change is deliberate and is driven by the product requirement that StackSense support both individual/DIY users and enterprise teams without requiring an Organization abstraction.
+
+The change is not a reduction of enterprise capability.
+
+It is a reduction of unnecessary domain hierarchy.
+
+---
+
+## 0.16 Future Organization Extensibility
+
+Organization is intentionally not a first-class domain entity in the current architecture.
+
+This does not prohibit introducing an Organization boundary in the future.
+
+A future requirement may justify Organization-level capabilities such as:
+
+- centralized enterprise billing
+- organization-wide SSO administration
+- organization-wide policies
+- organization-wide compliance controls
+- organization-level administration
+- enterprise account management
+- organization-wide resource governance
+
+Such a change must not be introduced speculatively.
+
+If future requirements establish that an Organization boundary is genuinely necessary, it must be introduced through the formal Architecture Change Request and ADR process defined by this architecture.
+
+Until such a change is explicitly approved, Project remains the highest-level product/resource boundary below User.
+
+---
+
+## 0.17 Interpretation Rule for the Master Architecture
+
+This section is an authoritative architectural baseline.
+
+Where a detailed section elsewhere in this document still contains an earlier Organization-based hierarchy, that reference must be interpreted as historical or superseded unless the section explicitly establishes an independent concept that does not depend on an Organization domain entity.
+
+Organization-specific architecture must not be implemented merely because it remains present in an older section.
+
+During implementation, any unresolved contradiction between this baseline and a detailed section must be identified and resolved before implementing the conflicting architecture.
+
+The implementation target is:
+
+User
+  ↓
+Project
+  ↓
+Repository
+
+with Project as the primary ownership, collaboration, authorization, and isolation boundary.
+
+---
+
+## 0.18 Architectural Change Control
+
+This superseding decision is a formal architectural change to a previously frozen decision.
+
+The change must be recorded through the Architecture Change Request / ADR process.
+
+The change record must preserve:
+
+- the previous Organization-based decision
+- the motivation for the change
+- the new Project-first decision
+- affected architecture areas
+- security implications
+- data-model implications
+- API implications
+- frontend implications
+- roadmap implications
+- migration implications
+- future extensibility considerations
+
+The historical decision must not be erased merely because it has been superseded.
+
+The current implementation must follow the new Project-first architecture.
+
+
+
 1.  DOCUMENT PURPOSE & AUTHORITY
 
 1.1 Purpose
