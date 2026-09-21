@@ -64,11 +64,31 @@ class DefaultProjectService:
 
         return ProjectResponse.model_validate(project)
 
-    def list_all(self) -> list[ProjectResponse]:
-        """List all projects."""
-        projects = self._repository.list_all()
+    def list_all(
+        self,
+        user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[ProjectResponse]:
+        """List projects available to the user with pagination."""
+        access_records = self._access_service.list_user_access(
+            user_id,
+            limit=limit,
+            offset=offset,
+        )
 
-        return [ProjectResponse.model_validate(project) for project in projects]
+        projects = []
+
+        for access in access_records:
+            project = self._repository.get_by_id(access.project_id)
+
+            if project is not None:
+                projects.append(
+                    ProjectResponse.model_validate(project),
+                )
+
+        return projects
 
     def delete(
         self,
@@ -80,24 +100,22 @@ class DefaultProjectService:
     def list_for_user(
         self,
         user_id: UUID,
-    ) -> list[ProjectResponse]:
-        """List projects the user has access to."""
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[Project]:
         access_records = self._access_service.list_user_access(
             user_id,
+            limit=limit,
+            offset=offset,
         )
 
-        projects: list[ProjectResponse] = []
+        projects = []
 
         for access in access_records:
-            project = self._repository.get_by_id(
-                access.project_id,
-            )
+            project = self._repository.get_by_id(access.project_id)
 
-            if project is None:
-                continue
-
-            projects.append(
-                ProjectResponse.model_validate(project),
-            )
+            if project is not None:
+                projects.append(project)
 
         return projects

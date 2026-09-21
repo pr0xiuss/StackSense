@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.platform.errors import ProjectAccessNotFoundError
 from backend.platform.projects.domain.project_access import ProjectAccess
 from backend.platform.projects.domain.project_role import ProjectRole
 from backend.platform.projects.infra.access_model import ProjectAccessModel
@@ -68,11 +69,16 @@ class SqlAlchemyProjectAccessRepository(ProjectAccessRepository):
     def list_for_user(
         self,
         user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
     ) -> list[ProjectAccess]:
         statement = (
             select(ProjectAccessModel)
             .where(ProjectAccessModel.user_id == user_id)
             .order_by(ProjectAccessModel.project_id)
+            .offset(offset)
+            .limit(limit)
         )
 
         models = self._session.scalars(statement).all()
@@ -109,16 +115,13 @@ class SqlAlchemyProjectAccessRepository(ProjectAccessRepository):
         user_id: UUID,
         role: ProjectRole,
     ) -> ProjectAccess:
-        """Update a user's project role."""
         model = self._session.get(
             ProjectAccessModel,
             (project_id, user_id),
         )
 
         if model is None:
-            raise ValueError(
-                "Project access record does not exist.",
-            )
+            raise ProjectAccessNotFoundError()
 
         model.role = role
         self._session.flush()

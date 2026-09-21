@@ -2,6 +2,8 @@
 
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from backend.platform.errors import (
     ProjectAccessAlreadyExistsError,
     ProjectAccessNotFoundError,
@@ -60,9 +62,15 @@ class ProjectAccessService:
     def list_user_access(
         self,
         user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
     ) -> list[ProjectAccess]:
-        """List all project access records for a user."""
-        return self._repository.list_for_user(user_id)
+        return self._repository.list_for_user(
+            user_id,
+            limit=limit,
+            offset=offset,
+        )
 
     def change_role(
         self,
@@ -91,7 +99,6 @@ class ProjectAccessService:
         user_id: UUID,
         role: ProjectRole,
     ) -> ProjectAccess:
-        """Grant a user access to a project."""
         existing_access = self._repository.get(
             project_id,
             user_id,
@@ -106,4 +113,7 @@ class ProjectAccessService:
             role=role,
         )
 
-        return self._repository.save(access)
+        try:
+            return self._repository.save(access)
+        except IntegrityError as exc:
+            raise ProjectAccessAlreadyExistsError() from exc

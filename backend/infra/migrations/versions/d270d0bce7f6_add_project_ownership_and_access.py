@@ -60,7 +60,7 @@ def upgrade() -> None:
         sa.Column(
             "owner_id",
             sa.Uuid(),
-            nullable=False,
+            nullable=True,
         ),
     )
 

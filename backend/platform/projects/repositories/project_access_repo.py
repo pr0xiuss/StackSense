@@ -36,8 +36,11 @@ class ProjectAccessRepository(ABC):
     def list_for_user(
         self,
         user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
     ) -> list[ProjectAccess]:
-        """List all project access records for a user."""
+        """List project access records for a user with pagination."""
         ...
 
     @abstractmethod

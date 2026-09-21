@@ -29,8 +29,14 @@ class ProjectService(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_all(self) -> list[ProjectResponse]:
-        """List all projects available to the caller."""
+    def list_all(
+        self,
+        user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[ProjectResponse]:
+        """List projects available to the user with pagination."""
         raise NotImplementedError
 
     @abstractmethod

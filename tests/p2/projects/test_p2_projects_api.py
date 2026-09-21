@@ -149,7 +149,7 @@ def test_project_access_is_user_scoped(
         f"/api/v1/projects/{project_id}",
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_viewer_cannot_delete_project(
@@ -684,7 +684,7 @@ def test_project_access_isolation(
         f"/api/v1/projects/{project_b_id}",
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
     response = client.get(
         f"/api/v1/projects/{project_a_id}",
@@ -1007,4 +1007,48 @@ def test_revoked_member_loses_project_access(
         f"/api/v1/projects/{project_id}",
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404
+
+
+def test_duplicate_project_access_returns_conflict(
+    client: TestClient,
+    set_current_user: Callable[[UUID], None],
+) -> None:
+    user_id = UUID(
+        "00000000-0000-0000-0000-000000000001",
+    )
+
+    set_current_user(user_id)
+
+    create_response = client.post(
+        "/api/v1/projects",
+        json={"name": "Concurrent Access Contract"},
+    )
+
+    assert create_response.status_code == 201
+    project_id = create_response.json()["id"]
+
+    member_id = UUID(
+        "00000000-0000-0000-0000-000000000002",
+    )
+
+    first_response = client.post(
+        f"/api/v1/projects/{project_id}/access",
+        json={
+            "user_id": str(member_id),
+            "role": "viewer",
+        },
+    )
+
+    assert first_response.status_code == 201
+
+    duplicate_response = client.post(
+        f"/api/v1/projects/{project_id}/access",
+        json={
+            "user_id": str(member_id),
+            "role": "viewer",
+        },
+    )
+
+    assert duplicate_response.status_code == 409
+    assert duplicate_response.json()["error"]["code"] == "project_access_already_exists"

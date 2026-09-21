@@ -2,8 +2,9 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from backend.platform.errors import ProjectAccessDeniedError
 from backend.platform.identity.application.dependencies import (
     get_current_user,
 )
@@ -19,6 +20,7 @@ from backend.platform.projects.application.dto import (
     CreateProjectRequest,
     ProjectResponse,
 )
+from backend.platform.projects.application.project_service import ProjectService
 from backend.platform.projects.application.service import DefaultProjectService
 
 router = APIRouter(
@@ -58,6 +60,7 @@ def get_project(
     ),
 ) -> ProjectResponse:
     """Retrieve a project accessible to the current user."""
+
     project = service.get(project_id)
 
     if project is None:
@@ -66,26 +69,36 @@ def get_project(
             detail="Project not found",
         )
 
-    authorization.require_access(
-        project_id=project_id,
-        user=current_user,
-    )
+    try:
+        authorization.require_access(
+            project_id=project_id,
+            user=current_user,
+        )
+    except ProjectAccessDeniedError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        ) from None
 
     return project
 
 
-@router.get(
-    "",
-    response_model=list[ProjectResponse],
-)
+@router.get("", response_model=list[ProjectResponse])
 def list_projects(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
-    service: DefaultProjectService = Depends(get_project_service),
+    service: ProjectService = Depends(get_project_service),
 ) -> list[ProjectResponse]:
-    """List projects the current user has access to."""
-    return service.list_for_user(
+    """List projects accessible to the current user."""
+
+    projects = service.list_all(
         current_user.id,
+        limit=limit,
+        offset=offset,
     )
+
+    return [ProjectResponse.model_validate(project) for project in projects]
 
 
 @router.delete(
