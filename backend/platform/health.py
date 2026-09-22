@@ -1,20 +1,11 @@
-"""Application health and readiness endpoints."""
+"""StackSense health endpoints."""
 
 from fastapi import APIRouter
 
-router = APIRouter(
-    prefix="/health",
-    tags=["health"],
-)
+router = APIRouter()
 
 
-@router.get("/live")
-async def liveness() -> dict[str, str]:
-    """Report whether the application process is alive."""
-    return {"status": "alive"}
-
-
-@router.get("/ready")
-async def readiness() -> dict[str, str]:
+@router.get("/health")
+async def health() -> dict[str, str]:
     """Report whether the application is ready to receive requests."""
     return {"status": "ready"}

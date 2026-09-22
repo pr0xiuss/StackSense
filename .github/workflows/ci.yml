@@ -55,6 +55,11 @@ jobs:
       - name: Type check
         run: mypy backend
 
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgresql://stacksense_ci:stacksense_ci@localhost:5432/stacksense_test
+        run: alembic upgrade head
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql://stacksense_ci:stacksense_ci@localhost:5432/stacksense_test

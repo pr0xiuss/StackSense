@@ -6,6 +6,9 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from backend.platform.dependency_injection import get_database_settings
+from backend.platform.projects.infra.access_model import ProjectAccessModel
+from backend.platform.projects.infra.base import Base
+from backend.platform.projects.infra.model import ProjectModel
 
 config = context.config
 
@@ -13,7 +16,13 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
-target_metadata = None
+# Import persistence models above so they are registered with Base.metadata.
+_ = (
+    ProjectModel,
+    ProjectAccessModel,
+)
+
+target_metadata = Base.metadata
 
 
 def get_database_url() -> str:
@@ -45,7 +54,11 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations using an active database connection."""
-    configuration = config.get_section(config.config_ini_section, {})
+    configuration = config.get_section(
+        config.config_ini_section,
+        {},
+    )
+
     configuration["sqlalchemy.url"] = get_database_url()
 
     connectable = engine_from_config(
