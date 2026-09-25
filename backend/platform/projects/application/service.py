@@ -96,26 +96,3 @@ class DefaultProjectService:
     ) -> None:
         """Delete a project."""
         self._repository.delete(project_id)
-
-    def list_for_user(
-        self,
-        user_id: UUID,
-        *,
-        limit: int,
-        offset: int,
-    ) -> list[Project]:
-        access_records = self._access_service.list_user_access(
-            user_id,
-            limit=limit,
-            offset=offset,
-        )
-
-        projects = []
-
-        for access in access_records:
-            project = self._repository.get_by_id(access.project_id)
-
-            if project is not None:
-                projects.append(project)
-
-        return projects
