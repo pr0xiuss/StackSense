@@ -82,3 +82,25 @@ class ProjectAccessNotFoundError(StackSenseError):
             message="Project access record does not exist.",
             category=ErrorCategory.VALIDATION,
         )
+
+
+class RepositoryNotFoundError(StackSenseError):
+    """Raised when a repository does not exist."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="repository_not_found",
+            message="Repository not found in the specified project.",
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class RepositoryAlreadyExistsError(StackSenseError):
+    """Raised when a repository name already exists within the project."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="repository_already_exists",
+            message="A repository with this name already exists in the project.",
+            category=ErrorCategory.VALIDATION,
+        )
