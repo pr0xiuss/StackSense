@@ -30,6 +30,8 @@ def register_exception_handlers(application: FastAPI) -> None:
         status_codes = {
             "project_access_already_exists": 409,
             "project_access_not_found": 404,
+            "repository_not_found": 404,
+            "repository_already_exists": 409,
         }
 
         status_code = status_codes.get(

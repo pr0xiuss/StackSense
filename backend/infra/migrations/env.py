@@ -9,6 +9,7 @@ from backend.platform.dependency_injection import get_database_settings
 from backend.platform.projects.infra.access_model import ProjectAccessModel
 from backend.platform.projects.infra.base import Base
 from backend.platform.projects.infra.model import ProjectModel
+from backend.platform.repositories.infra.model import RepositoryModel
 
 config = context.config
 
@@ -20,6 +21,7 @@ if config.config_file_name is not None:
 _ = (
     ProjectModel,
     ProjectAccessModel,
+    RepositoryModel,
 )
 
 target_metadata = Base.metadata
