@@ -32,6 +32,11 @@ def register_exception_handlers(application: FastAPI) -> None:
             "project_access_not_found": 404,
             "repository_not_found": 404,
             "repository_already_exists": 409,
+            "ingestion_not_found": 404,
+            "active_ingestion_exists": 409,
+            "invalid_ingestion_state": 409,
+            "source_validation_failed": 422,
+            "storage_operation_failed": 500,
         }
 
         status_code = status_codes.get(
