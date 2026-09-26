@@ -187,6 +187,9 @@ class UserAlreadyExistsError(StackSenseError):
             code="user_already_exists",
             message=message,
             category=ErrorCategory.VALIDATION,
+        )
+
+
 class IngestionNotFoundError(StackSenseError):
     """Raised when an ingestion job does not exist."""
 

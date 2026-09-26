@@ -64,6 +64,7 @@ from backend.platform.repositories.domain.repository import Repository
 from backend.platform.repositories.infra.repository import (
     SqlAlchemyRepositoryRepository,
 )
+from tests.conftest import ensure_test_user
 
 
 @pytest.fixture
@@ -155,9 +156,9 @@ def _setup_service(
         )
     )
 
-    owner = User(uuid4())
-    viewer = User(uuid4())
-    foreign = User(uuid4())
+    owner = ensure_test_user(uuid4())
+    viewer = ensure_test_user(uuid4())
+    foreign = ensure_test_user(uuid4())
 
     access_service.grant_access(project.id, owner.id, ProjectRole.OWNER)
     access_service.grant_access(project.id, viewer.id, ProjectRole.VIEWER)

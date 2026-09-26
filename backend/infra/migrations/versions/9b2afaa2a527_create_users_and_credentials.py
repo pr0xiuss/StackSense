@@ -1,7 +1,7 @@
 """create_users_and_credentials
 
 Revision ID: 9b2afaa2a527
-Revises: d4e2b79c3fa6
+Revises: 2771a7f24f34
 Create Date: 2026-09-26 13:47:31.789358
 
 """
@@ -13,7 +13,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "9b2afaa2a527"
-down_revision: str | Sequence[str] | None = "d4e2b79c3fa6"
+down_revision: str | Sequence[str] | None = "2771a7f24f34"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
