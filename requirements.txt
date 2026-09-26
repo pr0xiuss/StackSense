@@ -6,7 +6,9 @@ ast_serialize==0.8.0
 bcrypt==5.0.0
 black==26.5.1
 certifi==2026.7.22
+cffi==2.1.1
 click==8.4.2
+cryptography==50.0.1
 fastapi==0.141.1
 greenlet==3.5.5
 h11==0.16.0
@@ -27,11 +29,12 @@ platformdirs==4.11.3
 pluggy==1.6.0
 psycopg==3.3.4
 psycopg-binary==3.3.4
+pycparser==3.0
 pydantic==2.13.4
 pydantic-settings==2.15.0
 pydantic_core==2.46.4
 Pygments==2.21.0
-pyjwt==2.15.0
+PyJWT==2.15.0
 pytest==9.1.1
 python-dotenv==1.2.3
 python-multipart==0.0.32
@@ -43,4 +46,3 @@ truststore==0.10.4
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 uvicorn==0.52.3
-
