@@ -104,3 +104,70 @@ class RepositoryAlreadyExistsError(StackSenseError):
             message="A repository with this name already exists in the project.",
             category=ErrorCategory.VALIDATION,
         )
+
+
+class IngestionNotFoundError(StackSenseError):
+    """Raised when an ingestion job does not exist."""
+
+    def __init__(self, message: str = "Ingestion not found.") -> None:
+        super().__init__(
+            code="ingestion_not_found",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class ActiveIngestionExistsError(StackSenseError):
+    """Raised when an active ingestion is already running for the repository."""
+
+    def __init__(
+        self,
+        message: str = "An active ingestion is already running for this repository.",
+    ) -> None:
+        super().__init__(
+            code="active_ingestion_exists",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class InvalidIngestionStateError(StackSenseError):
+    """Raised when an invalid ingestion state transition is attempted."""
+
+    def __init__(
+        self,
+        message: str = "Invalid ingestion state transition.",
+    ) -> None:
+        super().__init__(
+            code="invalid_ingestion_state",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class SourceValidationError(StackSenseError):
+    """Raised when repository source fails validation limits or checks."""
+
+    def __init__(
+        self,
+        message: str = "Repository source validation failed.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="source_validation_failed",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            details=details,
+        )
+
+
+class StorageOperationError(StackSenseError):
+    """Raised when an external storage read/write/delete operation fails."""
+
+    def __init__(self, message: str = "Storage operation failed.") -> None:
+        super().__init__(
+            code="storage_operation_failed",
+            message=message,
+            category=ErrorCategory.INTERNAL,
+            severity=ErrorSeverity.ERROR,
+        )

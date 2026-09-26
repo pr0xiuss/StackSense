@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     debug: bool = False
     log_level: str = "INFO"
+    storage_root: str = "data/storage"
 
     model_config = SettingsConfigDict(
         env_file=".env",
