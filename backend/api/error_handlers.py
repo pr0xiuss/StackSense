@@ -32,15 +32,31 @@ def register_exception_handlers(application: FastAPI) -> None:
             "project_access_not_found": 404,
             "repository_not_found": 404,
             "repository_already_exists": 409,
+            "invalid_credentials": 401,
+            "authentication_required": 401,
+            "invalid_token": 401,
+            "token_expired": 401,
+            "user_inactive": 401,
+            "password_policy_violation": 422,
+            "user_already_exists": 409,
         }
 
         status_code = status_codes.get(
             exc.code,
-            403 if exc.category is ErrorCategory.AUTHORIZATION else 500,
+            (
+                401
+                if exc.category is ErrorCategory.AUTHENTICATION
+                else 403 if exc.category is ErrorCategory.AUTHORIZATION else 500
+            ),
         )
+
+        headers: dict[str, str] = {}
+        if exc.category is ErrorCategory.AUTHENTICATION:
+            headers["WWW-Authenticate"] = "Bearer"
 
         return JSONResponse(
             status_code=status_code,
+            headers=headers if headers else None,
             content={
                 "error": {
                     "code": exc.code,

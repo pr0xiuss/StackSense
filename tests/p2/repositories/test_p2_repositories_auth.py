@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from backend.platform.dependency_injection import get_database
 from backend.platform.errors import ProjectAccessDeniedError
 from backend.platform.identity.domain.user import User
+from backend.platform.identity.infra.user_repo import SqlAlchemyUserRepository
 from backend.platform.projects.application.access_service import (
     ProjectAccessService,
 )
@@ -85,11 +86,47 @@ def _setup_project_with_roles(
         )
     )
 
-    owner = User(uuid4())
-    admin = User(uuid4())
-    developer = User(uuid4())
-    viewer = User(uuid4())
-    unauthorized = User(uuid4())
+    user_repo = SqlAlchemyUserRepository(session)
+    owner = user_repo.save(
+        User(
+            id=uuid4(),
+            email=f"owner-{uuid4().hex[:6]}@stacksense.local",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    admin = user_repo.save(
+        User(
+            id=uuid4(),
+            email=f"admin-{uuid4().hex[:6]}@stacksense.local",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    developer = user_repo.save(
+        User(
+            id=uuid4(),
+            email=f"dev-{uuid4().hex[:6]}@stacksense.local",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    viewer = user_repo.save(
+        User(
+            id=uuid4(),
+            email=f"viewer-{uuid4().hex[:6]}@stacksense.local",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    unauthorized = user_repo.save(
+        User(
+            id=uuid4(),
+            email=f"unauth-{uuid4().hex[:6]}@stacksense.local",
+            created_at=now,
+            updated_at=now,
+        )
+    )
 
     access_service.grant_access(project.id, owner.id, ProjectRole.OWNER)
     access_service.grant_access(project.id, admin.id, ProjectRole.ADMIN)

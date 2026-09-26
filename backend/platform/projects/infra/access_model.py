@@ -22,7 +22,9 @@ class ProjectAccessModel(Base):
 
     user_id: Mapped[UUID] = mapped_column(
         Uuid,
+        ForeignKey("users.id", ondelete="RESTRICT"),
         primary_key=True,
+        index=True,
     )
 
     role: Mapped[ProjectRole] = mapped_column(

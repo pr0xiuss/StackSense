@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from backend.platform.dependency_injection import get_database
 from backend.platform.errors import RepositoryNotFoundError
 from backend.platform.identity.domain.user import User
+from backend.platform.identity.infra.user_repo import SqlAlchemyUserRepository
 from backend.platform.projects.application.access_service import (
     ProjectAccessService,
 )
@@ -82,7 +83,15 @@ def _create_isolated_environment(
             updated_at=now,
         )
     )
-    user_a = User(uuid4())
+    user_repo = SqlAlchemyUserRepository(session)
+    user_a = user_repo.save(
+        User(
+            id=uuid4(),
+            email=f"user-a-{uuid4().hex[:6]}@stacksense.local",
+            created_at=now,
+            updated_at=now,
+        )
+    )
     access_service.grant_access(project_a.id, user_a.id, ProjectRole.OWNER)
 
     project_b = project_repo.save(
@@ -94,7 +103,14 @@ def _create_isolated_environment(
             updated_at=now,
         )
     )
-    user_b = User(uuid4())
+    user_b = user_repo.save(
+        User(
+            id=uuid4(),
+            email=f"user-b-{uuid4().hex[:6]}@stacksense.local",
+            created_at=now,
+            updated_at=now,
+        )
+    )
     access_service.grant_access(project_b.id, user_b.id, ProjectRole.OWNER)
 
     return project_a, user_a, project_b, user_b, service
