@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     debug: bool = False
     log_level: str = "INFO"
+    storage_root: str = "data/storage"
 
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"

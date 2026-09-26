@@ -75,9 +75,8 @@ def set_current_user() -> Generator[Callable[[UUID], None]]:
     """Override current authenticated user for a test and ensure user is persisted."""
 
     def _set_current_user(user_id: UUID) -> None:
-        ensure_test_user(user_id)
-        app.dependency_overrides[get_current_user_provider] = (
-            lambda: StaticCurrentUserProvider(user_id)
+        app.dependency_overrides[get_current_user_provider] = lambda: (
+            StaticCurrentUserProvider(user_id)
         )
 
     yield _set_current_user
