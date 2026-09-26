@@ -33,8 +33,27 @@ class ValidatedSource:
 class SourceValidator:
     """Validates repository file structure, path lengths, depth, and resource bounds."""
 
+    def __init__(
+        self,
+        *,
+        max_path_length: int = MAX_PATH_LENGTH,
+        max_directory_depth: int = MAX_DIRECTORY_DEPTH,
+        max_file_count: int = MAX_REPOSITORY_FILE_COUNT,
+        max_extracted_size_bytes: int = MAX_EXTRACTED_SIZE_BYTES,
+    ) -> None:
+        self._max_path_length = max_path_length
+        self._max_directory_depth = max_directory_depth
+        self._max_file_count = max_file_count
+        self._max_extracted_size_bytes = max_extracted_size_bytes
+
     def validate(self, root_path: Path) -> ValidatedSource:
-        resolved_root = root_path.resolve()
+        try:
+            resolved_root = root_path.resolve()
+        except OSError as exc:
+            raise SourceValidationError(
+                f"Failed to resolve repository path {root_path}: {exc}"
+            ) from exc
+
         if not resolved_root.is_dir():
             raise SourceValidationError(
                 f"Validation target is not a directory: {resolved_root}"
@@ -44,36 +63,52 @@ class SourceValidator:
         total_bytes = 0
 
         # Deterministically scan filesystem
-        for item in sorted(resolved_root.rglob("*")):
-            if not item.is_file():
-                continue
+        try:
+            items = sorted(resolved_root.rglob("*"))
+        except OSError as exc:
+            raise SourceValidationError(
+                f"Failed to scan repository files: {exc}"
+            ) from exc
 
-            # Prevent symlink escapes
+        for item in items:
             try:
+                if not item.is_file():
+                    continue
+
+                # Prevent symlink escapes
                 resolved_item = item.resolve()
                 resolved_item.relative_to(resolved_root)
+                rel_path = item.relative_to(resolved_root).as_posix()
             except (ValueError, RuntimeError) as exc:
                 raise SourceValidationError(
                     f"Symlink or path escapes repository root: {item}"
                 ) from exc
+            except OSError as exc:
+                raise SourceValidationError(
+                    f"Filesystem access error validating path {item}: {exc}"
+                ) from exc
 
-            rel_path = item.relative_to(resolved_root).as_posix()
-
-            if len(rel_path) > MAX_PATH_LENGTH:
+            if len(rel_path) > self._max_path_length:
                 raise SourceValidationError(
                     f"Path length ({len(rel_path)}) exceeds limit of "
-                    f"{MAX_PATH_LENGTH}: {rel_path}"
+                    f"{self._max_path_length}: {rel_path}"
                 )
 
             parts = rel_path.split("/")
             depth = len(parts) - 1
-            if depth > MAX_DIRECTORY_DEPTH:
+            if depth > self._max_directory_depth:
                 raise SourceValidationError(
                     f"Directory depth ({depth}) exceeds limit of "
-                    f"{MAX_DIRECTORY_DEPTH}: {rel_path}"
+                    f"{self._max_directory_depth}: {rel_path}"
                 )
 
-            file_size = item.stat().st_size
+            try:
+                file_size = item.stat().st_size
+            except OSError as exc:
+                raise SourceValidationError(
+                    f"Filesystem access error validating path {item}: {exc}"
+                ) from exc
+
             total_bytes += file_size
 
             discovered.append(
@@ -84,16 +119,16 @@ class SourceValidator:
                 )
             )
 
-            if len(discovered) > MAX_REPOSITORY_FILE_COUNT:
+            if len(discovered) > self._max_file_count:
                 raise SourceValidationError(
                     f"File count exceeds maximum repository file limit of "
-                    f"{MAX_REPOSITORY_FILE_COUNT}."
+                    f"{self._max_file_count}."
                 )
 
-            if total_bytes > MAX_EXTRACTED_SIZE_BYTES:
+            if total_bytes > self._max_extracted_size_bytes:
                 raise SourceValidationError(
                     f"Total extracted size ({total_bytes} bytes) exceeds maximum "
-                    f"repository size of {MAX_EXTRACTED_SIZE_BYTES} bytes."
+                    f"repository size of {self._max_extracted_size_bytes} bytes."
                 )
 
         return ValidatedSource(
