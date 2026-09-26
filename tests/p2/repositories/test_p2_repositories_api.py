@@ -5,6 +5,8 @@ from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import ensure_test_user
+
 
 def _create_project_via_api(
     client: TestClient,
@@ -30,6 +32,7 @@ def _grant_role(
     owner_id: UUID,
     set_current_user: Callable[[UUID], None],
 ) -> None:
+    ensure_test_user(target_user_id)
     set_current_user(owner_id)
     response = client.post(
         f"/api/v1/projects/{project_id}/access",

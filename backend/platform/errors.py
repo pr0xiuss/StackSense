@@ -11,6 +11,7 @@ class ErrorCategory(StrEnum):
     CONFIGURATION = "configuration"
     INTERNAL = "internal"
     AUTHORIZATION = "authorization"
+    AUTHENTICATION = "authentication"
 
 
 class ErrorSeverity(StrEnum):
@@ -102,6 +103,89 @@ class RepositoryAlreadyExistsError(StackSenseError):
         super().__init__(
             code="repository_already_exists",
             message="A repository with this name already exists in the project.",
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class InvalidCredentialsError(StackSenseError):
+    """Raised when email or password is invalid."""
+
+    def __init__(self, message: str = "Invalid email or password.") -> None:
+        super().__init__(
+            code="invalid_credentials",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class AuthenticationRequiredError(StackSenseError):
+    """Raised when authentication credentials are required but missing."""
+
+    def __init__(
+        self, message: str = "Authentication credentials were not provided."
+    ) -> None:
+        super().__init__(
+            code="authentication_required",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class InvalidTokenError(StackSenseError):
+    """Raised when an authentication token is malformed, invalid, or forged."""
+
+    def __init__(self, message: str = "Authentication token is invalid.") -> None:
+        super().__init__(
+            code="invalid_token",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class TokenExpiredError(StackSenseError):
+    """Raised when an authentication token has expired."""
+
+    def __init__(self, message: str = "Authentication token has expired.") -> None:
+        super().__init__(
+            code="token_expired",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class UserInactiveError(StackSenseError):
+    """Raised when an authenticated user account has been deactivated."""
+
+    def __init__(self, message: str = "User account is inactive.") -> None:
+        super().__init__(
+            code="user_inactive",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class PasswordPolicyError(StackSenseError):
+    """Raised when a password violates length or complexity policy."""
+
+    def __init__(
+        self, message: str = "Password does not meet policy requirements."
+    ) -> None:
+        super().__init__(
+            code="password_policy_violation",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class UserAlreadyExistsError(StackSenseError):
+    """Raised when attempting to register an email address that already exists."""
+
+    def __init__(
+        self, message: str = "A user with this email address already exists."
+    ) -> None:
+        super().__init__(
+            code="user_already_exists",
+            message=message,
             category=ErrorCategory.VALIDATION,
         )
 

@@ -37,17 +37,43 @@ def test_validator_non_directory_target(tmp_path: Path) -> None:
 
 
 def test_validator_directory_depth_exceeded(tmp_path: Path) -> None:
-    """Test validator rejects directory trees deeper than MAX_DIRECTORY_DEPTH."""
+    """Test validator rejects directory trees deeper than max_directory_depth."""
     deep_path = tmp_path / "deep"
-    for i in range(105):
+    for i in range(10):
         deep_path = deep_path / f"d{i}"
     deep_path.mkdir(parents=True)
     (deep_path / "leaf.txt").write_text("too deep")
 
-    validator = SourceValidator()
+    validator = SourceValidator(max_directory_depth=5)
     with pytest.raises(SourceValidationError) as exc:
         validator.validate(tmp_path / "deep")
     assert "Directory depth" in str(exc.value)
+    assert "exceeds limit of 5" in str(exc.value)
+
+
+def test_validator_default_directory_depth_exceeded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test validator rejects directory trees exceeding default MAX_DIRECTORY_DEPTH."""
+    repo = tmp_path / "default_depth_repo"
+    repo.mkdir(parents=True)
+    real_file = repo / "test.txt"
+    real_file.write_text("hello")
+
+    fake_rel_path = Path("/".join([f"d{i}" for i in range(105)] + ["test.txt"]))
+    orig_relative_to = Path.relative_to
+
+    def fake_relative_to(self: Path, other: Path) -> Path:
+        if self == real_file:
+            return fake_rel_path
+        return orig_relative_to(self, other)
+
+    monkeypatch.setattr(Path, "relative_to", fake_relative_to)
+
+    validator = SourceValidator()  # Uses default MAX_DIRECTORY_DEPTH (100)
+    with pytest.raises(SourceValidationError) as exc:
+        validator.validate(repo)
+    assert "Directory depth (105) exceeds limit of 100" in str(exc.value)
 
 
 def test_validator_path_length_exceeded(tmp_path: Path) -> None:
