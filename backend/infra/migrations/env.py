@@ -6,9 +6,14 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from backend.platform.dependency_injection import get_database_settings
+from backend.platform.identity.infra.user_model import (
+    UserCredentialModel,
+    UserModel,
+)
 from backend.platform.projects.infra.access_model import ProjectAccessModel
 from backend.platform.projects.infra.base import Base
 from backend.platform.projects.infra.model import ProjectModel
+from backend.platform.repositories.infra.model import RepositoryModel
 
 config = context.config
 
@@ -20,6 +25,9 @@ if config.config_file_name is not None:
 _ = (
     ProjectModel,
     ProjectAccessModel,
+    RepositoryModel,
+    UserModel,
+    UserCredentialModel,
 )
 
 target_metadata = Base.metadata

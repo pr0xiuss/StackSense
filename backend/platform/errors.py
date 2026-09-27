@@ -11,6 +11,7 @@ class ErrorCategory(StrEnum):
     CONFIGURATION = "configuration"
     INTERNAL = "internal"
     AUTHORIZATION = "authorization"
+    AUTHENTICATION = "authentication"
 
 
 class ErrorSeverity(StrEnum):
@@ -81,4 +82,176 @@ class ProjectAccessNotFoundError(StackSenseError):
             code="project_access_not_found",
             message="Project access record does not exist.",
             category=ErrorCategory.VALIDATION,
+        )
+
+
+class RepositoryNotFoundError(StackSenseError):
+    """Raised when a repository does not exist."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="repository_not_found",
+            message="Repository not found in the specified project.",
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class RepositoryAlreadyExistsError(StackSenseError):
+    """Raised when a repository name already exists within the project."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="repository_already_exists",
+            message="A repository with this name already exists in the project.",
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class InvalidCredentialsError(StackSenseError):
+    """Raised when email or password is invalid."""
+
+    def __init__(self, message: str = "Invalid email or password.") -> None:
+        super().__init__(
+            code="invalid_credentials",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class AuthenticationRequiredError(StackSenseError):
+    """Raised when authentication credentials are required but missing."""
+
+    def __init__(
+        self, message: str = "Authentication credentials were not provided."
+    ) -> None:
+        super().__init__(
+            code="authentication_required",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class InvalidTokenError(StackSenseError):
+    """Raised when an authentication token is malformed, invalid, or forged."""
+
+    def __init__(self, message: str = "Authentication token is invalid.") -> None:
+        super().__init__(
+            code="invalid_token",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class TokenExpiredError(StackSenseError):
+    """Raised when an authentication token has expired."""
+
+    def __init__(self, message: str = "Authentication token has expired.") -> None:
+        super().__init__(
+            code="token_expired",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class UserInactiveError(StackSenseError):
+    """Raised when an authenticated user account has been deactivated."""
+
+    def __init__(self, message: str = "User account is inactive.") -> None:
+        super().__init__(
+            code="user_inactive",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class PasswordPolicyError(StackSenseError):
+    """Raised when a password violates length or complexity policy."""
+
+    def __init__(
+        self, message: str = "Password does not meet policy requirements."
+    ) -> None:
+        super().__init__(
+            code="password_policy_violation",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class UserAlreadyExistsError(StackSenseError):
+    """Raised when attempting to register an email address that already exists."""
+
+    def __init__(
+        self, message: str = "A user with this email address already exists."
+    ) -> None:
+        super().__init__(
+            code="user_already_exists",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class IngestionNotFoundError(StackSenseError):
+    """Raised when an ingestion job does not exist."""
+
+    def __init__(self, message: str = "Ingestion not found.") -> None:
+        super().__init__(
+            code="ingestion_not_found",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class ActiveIngestionExistsError(StackSenseError):
+    """Raised when an active ingestion is already running for the repository."""
+
+    def __init__(
+        self,
+        message: str = "An active ingestion is already running for this repository.",
+    ) -> None:
+        super().__init__(
+            code="active_ingestion_exists",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class InvalidIngestionStateError(StackSenseError):
+    """Raised when an invalid ingestion state transition is attempted."""
+
+    def __init__(
+        self,
+        message: str = "Invalid ingestion state transition.",
+    ) -> None:
+        super().__init__(
+            code="invalid_ingestion_state",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class SourceValidationError(StackSenseError):
+    """Raised when repository source fails validation limits or checks."""
+
+    def __init__(
+        self,
+        message: str = "Repository source validation failed.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="source_validation_failed",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            details=details,
+        )
+
+
+class StorageOperationError(StackSenseError):
+    """Raised when an external storage read/write/delete operation fails."""
+
+    def __init__(self, message: str = "Storage operation failed.") -> None:
+        super().__init__(
+            code="storage_operation_failed",
+            message=message,
+            category=ErrorCategory.INTERNAL,
+            severity=ErrorSeverity.ERROR,
         )
