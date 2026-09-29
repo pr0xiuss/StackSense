@@ -11,17 +11,15 @@ export default function LoginForm({
   error = null,
   active = true,
 }) {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [infoMessage, setInfoMessage] = useState('');
 
   const validate = () => {
     const errors = {};
-    if (!email.trim()) {
-      errors.email = 'Email address is required.';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      errors.email = 'Please enter a valid email address.';
+    if (!identifier.trim()) {
+      errors.identifier = 'Username or email is required.';
     }
 
     if (!password) {
@@ -37,17 +35,17 @@ export default function LoginForm({
     setInfoMessage('');
     if (!validate()) return;
     if (onSubmit) {
-      onSubmit({ email, password });
+      onSubmit({ identifier: identifier.trim(), password });
     }
   };
 
   const handleForgotPassword = (e) => {
     e.preventDefault();
-    setInfoMessage('If an account exists for this email, password reset instructions will be sent.');
+    setInfoMessage('If an account exists for this identifier, password reset instructions will be sent.');
   };
 
   const handleGitHubAuth = () => {
-    setInfoMessage('GitHub authentication preview: please use standard email & password credentials to log in.');
+    setInfoMessage('GitHub authentication preview: please use standard credentials to log in.');
   };
 
   return (
@@ -74,7 +72,7 @@ export default function LoginForm({
         <div className="auth-alert auth-alert-info" role="status">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="8" x2="12.01" y2="8" />
           </svg>
           <span>{infoMessage}</span>
@@ -83,24 +81,24 @@ export default function LoginForm({
 
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <AuthInput
-          id="login-email"
-          name="email"
-          label="Email address"
-          type="email"
-          value={email}
+          id="login-identifier"
+          name="identifier"
+          label="Username or email"
+          type="text"
+          value={identifier}
           onChange={(e) => {
-            setEmail(e.target.value);
-            if (fieldErrors.email) setFieldErrors({ ...fieldErrors, email: null });
+            setIdentifier(e.target.value);
+            if (fieldErrors.identifier) setFieldErrors({ ...fieldErrors, identifier: null });
           }}
-          placeholder="you@company.com"
+          placeholder="Enter your username or email"
           required
           autoComplete="username"
           disabled={loading || !active}
-          error={fieldErrors.email}
+          error={fieldErrors.identifier}
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-              <polyline points="22,6 12,13 2,6" />
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
             </svg>
           }
         />

@@ -22,8 +22,8 @@ export default function AuthPanel({
   useEffect(() => {
     const timer = setTimeout(() => {
       const activeInput = isLogin
-        ? document.getElementById('login-email')
-        : document.getElementById('signup-name');
+        ? document.getElementById('login-identifier')
+        : document.getElementById('signup-username');
       if (activeInput && document.activeElement && document.activeElement.tagName !== 'INPUT') {
         // Only autofocus if user is not already actively focused elsewhere
       }
