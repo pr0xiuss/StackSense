@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 
@@ -14,3 +15,4 @@ class TokenPayload:
     token_id: str
     issued_at: datetime
     expires_at: datetime
+    token_type: Literal["access", "refresh"] = "access"

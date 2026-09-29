@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -15,13 +17,14 @@ from backend.platform.identity.domain.user import User
 
 
 class JwtTokenService(TokenService):
-    """PyJWT implementation of TokenService."""
+    """JWT and cryptographically secure token implementation of TokenService."""
 
     def __init__(
         self,
         secret_key: str | SecretStr,
         algorithm: str = "HS256",
         expiration_minutes: int = 60,
+        refresh_token_expire_days: int = 30,
     ) -> None:
         self._secret_key = (
             secret_key.get_secret_value()
@@ -30,11 +33,17 @@ class JwtTokenService(TokenService):
         )
         self._algorithm = algorithm
         self._expiration_minutes = expiration_minutes
+        self._refresh_token_expire_days = refresh_token_expire_days
 
     @property
     def expiration_seconds(self) -> int:
-        """Return token lifetime in seconds."""
+        """Return access token lifetime in seconds."""
         return self._expiration_minutes * 60
+
+    @property
+    def refresh_expiration_seconds(self) -> int:
+        """Return refresh token lifetime in seconds."""
+        return self._refresh_token_expire_days * 86400
 
     def create_access_token(self, user: User) -> str:
         """Issue a signed JWT access token for a user."""
@@ -48,6 +57,7 @@ class JwtTokenService(TokenService):
             "iat": int(now.timestamp()),
             "exp": int(expires_at.timestamp()),
             "jti": token_id,
+            "token_type": "access",
         }
 
         return jwt.encode(
@@ -70,6 +80,9 @@ class JwtTokenService(TokenService):
         except jwt.PyJWTError as exc:
             raise InvalidTokenError() from exc
 
+        if payload.get("token_type", "access") != "access":
+            raise InvalidTokenError("Token is not an access token.")
+
         try:
             user_id = UUID(payload["sub"])
         except (ValueError, TypeError) as exc:
@@ -84,4 +97,17 @@ class JwtTokenService(TokenService):
             token_id=payload["jti"],
             issued_at=issued_at,
             expires_at=expires_at,
+            token_type="access",
         )
+
+    def create_refresh_token(self, user: User) -> tuple[str, str, datetime]:
+        """Generate a cryptographically secure random refresh token."""
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = self.hash_refresh_token(raw_token)
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(days=self._refresh_token_expire_days)
+        return raw_token, token_hash, expires_at
+
+    def hash_refresh_token(self, raw_token: str) -> str:
+        """Compute the deterministic SHA-256 hash of a raw refresh token."""
+        return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

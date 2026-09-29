@@ -190,6 +190,52 @@ class UserAlreadyExistsError(StackSenseError):
         )
 
 
+class UsernameAlreadyExistsError(StackSenseError):
+    """Raised when attempting to register a username that already exists."""
+
+    def __init__(
+        self, message: str = "A user with this username already exists."
+    ) -> None:
+        super().__init__(
+            code="username_already_exists",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class InvalidRefreshTokenError(StackSenseError):
+    """Raised when a provided refresh token is malformed, unrecognized, or tampered."""
+
+    def __init__(self, message: str = "Invalid refresh token.") -> None:
+        super().__init__(
+            code="invalid_refresh_token",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class RefreshTokenExpiredError(StackSenseError):
+    """Raised when an expired refresh token is presented for token refresh."""
+
+    def __init__(self, message: str = "Refresh token has expired.") -> None:
+        super().__init__(
+            code="refresh_token_expired",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
+class RefreshTokenRevokedError(StackSenseError):
+    """Raised when a revoked refresh token is presented for token refresh."""
+
+    def __init__(self, message: str = "Refresh token has been revoked.") -> None:
+        super().__init__(
+            code="refresh_token_revoked",
+            message=message,
+            category=ErrorCategory.AUTHENTICATION,
+        )
+
+
 class IngestionNotFoundError(StackSenseError):
     """Raised when an ingestion job does not exist."""
 

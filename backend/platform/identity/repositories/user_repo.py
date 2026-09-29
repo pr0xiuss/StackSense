@@ -21,6 +21,11 @@ class UserRepository(ABC):
         ...
 
     @abstractmethod
+    def get_by_username(self, username: str) -> User | None:
+        """Retrieve a user by their unique username."""
+        ...
+
+    @abstractmethod
     def get_credential_by_user_id(self, user_id: UUID) -> UserCredential | None:
         """Retrieve a user's credential by user identifier."""
         ...

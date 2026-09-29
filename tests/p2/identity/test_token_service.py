@@ -22,6 +22,7 @@ def token_service() -> JwtTokenService:
         secret_key=TEST_SECRET,
         algorithm="HS256",
         expiration_minutes=60,
+        refresh_token_expire_days=30,
     )
 
 
@@ -31,6 +32,7 @@ def test_create_and_verify_token_success(token_service: JwtTokenService) -> None
     user = User(
         id=user_id,
         email="tokenuser@stacksense.local",
+        username="tokenuser",
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -45,6 +47,7 @@ def test_create_and_verify_token_success(token_service: JwtTokenService) -> None
     assert payload.token_id is not None
     assert payload.issued_at <= datetime.now(UTC)
     assert payload.expires_at > payload.issued_at
+    assert payload.token_type == "access"
 
 
 def test_verify_expired_token_raises(token_service: JwtTokenService) -> None:
@@ -54,7 +57,7 @@ def test_verify_expired_token_raises(token_service: JwtTokenService) -> None:
         algorithm="HS256",
         expiration_minutes=-5,
     )
-    user = User(id=uuid4(), email="expired@stacksense.local")
+    user = User(id=uuid4(), email="expired@stacksense.local", username="expired_user")
     token = expired_service.create_access_token(user)
 
     with pytest.raises(TokenExpiredError):
@@ -64,7 +67,7 @@ def test_verify_expired_token_raises(token_service: JwtTokenService) -> None:
 def test_verify_tampered_token_signature_raises(
     token_service: JwtTokenService,
 ) -> None:
-    user = User(id=uuid4(), email="valid@stacksense.local")
+    user = User(id=uuid4(), email="valid@stacksense.local", username="valid_user")
     token = token_service.create_access_token(user)
 
     # Tamper with the signature portion (last part of JWT)
@@ -86,7 +89,7 @@ def test_verify_token_signed_with_different_secret_raises(
         algorithm="HS256",
         expiration_minutes=60,
     )
-    user = User(id=uuid4(), email="valid@stacksense.local")
+    user = User(id=uuid4(), email="valid@stacksense.local", username="valid_user")
     token = other_service.create_access_token(user)
 
     with pytest.raises(InvalidTokenError):
@@ -110,6 +113,7 @@ def test_verify_token_with_invalid_uuid_subject_raises(
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=60)).timestamp()),
         "jti": str(uuid4()),
+        "token_type": "access",
     }
     token = jwt.encode(payload, TEST_SECRET.get_secret_value(), algorithm="HS256")
 
@@ -117,7 +121,16 @@ def test_verify_token_with_invalid_uuid_subject_raises(
         token_service.verify_token(token)
 
 
-def test_token_service_expiration_seconds_property(
+def test_token_service_refresh_token_generation_and_hashing(
     token_service: JwtTokenService,
 ) -> None:
-    assert token_service.expiration_seconds == 3600
+    user = User(
+        id=uuid4(), email="refresh_user@stacksense.local", username="refresh_user"
+    )
+    raw_token, token_hash, expires_at = token_service.create_refresh_token(user)
+
+    assert isinstance(raw_token, str)
+    assert len(raw_token) > 20
+    assert token_hash == token_service.hash_refresh_token(raw_token)
+    assert expires_at > datetime.now(UTC)
+    assert token_service.refresh_expiration_seconds == 30 * 86400

@@ -18,6 +18,9 @@ from backend.platform.identity.application.auth_service import AuthenticationSer
 from backend.platform.identity.domain.credential import UserCredential
 from backend.platform.identity.domain.user import User
 from backend.platform.identity.infra.password_hasher import BcryptPasswordHasher
+from backend.platform.identity.infra.refresh_token_repo import (
+    SqlAlchemyRefreshTokenRepository,
+)
 from backend.platform.identity.infra.token_service import JwtTokenService
 from backend.platform.identity.infra.user_repo import SqlAlchemyUserRepository
 
@@ -42,6 +45,7 @@ def session() -> Generator[Session]:
 @pytest.fixture
 def auth_service(session: Session) -> AuthenticationService:
     repo = SqlAlchemyUserRepository(session)
+    refresh_repo = SqlAlchemyRefreshTokenRepository(session)
     hasher = BcryptPasswordHasher(rounds=4)
     token_svc = JwtTokenService(
         secret_key=TEST_SECRET,
@@ -52,6 +56,7 @@ def auth_service(session: Session) -> AuthenticationService:
         user_repo=repo,
         password_hasher=hasher,
         token_service=token_svc,
+        refresh_token_repo=refresh_repo,
     )
 
 
@@ -63,12 +68,14 @@ def test_authenticate_success(
     user_id = uuid4()
     tag = uuid4().hex[:8]
     email = f"auth-user-{tag}@stacksense.local"
+    username = f"auth_user_{tag}"
     password = "CorrectPassword123"
     now = datetime.now(UTC)
 
     user = User(
         id=user_id,
         email=email,
+        username=username,
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -84,6 +91,7 @@ def test_authenticate_success(
     response = auth_service.authenticate(email, password)
 
     assert response.access_token is not None
+    assert response.refresh_token is not None
     assert response.token_type == "bearer"
     assert response.expires_in == 3600
 
@@ -91,6 +99,10 @@ def test_authenticate_success(
     payload = auth_service.verify_token(response.access_token)
     assert payload.user_id == user_id
     assert payload.email == email
+
+    # Also authenticate using username
+    resp_by_username = auth_service.authenticate(username, password)
+    assert resp_by_username.access_token is not None
 
 
 def test_authenticate_email_case_and_whitespace_insensitivity(
@@ -101,12 +113,14 @@ def test_authenticate_email_case_and_whitespace_insensitivity(
     user_id = uuid4()
     tag = uuid4().hex[:8]
     email = f"caseuser-{tag}@stacksense.local"
+    username = f"case_user_{tag}"
     password = "CorrectPassword123"
     now = datetime.now(UTC)
 
     user = User(
         id=user_id,
         email=email,
+        username=username,
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -134,10 +148,19 @@ def test_authenticate_wrong_password_raises(
     repo = SqlAlchemyUserRepository(session)
     hasher = BcryptPasswordHasher(rounds=4)
     user_id = uuid4()
-    email = f"wrongpw-{uuid4().hex[:8]}@stacksense.local"
+    tag = uuid4().hex[:8]
+    email = f"wrongpw-{tag}@stacksense.local"
+    username = f"wrongpw_{tag}"
     now = datetime.now(UTC)
 
-    user = User(id=user_id, email=email, is_active=True, created_at=now, updated_at=now)
+    user = User(
+        id=user_id,
+        email=email,
+        username=username,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
     cred = UserCredential(
         user_id=user_id,
         password_hash=hasher.hash("RightPassword123"),
@@ -165,13 +188,16 @@ def test_authenticate_inactive_user_raises(
     repo = SqlAlchemyUserRepository(session)
     hasher = BcryptPasswordHasher(rounds=4)
     user_id = uuid4()
-    email = f"inactive-{uuid4().hex[:8]}@stacksense.local"
+    tag = uuid4().hex[:8]
+    email = f"inactive-{tag}@stacksense.local"
+    username = f"inactive_{tag}"
     password = "CorrectPassword123"
     now = datetime.now(UTC)
 
     user = User(
         id=user_id,
         email=email,
+        username=username,
         is_active=False,
         created_at=now,
         updated_at=now,
@@ -193,12 +219,15 @@ def test_authenticate_missing_credential_raises(
 ) -> None:
     repo = SqlAlchemyUserRepository(session)
     user_id = uuid4()
-    email = f"nocred-{uuid4().hex[:8]}@stacksense.local"
+    tag = uuid4().hex[:8]
+    email = f"nocred-{tag}@stacksense.local"
+    username = f"nocred_{tag}"
     now = datetime.now(UTC)
 
     user = User(
         id=user_id,
         email=email,
+        username=username,
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -215,12 +244,15 @@ def test_get_user_from_token_success(
 ) -> None:
     repo = SqlAlchemyUserRepository(session)
     user_id = uuid4()
-    email = f"tokenresolve-{uuid4().hex[:8]}@stacksense.local"
+    tag = uuid4().hex[:8]
+    email = f"tokenresolve-{tag}@stacksense.local"
+    username = f"tokenres_{tag}"
     now = datetime.now(UTC)
 
     user = User(
         id=user_id,
         email=email,
+        username=username,
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -237,13 +269,14 @@ def test_get_user_from_token_success(
     resolved_user = auth_service.get_user_from_token(token)
     assert resolved_user.id == user_id
     assert resolved_user.email == email
+    assert resolved_user.username == username
 
 
 def test_get_user_from_token_user_not_in_db_raises(
     auth_service: AuthenticationService,
 ) -> None:
     # Issue a valid token for a user ID that does not exist in DB
-    ghost_user = User(id=uuid4(), email="ghost@stacksense.local")
+    ghost_user = User(id=uuid4(), email="ghost@stacksense.local", username="ghost_user")
     token_svc = JwtTokenService(
         secret_key=TEST_SECRET,
         algorithm="HS256",
@@ -260,12 +293,15 @@ def test_get_user_from_token_inactive_user_raises(
 ) -> None:
     repo = SqlAlchemyUserRepository(session)
     user_id = uuid4()
-    email = f"deactivated-{uuid4().hex[:8]}@stacksense.local"
+    tag = uuid4().hex[:8]
+    email = f"deactivated-{tag}@stacksense.local"
+    username = f"deact_{tag}"
     now = datetime.now(UTC)
 
     user = User(
         id=user_id,
         email=email,
+        username=username,
         is_active=False,
         created_at=now,
         updated_at=now,

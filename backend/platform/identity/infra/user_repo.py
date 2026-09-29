@@ -3,8 +3,13 @@
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.platform.errors import (
+    UserAlreadyExistsError,
+    UsernameAlreadyExistsError,
+)
 from backend.platform.identity.domain.credential import UserCredential
 from backend.platform.identity.domain.user import User
 from backend.platform.identity.infra.user_model import (
@@ -37,6 +42,16 @@ class SqlAlchemyUserRepository(UserRepository):
             return None
         return self._to_domain(model)
 
+    def get_by_username(self, username: str) -> User | None:
+        normalized_username = username.strip().lower()
+        statement = select(UserModel).where(
+            func.lower(UserModel.username) == normalized_username,
+        )
+        model = self._session.scalar(statement)
+        if model is None:
+            return None
+        return self._to_domain(model)
+
     def get_credential_by_user_id(self, user_id: UUID) -> UserCredential | None:
         statement = select(UserCredentialModel).where(
             UserCredentialModel.user_id == user_id,
@@ -59,12 +74,12 @@ class SqlAlchemyUserRepository(UserRepository):
         user_model = UserModel(
             id=user.id,
             email=user.email.strip().lower(),
+            username=user.username.strip().lower(),
             is_active=user.is_active,
             created_at=user.created_at,
             updated_at=user.updated_at,
         )
         self._session.add(user_model)
-        self._session.flush()
 
         if credential is not None:
             credential_model = UserCredentialModel(
@@ -74,7 +89,16 @@ class SqlAlchemyUserRepository(UserRepository):
                 updated_at=credential.updated_at or user.updated_at,
             )
             self._session.add(credential_model)
+
+        try:
             self._session.flush()
+        except IntegrityError as exc:
+            err_msg = str(exc).lower()
+            if "ix_users_username_lower" in err_msg or "users.username" in err_msg:
+                raise UsernameAlreadyExistsError() from exc
+            if "ix_users_email_lower" in err_msg or "users.email" in err_msg:
+                raise UserAlreadyExistsError() from exc
+            raise
 
         return user
 
@@ -85,17 +109,28 @@ class SqlAlchemyUserRepository(UserRepository):
             raise ValueError(f"User {user.id} not found for update.")
 
         model.email = user.email.strip().lower()
+        model.username = user.username.strip().lower()
         model.is_active = user.is_active
         if user.updated_at is not None:
             model.updated_at = user.updated_at
 
-        self._session.flush()
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            err_msg = str(exc).lower()
+            if "ix_users_username_lower" in err_msg or "users.username" in err_msg:
+                raise UsernameAlreadyExistsError() from exc
+            if "ix_users_email_lower" in err_msg or "users.email" in err_msg:
+                raise UserAlreadyExistsError() from exc
+            raise
+
         return user
 
     def _to_domain(self, model: UserModel) -> User:
         return User(
             id=model.id,
             email=model.email,
+            username=model.username,
             is_active=model.is_active,
             created_at=model.created_at,
             updated_at=model.updated_at,

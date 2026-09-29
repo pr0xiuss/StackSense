@@ -17,6 +17,7 @@ class UserModel(Base):
     __tablename__ = "users"
     __table_args__ = (
         Index("ix_users_email_lower", func.lower(text("email")), unique=True),
+        Index("ix_users_username_lower", func.lower(text("username")), unique=True),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -26,6 +27,11 @@ class UserModel(Base):
 
     email: Mapped[str] = mapped_column(
         String(255),
+        nullable=False,
+    )
+
+    username: Mapped[str] = mapped_column(
+        String(30),
         nullable=False,
     )
 
