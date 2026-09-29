@@ -1,0 +1,889 @@
+/* ==========================================================================
+   StackSense Repository Detail Styling
+   Primary visual match for Image 2 reference
+   ========================================================================== */
+
+.repository-page-wrapper {
+  min-height: 100vh;
+  background-color: var(--bg-primary, #080C14);
+  color: var(--text-primary, #F8FAFC);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow-x: hidden;
+}
+
+.repository-page-wrapper::before {
+  content: '';
+  position: fixed;
+  bottom: -150px;
+  left: -150px;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.16) 0%, rgba(139, 92, 246, 0.08) 50%, transparent 75%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.repository-content {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 1.75rem 1.5rem 4rem;
+  flex: 1;
+  position: relative;
+  z-index: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Repository Header & Breadcrumb
+   -------------------------------------------------------------------------- */
+.repository-header-card {
+  margin-bottom: 1.75rem;
+}
+
+.repo-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #94A3B8;
+  margin-bottom: 1.25rem;
+}
+
+.breadcrumb-link {
+  color: #94A3B8;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.breadcrumb-link:hover {
+  color: #38bdf8;
+}
+
+.breadcrumb-separator {
+  color: #475569;
+  font-size: 0.75rem;
+}
+
+.breadcrumb-current {
+  color: #F8FAFC;
+  font-weight: 500;
+}
+
+.repo-banner-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.repo-banner-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+  flex: 1;
+}
+
+.repo-cube-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: rgba(37, 99, 235, 0.16);
+  color: #3b82f6;
+  border: 1px solid rgba(37, 99, 235, 0.3);
+}
+
+.repo-banner-titles {
+  flex: 1;
+}
+
+.repo-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.repo-page-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #F8FAFC;
+  letter-spacing: -0.02em;
+}
+
+.repo-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.repo-status-pill.status-completed {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.repo-status-pill.status-processing {
+  background: rgba(234, 179, 8, 0.12);
+  color: #facc15;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.repo-status-pill.status-failed {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.repo-status-pill.status-active {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.repo-page-description {
+  font-size: 0.9rem;
+  color: #94A3B8;
+  line-height: 1.5;
+}
+
+.btn-back-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #CBD5E1;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-back-project:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #F8FAFC;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* --------------------------------------------------------------------------
+   Horizontal Navigation Tabs
+   -------------------------------------------------------------------------- */
+.repo-tabs-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 1.75rem;
+}
+
+.repo-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.75rem 0.25rem 0.85rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #94A3B8;
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-bottom: -1px;
+}
+
+.repo-tab-btn:hover {
+  color: #E2E8F0;
+}
+
+.repo-tab-btn.active {
+  color: #38bdf8;
+  border-bottom-color: #38bdf8;
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   Current Ingestion Status Card
+   -------------------------------------------------------------------------- */
+.current-status-card {
+  background: rgba(14, 22, 38, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  margin-bottom: 1.75rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  position: relative;
+  overflow: hidden;
+}
+
+.current-status-card.status-completed {
+  border-color: rgba(34, 197, 94, 0.25);
+}
+
+.current-status-card.status-processing {
+  border-color: rgba(234, 179, 8, 0.25);
+}
+
+.current-status-card.status-failed {
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.status-main-col {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+  flex: 1;
+}
+
+.status-avatar-wrap {
+  flex-shrink: 0;
+}
+
+.status-large-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.status-large-icon.completed {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.status-large-icon.processing {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+}
+
+.status-large-icon.failed {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.status-large-icon.idle {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.spin-icon {
+  animation: spin 2s linear infinite;
+}
+
+.status-text-content {
+  flex: 1;
+}
+
+.status-eyebrow {
+  font-size: 0.8rem;
+  color: #94A3B8;
+  font-weight: 500;
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.status-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #F8FAFC;
+  margin-bottom: 0.25rem;
+}
+
+.status-subtitle {
+  font-size: 0.88rem;
+  color: #94A3B8;
+  margin-bottom: 1rem;
+}
+
+/* Metadata Strip */
+.status-metadata-strip {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: #94A3B8;
+}
+
+.meta-item svg {
+  color: #64748B;
+  flex-shrink: 0;
+}
+
+.meta-label {
+  color: #64748B;
+}
+
+.meta-value {
+  color: #F8FAFC;
+  font-weight: 500;
+}
+
+/* Status Action Buttons */
+.status-actions-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.btn-trigger-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  background: linear-gradient(135deg, #2563EB 0%, #7C3AED 100%);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-trigger-primary:hover {
+  background: linear-gradient(135deg, #1D4ED8 0%, #6D28D9 100%);
+  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.45);
+}
+
+.btn-upload-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #F8FAFC;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-upload-secondary:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* --------------------------------------------------------------------------
+   Ingestion History Card
+   -------------------------------------------------------------------------- */
+.ingestion-history-card {
+  background: rgba(14, 22, 38, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 1.5rem;
+  margin-bottom: 1.75rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.history-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #F8FAFC;
+}
+
+.history-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.btn-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #94A3B8;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-filter:hover,
+.btn-filter.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #F8FAFC;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.filter-select {
+  background: #080C14;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #F8FAFC;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+}
+
+.table-loading-wrap,
+.table-empty-wrap,
+.table-error-wrap {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  color: #94A3B8;
+  font-size: 0.88rem;
+}
+
+.table-error-wrap {
+  color: #f87171;
+}
+
+.history-table-wrapper {
+  overflow-x: auto;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.history-table th {
+  padding: 0.6rem 0.75rem;
+  color: #64748B;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.history-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 0.15s ease;
+}
+
+.history-row:last-child {
+  border-bottom: none;
+}
+
+.history-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.history-row.row-selected {
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.history-table td {
+  padding: 0.8rem 0.75rem;
+  vertical-align: middle;
+}
+
+.mono-text {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.82rem;
+  color: #E2E8F0;
+}
+
+.btn-table-view {
+  padding: 0.3rem 0.8rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  color: #E2E8F0;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-table-view:hover,
+.btn-table-view.active {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #38bdf8;
+}
+
+.history-footer {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.footer-count {
+  font-size: 0.8rem;
+  color: #64748B;
+}
+
+/* --------------------------------------------------------------------------
+   Bottom 2-Column Grid (Logs & Ingestion Details)
+   -------------------------------------------------------------------------- */
+.bottom-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .bottom-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.detail-panel-card {
+  background: rgba(14, 22, 38, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+
+.panel-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #F8FAFC;
+}
+
+.btn-copy-id {
+  padding: 0.25rem 0.65rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  color: #94A3B8;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-copy-id:hover {
+  color: #F8FAFC;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Logs Terminal Viewport */
+.logs-terminal-viewport {
+  background: #050811;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 1.25rem;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.82rem;
+}
+
+.logs-empty-message {
+  text-align: center;
+  color: #64748B;
+}
+
+.logs-empty-message p {
+  color: #94A3B8;
+  margin-bottom: 0.35rem;
+}
+
+.logs-notice-sub {
+  font-size: 0.75rem;
+  color: #64748B;
+}
+
+/* Details Panel Rows */
+.details-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.detail-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  gap: 1rem;
+}
+
+.detail-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.detail-label {
+  font-size: 0.82rem;
+  color: #64748B;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  font-size: 0.82rem;
+  color: #E2E8F0;
+  text-align: right;
+  word-break: break-all;
+}
+
+.detail-value.mono {
+  font-family: var(--font-mono, monospace);
+}
+
+.detail-value.status-val {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.error-row .error-text {
+  color: #f87171;
+  font-size: 0.8rem;
+}
+
+.details-empty {
+  text-align: center;
+  padding: 2rem 0;
+  color: #64748B;
+}
+
+/* --------------------------------------------------------------------------
+   Revisions & Artifacts Tabs
+   -------------------------------------------------------------------------- */
+.revisions-card,
+.artifacts-card {
+  background: rgba(14, 22, 38, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.tab-card-header {
+  margin-bottom: 1.25rem;
+}
+
+.tab-card-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #F8FAFC;
+  margin-bottom: 0.2rem;
+}
+
+.tab-card-subtitle {
+  font-size: 0.85rem;
+  color: #94A3B8;
+}
+
+.revision-tag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 6px;
+  color: #c7d2fe;
+}
+
+.empty-subtext {
+  display: block;
+  font-size: 0.8rem;
+  color: #64748B;
+  margin-top: 0.35rem;
+}
+
+/* Artifacts Control Bar */
+.artifacts-control-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 1.25rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.revision-select-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.revision-select-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #E2E8F0;
+}
+
+.revision-dropdown {
+  background: #080C14;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: #F8FAFC;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.8rem;
+}
+
+.revision-meta-capsule {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: #94A3B8;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+}
+
+.meta-divider {
+  color: #475569;
+}
+
+.meta-capsule-val {
+  color: #F8FAFC;
+  font-weight: 600;
+}
+
+.code-path {
+  color: #38bdf8;
+}
+
+.category-pill {
+  padding: 0.15rem 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+}
+
+.support-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #4ade80;
+}
+
+/* --------------------------------------------------------------------------
+   File Drop Zone
+   -------------------------------------------------------------------------- */
+.file-drop-zone {
+  border: 2px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 2.25rem 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.015);
+  transition: all 0.2s ease;
+}
+
+.file-drop-zone:hover,
+.file-drop-zone.active {
+  border-color: #6366F1;
+  background: rgba(99, 102, 241, 0.04);
+}
+
+.file-drop-zone.has-file {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.drop-icon-box {
+  color: #6366F1;
+  margin-bottom: 0.75rem;
+}
+
+.file-drop-zone.has-file .drop-icon-box {
+  color: #22c55e;
+}
+
+.drop-prompt .primary-text {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #F8FAFC;
+  margin-bottom: 0.25rem;
+}
+
+.drop-prompt .secondary-text {
+  font-size: 0.8rem;
+  color: #64748B;
+}
+
+.selected-file-info .file-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #F8FAFC;
+  margin-bottom: 0.2rem;
+}
+
+.selected-file-info .file-size {
+  font-size: 0.8rem;
+  color: #94A3B8;
+  margin-bottom: 0.5rem;
+}
+
+.selected-file-info .file-change-prompt {
+  font-size: 0.75rem;
+  color: #6366F1;
+  text-decoration: underline;
+}
+
+/* Repo Loading & Error Screen */
+.repo-loading-screen,
+.repo-error-screen {
+  text-align: center;
+  padding: 5rem 1.5rem;
+  color: #94A3B8;
+}
+
+.repo-error-screen h2 {
+  color: #F8FAFC;
+  margin-bottom: 0.5rem;
+  font-size: 1.4rem;
+}

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import AuthInput from './AuthInput.jsx';
 
+const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
+
 /**
  * Signup Form Component
  */
@@ -11,17 +13,21 @@ export default function SignupForm({
   error = null,
   active = false,
 }) {
-  const [fullName, setFullName] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [agreeTerms, setAgreeTerms] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [infoMessage, setInfoMessage] = useState('');
 
   const validate = () => {
     const errors = {};
-    if (!fullName.trim()) {
-      errors.fullName = 'Full name is required.';
+    const trimmedUsername = username.trim();
+    if (!trimmedUsername) {
+      errors.username = 'Username is required.';
+    } else if (trimmedUsername.length < 3 || trimmedUsername.length > 30) {
+      errors.username = 'Username must be between 3 and 30 characters.';
+    } else if (!USERNAME_REGEX.test(trimmedUsername)) {
+      errors.username = 'Username can only contain letters, numbers, and underscores.';
     }
 
     if (!email.trim()) {
@@ -36,10 +42,6 @@ export default function SignupForm({
       errors.password = 'Password must be at least 8 characters long.';
     }
 
-    if (!agreeTerms) {
-      errors.terms = 'Please accept the Terms of Service to continue.';
-    }
-
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -49,12 +51,16 @@ export default function SignupForm({
     setInfoMessage('');
     if (!validate()) return;
     if (onSubmit) {
-      onSubmit({ fullName, email, password });
+      onSubmit({
+        username: username.trim().toLowerCase(),
+        email: email.trim().toLowerCase(),
+        password,
+      });
     }
   };
 
   const handleGitHubAuth = () => {
-    setInfoMessage('GitHub authentication preview: please use standard email & password registration.');
+    setInfoMessage('GitHub authentication preview: please use standard credentials to register.');
   };
 
   return (
@@ -71,7 +77,7 @@ export default function SignupForm({
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="10" />
             <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="8" x2="12.01" y2="16" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
           <span>{error}</span>
         </div>
@@ -90,20 +96,21 @@ export default function SignupForm({
 
       <form className="auth-form" onSubmit={handleSubmit} noValidate>
         <AuthInput
-          id="signup-name"
-          name="fullName"
-          label="Full name"
+          id="signup-username"
+          name="username"
+          label="Username"
           type="text"
-          value={fullName}
+          value={username}
           onChange={(e) => {
-            setFullName(e.target.value);
-            if (fieldErrors.fullName) setFieldErrors({ ...fieldErrors, fullName: null });
+            setUsername(e.target.value);
+            if (fieldErrors.username) setFieldErrors({ ...fieldErrors, username: null });
           }}
-          placeholder="John Doe"
+          placeholder="Choose a username"
           required
-          autoComplete="name"
+          autoComplete="username"
           disabled={loading || !active}
-          error={fieldErrors.fullName}
+          error={fieldErrors.username}
+          helperText="3–30 characters (letters, numbers, underscores)."
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -158,36 +165,6 @@ export default function SignupForm({
             </svg>
           }
         />
-
-        <div className="terms-checkbox-group">
-          <label className="checkbox-label" htmlFor="agree-terms">
-            <input
-              id="agree-terms"
-              type="checkbox"
-              checked={agreeTerms}
-              onChange={(e) => {
-                setAgreeTerms(e.target.checked);
-                if (fieldErrors.terms) setFieldErrors({ ...fieldErrors, terms: null });
-              }}
-              disabled={loading || !active}
-              tabIndex={!active ? -1 : 0}
-              className="auth-checkbox"
-            />
-            <span className="checkbox-custom" aria-hidden="true">
-              <svg viewBox="0 0 12 10" fill="none">
-                <polyline points="1.5 5 4.5 8 10.5 2" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-            <span className="terms-text">
-              I agree to the <a href="#terms" className="legal-link" tabIndex={!active ? -1 : 0}>Terms of Service</a> and <a href="#privacy" className="legal-link" tabIndex={!active ? -1 : 0}>Privacy Policy</a>.
-            </span>
-          </label>
-          {fieldErrors.terms && (
-            <p className="form-error-text terms-error" role="alert">
-              {fieldErrors.terms}
-            </p>
-          )}
-        </div>
 
         <button
           type="submit"

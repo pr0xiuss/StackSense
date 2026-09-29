@@ -2,21 +2,21 @@ import React, { useState, useEffect, useCallback } from 'react';
 import AuthLayout from '../components/auth/AuthLayout.jsx';
 import AuthBranding from '../components/auth/AuthBranding.jsx';
 import AuthPanel from '../components/auth/AuthPanel.jsx';
-import { authApi } from '../api/authApi.js';
+import { useAuth } from '../auth/AuthContext.jsx';
 
 /**
  * Authentication Page Component
  * Manages mode switching (Login <-> Signup), backend auth submission,
- * error handling, and authenticated session state.
+ * error handling, and post-auth navigation.
  */
 export default function AuthPage({
   initialMode = 'login',
   onNavigateHome,
 }) {
+  const { user: authenticatedUser, login, register, logout } = useAuth();
   const [authMode, setAuthMode] = useState(initialMode);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [authenticatedUser, setAuthenticatedUser] = useState(null);
   const [authSuccessMessage, setAuthSuccessMessage] = useState('');
 
   // Synchronize initialMode changes or URL hash
@@ -24,18 +24,6 @@ export default function AuthPage({
     setAuthMode(initialMode === 'signup' ? 'signup' : 'login');
     setError(null);
   }, [initialMode]);
-
-  // Check if an active session exists on mount
-  useEffect(() => {
-    const token = authApi.getStoredToken();
-    if (token) {
-      authApi.getCurrentUser(token)
-        .then((user) => setAuthenticatedUser(user))
-        .catch(() => {
-          authApi.clearStoredToken();
-        });
-    }
-  }, []);
 
   const handleSwitchMode = useCallback((mode) => {
     setAuthMode(mode);
@@ -49,17 +37,25 @@ export default function AuthPage({
     }
   }, []);
 
-  const handleLogin = async ({ email, password }) => {
+  const navigateToApp = useCallback(() => {
+    // Navigate to projects dashboard (#/projects / #/app)
+    if (window.history.pushState) {
+      window.history.pushState(null, '', '#/projects');
+    } else {
+      window.location.hash = '#/projects';
+    }
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+  }, []);
+
+  const handleLogin = async ({ identifier, password }) => {
     setLoading(true);
     setError(null);
     setAuthSuccessMessage('');
 
     try {
-      const data = await authApi.login(email, password);
-      // Retrieve user profile with token
-      const user = await authApi.getCurrentUser(data.access_token);
-      setAuthenticatedUser(user);
-      setAuthSuccessMessage(`Welcome back, ${user.email}!`);
+      await login(identifier, password);
+      // Redirect to /#/app or /#/projects after successful login
+      navigateToApp();
     } catch (err) {
       setError(err.message || 'Login failed. Please check your credentials.');
     } finally {
@@ -67,19 +63,15 @@ export default function AuthPage({
     }
   };
 
-  const handleSignup = async ({ email, password }) => {
+  const handleSignup = async ({ username, email, password }) => {
     setLoading(true);
     setError(null);
     setAuthSuccessMessage('');
 
     try {
-      // 1. Register with backend
-      await authApi.register(email, password);
-      // 2. Automatically log in to issue token
-      const data = await authApi.login(email, password);
-      const user = await authApi.getCurrentUser(data.access_token);
-      setAuthenticatedUser(user);
-      setAuthSuccessMessage(`Account created successfully! Welcome, ${user.email}.`);
+      await register(email, username, password);
+      // Redirect to /#/app or /#/projects after successful registration
+      navigateToApp();
     } catch (err) {
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
@@ -87,9 +79,8 @@ export default function AuthPage({
     }
   };
 
-  const handleSignOut = () => {
-    authApi.clearStoredToken();
-    setAuthenticatedUser(null);
+  const handleSignOut = async () => {
+    await logout();
     setAuthSuccessMessage('');
     setError(null);
     handleSwitchMode('login');
@@ -107,7 +98,7 @@ export default function AuthPage({
             </div>
             <h2 className="auth-card-title">Authenticated to StackSense</h2>
             <p className="auth-card-subtitle">
-              {authSuccessMessage || `Signed in as ${authenticatedUser.email}`}
+              {authSuccessMessage || `Signed in as ${authenticatedUser.username || authenticatedUser.email}`}
             </p>
           </div>
 
@@ -116,6 +107,12 @@ export default function AuthPage({
               <span className="user-label">User ID:</span>
               <span className="user-value">{authenticatedUser.id}</span>
             </div>
+            {authenticatedUser.username && (
+              <div className="auth-user-row">
+                <span className="user-label">Username:</span>
+                <span className="user-value">{authenticatedUser.username}</span>
+              </div>
+            )}
             <div className="auth-user-row">
               <span className="user-label">Email:</span>
               <span className="user-value">{authenticatedUser.email}</span>
@@ -130,9 +127,9 @@ export default function AuthPage({
             <button
               type="button"
               className="btn-auth-submit"
-              onClick={onNavigateHome}
+              onClick={navigateToApp}
             >
-              <span>Explore Architecture & Projects</span>
+              <span>Explore</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14M12 5l7 7-7 7" />
               </svg>
