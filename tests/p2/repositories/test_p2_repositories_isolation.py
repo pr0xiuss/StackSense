@@ -88,6 +88,7 @@ def _create_isolated_environment(
         User(
             id=uuid4(),
             email=f"user-a-{uuid4().hex[:6]}@stacksense.local",
+            username=f"user_a_{uuid4().hex[:6]}",
             created_at=now,
             updated_at=now,
         )
@@ -107,6 +108,7 @@ def _create_isolated_environment(
         User(
             id=uuid4(),
             email=f"user-b-{uuid4().hex[:6]}@stacksense.local",
+            username=f"user_b_{uuid4().hex[:6]}",
             created_at=now,
             updated_at=now,
         )

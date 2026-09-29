@@ -34,15 +34,16 @@ def test_authenticated_user_can_create_and_manage_project(
     # 1. Register & login
     tag = uuid4().hex[:8]
     email = f"owner-{tag}@stacksense.local"
+    username = f"owner_{tag}"
     password = "ProjectPassword123"
 
     unauthenticated_client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": password},
+        json={"email": email, "username": username, "password": password},
     )
     login_res = unauthenticated_client.post(
         "/api/v1/auth/login",
-        json={"email": email, "password": password},
+        json={"identifier": email, "password": password},
     )
     token = login_res.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -85,11 +86,18 @@ def test_cross_project_isolation_with_real_bearer_tokens(
     tag_a = uuid4().hex[:8]
     unauthenticated_client.post(
         "/api/v1/auth/register",
-        json={"email": f"usera-{tag_a}@stacksense.local", "password": "PasswordA123"},
+        json={
+            "email": f"usera-{tag_a}@stacksense.local",
+            "username": f"usera_{tag_a}",
+            "password": "PasswordA123",
+        },
     )
     token_a = unauthenticated_client.post(
         "/api/v1/auth/login",
-        json={"email": f"usera-{tag_a}@stacksense.local", "password": "PasswordA123"},
+        json={
+            "identifier": f"usera-{tag_a}@stacksense.local",
+            "password": "PasswordA123",
+        },
     ).json()["access_token"]
     headers_a = {"Authorization": f"Bearer {token_a}"}
 
@@ -97,11 +105,18 @@ def test_cross_project_isolation_with_real_bearer_tokens(
     tag_b = uuid4().hex[:8]
     unauthenticated_client.post(
         "/api/v1/auth/register",
-        json={"email": f"userb-{tag_b}@stacksense.local", "password": "PasswordB123"},
+        json={
+            "email": f"userb-{tag_b}@stacksense.local",
+            "username": f"userb_{tag_b}",
+            "password": "PasswordB123",
+        },
     )
     token_b = unauthenticated_client.post(
         "/api/v1/auth/login",
-        json={"email": f"userb-{tag_b}@stacksense.local", "password": "PasswordB123"},
+        json={
+            "identifier": f"userb-{tag_b}@stacksense.local",
+            "password": "PasswordB123",
+        },
     ).json()["access_token"]
     headers_b = {"Authorization": f"Bearer {token_b}"}
 

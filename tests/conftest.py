@@ -41,6 +41,7 @@ def ensure_test_user(user_id: UUID | str) -> User:
             User(
                 id=uid,
                 email=f"test-user-{uid}@stacksense.local",
+                username=f"user_{str(uid).replace('-', '')[-8:]}",
                 is_active=True,
                 created_at=now,
                 updated_at=now,

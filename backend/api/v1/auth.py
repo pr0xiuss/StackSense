@@ -10,6 +10,7 @@ from backend.platform.identity.application.dependencies import (
 from backend.platform.identity.application.dto import (
     AuthTokenResponse,
     LoginRequest,
+    RefreshTokenRequest,
     RegisterRequest,
     UserResponse,
 )
@@ -31,6 +32,7 @@ def register(
     """Public self-registration endpoint."""
     user = auth_service.register(
         email=request.email,
+        username=request.username,
         password=request.password,
     )
     return UserResponse.model_validate(user)
@@ -40,17 +42,44 @@ def register(
     "/login",
     response_model=AuthTokenResponse,
     status_code=status.HTTP_200_OK,
-    summary="Authenticate user and obtain access token",
+    summary="Authenticate user and obtain access and refresh tokens",
 )
 def login(
     request: LoginRequest,
     auth_service: AuthenticationService = Depends(get_auth_service),
 ) -> AuthTokenResponse:
-    """Authenticate with email and password to receive a bearer token."""
+    """Authenticate with username or email and password to receive tokens."""
     return auth_service.authenticate(
-        email=request.email,
+        identifier=request.identifier,
         password=request.password,
     )
+
+
+@router.post(
+    "/refresh",
+    response_model=AuthTokenResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Rotate refresh token and obtain new token pair",
+)
+def refresh_token(
+    request: RefreshTokenRequest,
+    auth_service: AuthenticationService = Depends(get_auth_service),
+) -> AuthTokenResponse:
+    """Rotate an active refresh token and issue a fresh access and refresh pair."""
+    return auth_service.refresh_access_token(request.refresh_token)
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke refresh token upon logout",
+)
+def logout(
+    request: RefreshTokenRequest,
+    auth_service: AuthenticationService = Depends(get_auth_service),
+) -> None:
+    """Revoke the provided refresh token session."""
+    auth_service.revoke_refresh_token(request.refresh_token)
 
 
 @router.get(

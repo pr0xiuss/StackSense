@@ -91,6 +91,7 @@ def _setup_project_with_roles(
         User(
             id=uuid4(),
             email=f"owner-{uuid4().hex[:6]}@stacksense.local",
+            username=f"owner_{uuid4().hex[:6]}",
             created_at=now,
             updated_at=now,
         )
@@ -99,6 +100,7 @@ def _setup_project_with_roles(
         User(
             id=uuid4(),
             email=f"admin-{uuid4().hex[:6]}@stacksense.local",
+            username=f"admin_{uuid4().hex[:6]}",
             created_at=now,
             updated_at=now,
         )
@@ -107,6 +109,7 @@ def _setup_project_with_roles(
         User(
             id=uuid4(),
             email=f"dev-{uuid4().hex[:6]}@stacksense.local",
+            username=f"dev_{uuid4().hex[:6]}",
             created_at=now,
             updated_at=now,
         )
@@ -115,6 +118,7 @@ def _setup_project_with_roles(
         User(
             id=uuid4(),
             email=f"viewer-{uuid4().hex[:6]}@stacksense.local",
+            username=f"viewer_{uuid4().hex[:6]}",
             created_at=now,
             updated_at=now,
         )
@@ -123,6 +127,7 @@ def _setup_project_with_roles(
         User(
             id=uuid4(),
             email=f"unauth-{uuid4().hex[:6]}@stacksense.local",
+            username=f"unauth_{uuid4().hex[:6]}",
             created_at=now,
             updated_at=now,
         )

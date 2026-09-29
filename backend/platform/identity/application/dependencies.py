@@ -24,6 +24,9 @@ from backend.platform.identity.application.password import PasswordHasher
 from backend.platform.identity.application.token import TokenService
 from backend.platform.identity.domain.user import User
 from backend.platform.identity.infra.password_hasher import BcryptPasswordHasher
+from backend.platform.identity.infra.refresh_token_repo import (
+    SqlAlchemyRefreshTokenRepository,
+)
 from backend.platform.identity.infra.token_service import JwtTokenService
 from backend.platform.identity.infra.user_repo import SqlAlchemyUserRepository
 
@@ -45,6 +48,7 @@ def get_token_service() -> TokenService:
         secret_key=settings.jwt_secret_key,
         algorithm=settings.jwt_algorithm,
         expiration_minutes=settings.access_token_expire_minutes,
+        refresh_token_expire_days=settings.refresh_token_expire_days,
     )
 
 
@@ -84,8 +88,10 @@ def get_auth_service(
 ) -> AuthenticationService:
     """Provide AuthenticationService with injected dependencies."""
     user_repo = SqlAlchemyUserRepository(session)
+    refresh_token_repo = SqlAlchemyRefreshTokenRepository(session)
     return AuthenticationService(
         user_repo=user_repo,
         password_hasher=password_hasher,
         token_service=token_service,
+        refresh_token_repo=refresh_token_repo,
     )

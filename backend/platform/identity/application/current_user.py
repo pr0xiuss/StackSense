@@ -18,10 +18,11 @@ class CurrentUserProvider(ABC):
 class StaticCurrentUserProvider(CurrentUserProvider):
     """Temporary development provider for the current user."""
 
-    def __init__(self, user_id: UUID) -> None:
+    def __init__(self, user_id: UUID, username: str | None = None) -> None:
         self._user = User(
             id=user_id,
             email=f"user-{user_id}@stacksense.local",
+            username=username or f"user_{str(user_id).replace('-', '')[-8:]}",
             is_active=True,
         )
 
