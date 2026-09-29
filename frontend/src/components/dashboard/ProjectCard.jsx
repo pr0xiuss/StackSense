@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { repositoryService } from '../../services/repositoryService.js';
 
 const BADGE_COLORS = ['blue', 'red', 'green', 'purple', 'cyan'];
@@ -30,6 +30,7 @@ export default function ProjectCard({
   index = 0,
   onOpenCreateRepo,
   onDeleteProject,
+  lastCreatedRepo = null,
 }) {
   const [expanded, setExpanded] = useState(index === 0);
   const [repositories, setRepositories] = useState(null);
@@ -37,6 +38,14 @@ export default function ProjectCard({
   const [reposError, setReposError] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const colorScheme = BADGE_COLORS[index % BADGE_COLORS.length];
   // Role matches ProjectRole contract: OWNER | ADMIN | DEVELOPER | VIEWER
@@ -44,34 +53,45 @@ export default function ProjectCard({
   const role = PROJECT_ROLES.includes(rawRole) ? rawRole : 'VIEWER';
   const canDelete = role === 'OWNER' || role === 'ADMIN';
 
+  const fetchRepositories = useCallback(async () => {
+    if (!project?.id) return;
+    setLoadingRepos(true);
+    setReposError(null);
+    try {
+      const data = await repositoryService.listRepositories(project.id, 50, 0);
+      if (isMountedRef.current) {
+        setRepositories(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      if (isMountedRef.current) {
+        setReposError(err.message || 'Failed to load repositories.');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setLoadingRepos(false);
+      }
+    }
+  }, [project?.id]);
+
   // Fetch repositories on demand when expanded
   useEffect(() => {
-    let isMounted = true;
     if (expanded && repositories === null && !loadingRepos) {
-      setLoadingRepos(true);
-      setReposError(null);
-      repositoryService.listRepositories(project.id, 50, 0)
-        .then((data) => {
-          if (isMounted) {
-            setRepositories(Array.isArray(data) ? data : []);
-          }
-        })
-        .catch((err) => {
-          if (isMounted) {
-            setReposError(err.message || 'Failed to load repositories.');
-          }
-        })
-        .finally(() => {
-          if (isMounted) {
-            setLoadingRepos(false);
-          }
-        });
+      fetchRepositories();
     }
+  }, [expanded, repositories, loadingRepos, fetchRepositories]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [expanded, project.id, repositories, loadingRepos]);
+  // If a repository was created for this project, expand and reload
+  useEffect(() => {
+    if (lastCreatedRepo && lastCreatedRepo.project_id === project.id) {
+      setExpanded(true);
+      setRepositories((prev) => {
+        if (!prev) return [lastCreatedRepo];
+        if (prev.some((r) => r.id === lastCreatedRepo.id)) return prev;
+        return [lastCreatedRepo, ...prev];
+      });
+      fetchRepositories();
+    }
+  }, [lastCreatedRepo, project.id, fetchRepositories]);
 
   // Close three-dot menu on outside click
   useEffect(() => {
@@ -87,7 +107,11 @@ export default function ProjectCard({
   const repoCount = repositories ? repositories.length : null;
 
   const toggleExpand = () => {
-    setExpanded(!expanded);
+    const nextState = !expanded;
+    setExpanded(nextState);
+    if (nextState && repositories === null && !loadingRepos) {
+      fetchRepositories();
+    }
   };
 
   const handleRepositoryClick = (repoId) => {

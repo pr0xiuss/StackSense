@@ -20,6 +20,15 @@ class RevisionRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_by_repository_and_identifier(
+        self,
+        repository_id: UUID,
+        revision_identifier: str,
+    ) -> RepositoryRevision | None:
+        """Retrieve a revision by repository ID and revision identifier."""
+        raise NotImplementedError
+
+    @abstractmethod
     def list_by_repository(
         self,
         repository_id: UUID,

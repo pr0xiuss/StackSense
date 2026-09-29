@@ -14,6 +14,7 @@ export default function AuthPanel({
   onSignupSubmit,
   loading = false,
   error = null,
+  successMessage = null,
 }) {
   const isLogin = authMode === 'login';
   const viewportRef = useRef(null);
@@ -48,6 +49,7 @@ export default function AuthPanel({
               onSubmit={onLoginSubmit}
               loading={loading && isLogin}
               error={isLogin ? error : null}
+              successMessage={isLogin ? successMessage : null}
             />
           </div>
 

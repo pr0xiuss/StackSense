@@ -4,6 +4,7 @@ import RepositoryHeader from '../components/repository/RepositoryHeader.jsx';
 import IngestionTab from '../components/repository/IngestionTab.jsx';
 import RevisionsTab from '../components/repository/RevisionsTab.jsx';
 import ArtifactsTab from '../components/repository/ArtifactsTab.jsx';
+import NewIngestionModal from '../components/repository/NewIngestionModal.jsx';
 import UploadArchiveModal from '../components/repository/UploadArchiveModal.jsx';
 import TriggerIngestionModal from '../components/repository/TriggerIngestionModal.jsx';
 import { projectService } from '../services/projectService.js';
@@ -30,6 +31,7 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
   const [selectedRevisionForArtifacts, setSelectedRevisionForArtifacts] = useState(null);
 
   // Modals state
+  const [newIngestionModalOpen, setNewIngestionModalOpen] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [triggerModalOpen, setTriggerModalOpen] = useState(false);
 
@@ -77,8 +79,43 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
     loadIngestions();
   }, [loadMetadata, loadIngestions]);
 
+  // Bounded polling when latest ingestion is in PROCESSING state
+  useEffect(() => {
+    const latest = ingestions && ingestions.length > 0 ? ingestions[0] : null;
+    const isProcessing = latest?.status?.toLowerCase() === 'processing';
+
+    if (!isProcessing) return;
+
+    let pollCount = 0;
+    const maxPolls = 15; // Max 45 seconds bounded polling
+    const intervalId = setInterval(async () => {
+      pollCount++;
+      try {
+        const data = await ingestionService.listIngestions(projectId, repositoryId, 50, 0);
+        const list = Array.isArray(data) ? data : [];
+        if (list.length > 0) {
+          setIngestions(list);
+          setSelectedIngestion((prev) => {
+            if (!prev) return list[0];
+            const updated = list.find((item) => item.id === prev.id);
+            return updated || list[0];
+          });
+          const currentLatest = list[0];
+          if (currentLatest.status?.toLowerCase() !== 'processing' || pollCount >= maxPolls) {
+            clearInterval(intervalId);
+          }
+        }
+      } catch {
+        clearInterval(intervalId);
+      }
+    }, 3000);
+
+    return () => clearInterval(intervalId);
+  }, [ingestions, projectId, repositoryId]);
+
   const handleIngestionTriggered = (newIngestion) => {
-    setIngestions((prev) => [newIngestion, ...prev]);
+    if (!newIngestion) return;
+    setIngestions((prev) => [newIngestion, ...prev.filter((i) => i.id !== newIngestion.id)]);
     setSelectedIngestion(newIngestion);
   };
 
@@ -189,8 +226,9 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
                   ingestions={ingestions}
                   loading={loadingIngestions}
                   error={ingestionError}
-                  onOpenUpload={() => setUploadModalOpen(true)}
-                  onOpenTrigger={() => setTriggerModalOpen(true)}
+                  onOpenNewIngestion={() => setNewIngestionModalOpen(true)}
+                  onOpenUpload={() => setNewIngestionModalOpen(true)}
+                  onOpenTrigger={() => setNewIngestionModalOpen(true)}
                   onSelectIngestion={setSelectedIngestion}
                   selectedIngestion={selectedIngestion}
                 />
@@ -217,7 +255,16 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
         )}
       </main>
 
-      {/* Modals */}
+      {/* Primary Unified Ingestion Modal (GitHub, Archive Upload, Server Path) */}
+      <NewIngestionModal
+        isOpen={newIngestionModalOpen}
+        projectId={projectId}
+        repositoryId={repositoryId}
+        onClose={() => setNewIngestionModalOpen(false)}
+        onIngestionTriggered={handleIngestionTriggered}
+      />
+
+      {/* Backward-compatible legacy modal references */}
       <UploadArchiveModal
         isOpen={uploadModalOpen}
         projectId={projectId}

@@ -83,17 +83,7 @@ export function AuthProvider({ children }) {
 
   const register = useCallback(async (email, username, password) => {
     setAuthError(null);
-    await authService.register(email, username, password);
-
-    // If registration didn't return tokens directly, log in to obtain token pair
-    if (!tokenStorage.getAccessToken()) {
-      await authService.login(username, password);
-    }
-
-    const currentUser = await authService.getCurrentUser();
-    setUser(currentUser);
-    setIsAuthenticated(true);
-    return currentUser;
+    return await authService.register(email, username, password);
   }, []);
 
   const logout = useCallback(async () => {

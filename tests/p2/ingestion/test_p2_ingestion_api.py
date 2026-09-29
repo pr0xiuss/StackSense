@@ -1,11 +1,14 @@
 """End-to-end API integration tests for Ingestion endpoints."""
 
 import io
+import tarfile
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.platform.dependency_injection import get_database
@@ -21,6 +24,17 @@ def _create_zip_bytes(files: dict[str, bytes]) -> bytes:
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
+    return buffer.getvalue()
+
+
+def _create_tar_bytes(files: dict[str, bytes], mode: str = "w:gz") -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode=mode) as tf:
+        for name, data in files.items():
+            ti = tarfile.TarInfo(name=name)
+            ti.size = len(data)
+            ti.mtime = 1700000000
+            tf.addfile(ti, io.BytesIO(data))
     return buffer.getvalue()
 
 
@@ -316,3 +330,287 @@ def test_cross_project_isolation_api(
     )
     assert mismatch_res.status_code == 404
     assert mismatch_res.json()["error"]["code"] == "repository_not_found"
+
+
+def test_duplicate_revision_identifier_rejected_with_409(
+    client: TestClient,
+    set_current_user: Callable[[UUID], None],
+) -> None:
+    project_id, repo_id, owner_id = _setup_project_and_repo(client, set_current_user)
+
+    zip_bytes1 = _create_zip_bytes({"app.py": b"print('v1')\n"})
+    res1 = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions/upload",
+        files={"file": ("repo.zip", zip_bytes1, "application/zip")},
+        data={"revision_identifier": "v1.0"},
+    )
+    assert res1.status_code == 201
+    assert res1.json()["status"] == "completed"
+
+    # Second upload with the exact same revision identifier must be rejected with 409
+    zip_bytes2 = _create_zip_bytes({"app.py": b"print('v1 duplicate')\n"})
+    res2 = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions/upload",
+        files={"file": ("repo.zip", zip_bytes2, "application/zip")},
+        data={"revision_identifier": "v1.0"},
+    )
+    assert res2.status_code == 409
+    assert res2.json()["error"]["code"] == "revision_already_exists"
+
+
+def test_upload_tar_gz_and_tgz_and_tar_api_success(
+    client: TestClient,
+    set_current_user: Callable[[UUID], None],
+) -> None:
+    """Test multipart upload with .tar.gz, .tgz, and .tar archives."""
+    project_id, repo_id, _ = _setup_project_and_repo(client, set_current_user)
+
+    # 1. Upload .tar.gz
+    tar_gz_bytes = _create_tar_bytes(
+        {"app.py": b"print('tar.gz')\n", "README.md": b"# TarGz\n"},
+        mode="w:gz",
+    )
+    res_gz = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions/upload",
+        files={"file": ("project.tar.gz", tar_gz_bytes, "application/gzip")},
+        data={"revision_identifier": "rev-tar-gz"},
+    )
+    assert res_gz.status_code == 201
+    assert res_gz.json()["status"] == "completed"
+
+    # 2. Upload .tgz
+    tgz_bytes = _create_tar_bytes(
+        {"app.py": b"print('tgz')\n"},
+        mode="w:gz",
+    )
+    res_tgz = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions/upload",
+        files={"file": ("project.tgz", tgz_bytes, "application/gzip")},
+        data={"revision_identifier": "rev-tgz"},
+    )
+    assert res_tgz.status_code == 201
+    assert res_tgz.json()["status"] == "completed"
+
+    # 3. Upload .tar
+    tar_bytes = _create_tar_bytes(
+        {"app.py": b"print('uncompressed tar')\n"},
+        mode="w",
+    )
+    res_tar = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions/upload",
+        files={"file": ("project.tar", tar_bytes, "application/x-tar")},
+        data={"revision_identifier": "rev-tar"},
+    )
+    assert res_tar.status_code == 201
+    assert res_tar.json()["status"] == "completed"
+
+
+def test_upload_unsupported_archive_format_rejected_with_422(
+    client: TestClient,
+    set_current_user: Callable[[UUID], None],
+) -> None:
+    """Test that uploading non-supported file formats returns 422."""
+    project_id, repo_id, _ = _setup_project_and_repo(client, set_current_user)
+
+    res = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions/upload",
+        files={"file": ("malicious.exe", b"MZ...", "application/octet-stream")},
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "unsupported_archive_format"
+
+    res_rar = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions/upload",
+        files={"file": ("archive.rar", b"Rar!...", "application/x-rar")},
+    )
+    assert res_rar.status_code == 422
+    assert res_rar.json()["error"]["code"] == "unsupported_archive_format"
+
+
+def test_trigger_ingestion_github_api_success(
+    client: TestClient,
+    set_current_user: Callable[[UUID], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test triggering ingestion from public GitHub repo via JSON endpoint."""
+    project_id, repo_id, _ = _setup_project_and_repo(client, set_current_user)
+
+    def mock_transport_handler(request: httpx.Request) -> httpx.Response:
+        tar_bytes = _create_tar_bytes(
+            {
+                "Hello-World-main/src/index.js": b"console.log('hi');\n",
+                "Hello-World-main/README.md": b"# GitHub README\n",
+            },
+            mode="w:gz",
+        )
+        return httpx.Response(200, content=tar_bytes, request=request)
+
+    real_init = httpx.Client.__init__
+
+    def patched_init(self: httpx.Client, *args: object, **kwargs: object) -> None:
+        kwargs["transport"] = httpx.MockTransport(mock_transport_handler)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "__init__", patched_init)
+
+    res = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "github",
+            "repository_url": "https://github.com/octocat/Hello-World",
+            "ref": "main",
+        },
+    )
+    assert res.status_code == 201
+    data = res.json()
+    assert data["status"] == "completed"
+    assert data["source_type"] == "github"
+    assert "https://github.com/octocat/Hello-World@main" in data["source_reference"]
+
+
+def test_trigger_ingestion_github_invalid_inputs_rejected_with_422(
+    client: TestClient,
+    set_current_user: Callable[[UUID], None],
+) -> None:
+    """Test that invalid GitHub URL, ref, and source type return 422."""
+    project_id, repo_id, _ = _setup_project_and_repo(client, set_current_user)
+
+    # 1. Invalid URL (non-https)
+    res_url = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "github",
+            "repository_url": "http://github.com/octocat/Hello-World",
+        },
+    )
+    assert res_url.status_code == 422
+    assert res_url.json()["error"]["code"] == "invalid_github_url"
+
+    # 2. Invalid Git ref (shell injection chars)
+    res_ref = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "github",
+            "repository_url": "https://github.com/octocat/Hello-World",
+            "ref": "main;rm -rf /",
+        },
+    )
+    assert res_ref.status_code == 422
+    assert res_ref.json()["error"]["code"] == "invalid_github_ref"
+
+    # 3. Invalid source type
+    res_type = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "unknown_source_type",
+            "source_reference": "data/test",
+        },
+    )
+    assert res_type.status_code == 422
+    assert res_type.json()["error"]["code"] == "invalid_source_type"
+
+
+def test_trigger_ingestion_server_path_api_success_and_failures(
+    client: TestClient,
+    set_current_user: Callable[[UUID], None],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test server_path mode: allowed directory, jailbreak attempt, and missing path."""
+    from backend.platform.config import get_settings
+
+    project_id, repo_id, _ = _setup_project_and_repo(client, set_current_user)
+
+    staged_root = tmp_path / "staged"
+    staged_root.mkdir()
+    monkeypatch.setattr(get_settings(), "allowed_source_roots", [str(staged_root)])
+
+    # 1. Valid staged directory within allowed roots
+    staged_dir = staged_root / "my_project"
+    staged_dir.mkdir()
+    (staged_dir / "index.js").write_text("console.log('staged');")
+
+    res_ok = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "server_path",
+            "source_reference": str(staged_dir),
+            "revision_identifier": "rev-staged-1",
+        },
+    )
+    assert res_ok.status_code == 201
+    assert res_ok.json()["status"] == "completed"
+    assert res_ok.json()["source_type"] == "server_path"
+
+    # 2. Path outside allowed roots -> 403 Forbidden
+    res_forbidden = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "server_path",
+            "source_reference": "/etc/passwd",
+        },
+    )
+    assert res_forbidden.status_code == 403
+    assert res_forbidden.json()["error"]["code"] == "server_path_not_allowed"
+
+    # 3. Path inside allowed roots but not found on disk -> 404 Not Found
+    res_not_found = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "server_path",
+            "source_reference": str(staged_root / "missing_folder"),
+        },
+    )
+    assert res_not_found.status_code == 404
+    assert res_not_found.json()["error"]["code"] == "server_path_not_found"
+
+
+def test_trigger_ingestion_github_error_status_mappings(
+    client: TestClient,
+    set_current_user: Callable[[UUID], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that GitHub 404 and 429 errors map to 404 and 429 HTTP status codes."""
+    project_id, repo_id, _ = _setup_project_and_repo(client, set_current_user)
+
+    # 1. GitHub 404 Not Found -> 404 github_repository_not_found
+    def mock_404_transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, request=request)
+
+    real_init = httpx.Client.__init__
+
+    def patched_init_404(self: httpx.Client, *args: object, **kwargs: object) -> None:
+        kwargs["transport"] = httpx.MockTransport(mock_404_transport)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "__init__", patched_init_404)
+
+    res_404 = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "github",
+            "repository_url": "https://github.com/octocat/NonExistentRepo",
+        },
+    )
+    assert res_404.status_code == 404
+    assert res_404.json()["error"]["code"] == "github_repository_not_found"
+
+    # 2. GitHub 429 Rate Limit -> 429 github_rate_limit_exceeded
+    def mock_429_transport(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, request=request)
+
+    def patched_init_429(self: httpx.Client, *args: object, **kwargs: object) -> None:
+        kwargs["transport"] = httpx.MockTransport(mock_429_transport)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "__init__", patched_init_429)
+
+    res_429 = client.post(
+        f"/api/v1/projects/{project_id}/repositories/{repo_id}/ingestions",
+        json={
+            "source_type": "github",
+            "repository_url": "https://github.com/octocat/Hello-World",
+        },
+    )
+    assert res_429.status_code == 429
+    assert res_429.json()["error"]["code"] == "github_rate_limit_exceeded"

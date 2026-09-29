@@ -1,11 +1,12 @@
-"""Integration tests for IngestionService orchestrating acquisition and storage."""
-
+import io
+import tarfile
 import zipfile
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import pytest
 from sqlalchemy.orm import Session
 
@@ -27,9 +28,21 @@ from backend.platform.ingestion.application.service import (
     DefaultIngestionService,
 )
 from backend.platform.ingestion.application.validator import SourceValidator
-from backend.platform.ingestion.domain.constants import IngestionStatus
+from backend.platform.ingestion.domain.constants import (
+    IngestionStatus,
+    SourceType,
+)
+from backend.platform.ingestion.infra.acquisition.archive_handler import (
+    ArchiveAcquisitionHandler,
+)
 from backend.platform.ingestion.infra.acquisition.directory_handler import (
     LocalDirectoryAcquisitionHandler,
+)
+from backend.platform.ingestion.infra.acquisition.github_handler import (
+    GitHubAcquisitionHandler,
+)
+from backend.platform.ingestion.infra.acquisition.server_path_handler import (
+    ServerPathAcquisitionHandler,
 )
 from backend.platform.ingestion.infra.acquisition.zip_handler import (
     ZipArchiveAcquisitionHandler,
@@ -92,6 +105,19 @@ def _create_zip_file(zip_path: Path, files: dict[str, bytes]) -> Path:
     return zip_path
 
 
+def _create_tar_file(
+    tar_path: Path, files: dict[str, bytes], mode: str = "w:gz"
+) -> Path:
+    tar_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tar_path, mode) as tf:
+        for name, content in files.items():
+            ti = tarfile.TarInfo(name=name)
+            ti.size = len(content)
+            ti.mtime = 1700000000
+            tf.addfile(ti, io.BytesIO(content))
+    return tar_path
+
+
 def _setup_service(
     session: Session,
     tmp_path: Path,
@@ -114,7 +140,27 @@ def _setup_service(
     artifact_repo = SqlAlchemyArtifactRepository(session)
     storage_service = LocalStorageService(tmp_path / "storage_root")
 
+    def mock_github_transport(request: httpx.Request) -> httpx.Response:
+        tar_buf = io.BytesIO()
+        with tarfile.open(fileobj=tar_buf, mode="w:gz") as tf:
+            for name, content in [
+                ("Hello-World-main/src/app.py", b"print('github app')\n"),
+                ("Hello-World-main/README.md", b"# GitHub Hello World\n"),
+            ]:
+                ti = tarfile.TarInfo(name=name)
+                ti.size = len(content)
+                ti.mtime = 1700000000
+                tf.addfile(ti, io.BytesIO(content))
+        return httpx.Response(200, content=tar_buf.getvalue(), request=request)
+
+    mock_github_client = httpx.Client(
+        transport=httpx.MockTransport(mock_github_transport)
+    )
+
     acquisition_handlers = [
+        GitHubAcquisitionHandler(http_client=mock_github_client),
+        ArchiveAcquisitionHandler(),
+        ServerPathAcquisitionHandler(allowed_roots=[str(tmp_path)]),
         ZipArchiveAcquisitionHandler(),
         LocalDirectoryAcquisitionHandler(),
     ]
@@ -380,3 +426,110 @@ def test_query_methods_and_project_isolation(
 
     with pytest.raises(RepositoryNotFoundError):
         service.get_ingestion(project2.id, repository.id, ingestion.id, user=owner)
+
+
+def test_trigger_ingestion_github_pipeline_success(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Test full ingestion pipeline with GitHub public repository source."""
+    service, project, repository, owner, _, _ = _setup_service(db_session, tmp_path)
+
+    request = TriggerIngestionRequest(
+        repository_id=repository.id,
+        source_type="github",
+        repository_url="https://github.com/octocat/Hello-World",
+        ref="main",
+    )
+    ingestion = service.trigger_ingestion(request, user=owner)
+
+    assert ingestion.status == IngestionStatus.COMPLETED
+    assert ingestion.source_type == "github"
+    assert "https://github.com/octocat/Hello-World@main" in ingestion.source_reference
+    assert ingestion.completed_at is not None
+
+    # Verify revision was created in common pipeline
+    revisions = service.list_revisions(
+        project.id, repository.id, user=owner, limit=10, offset=0
+    )
+    assert len(revisions) == 1
+    assert revisions[0].revision_identifier == "main"
+    assert revisions[0].total_files == 2
+
+    # Verify artifacts were classified and stored in common pipeline
+    artifacts = service.list_artifacts(
+        project.id,
+        repository.id,
+        revisions[0].id,
+        user=owner,
+        limit=10,
+        offset=0,
+    )
+    assert len(artifacts) == 2
+    artifact_paths = {a.path for a in artifacts}
+    assert "src/app.py" in artifact_paths
+    assert "README.md" in artifact_paths
+
+
+def test_trigger_ingestion_tar_gz_pipeline_success(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Test full ingestion pipeline with compressed .tar.gz archive source."""
+    service, project, repository, owner, _, _ = _setup_service(db_session, tmp_path)
+
+    tar_path = tmp_path / "source.tar.gz"
+    _create_tar_file(
+        tar_path,
+        {"core.py": b"print('tar core')\n", "docs.txt": b"Documentation\n"},
+        mode="w:gz",
+    )
+
+    request = TriggerIngestionRequest(
+        repository_id=repository.id,
+        source_type=SourceType.ARCHIVE,
+        source_reference=str(tar_path),
+        revision_identifier="v1.0-tar",
+    )
+    ingestion = service.trigger_ingestion(request, user=owner)
+
+    assert ingestion.status == IngestionStatus.COMPLETED
+    assert ingestion.source_type == "archive"
+
+    revisions = service.list_revisions(
+        project.id, repository.id, user=owner, limit=10, offset=0
+    )
+    assert len(revisions) == 1
+    assert revisions[0].revision_identifier == "v1.0-tar"
+    assert revisions[0].total_files == 2
+
+
+def test_trigger_ingestion_server_path_pipeline_success(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    """Test full ingestion pipeline with server_path source within allowed root."""
+    service, project, repository, owner, _, _ = _setup_service(db_session, tmp_path)
+
+    staged_archive = tmp_path / "server_archive.tgz"
+    _create_tar_file(
+        staged_archive,
+        {"server.py": b"# Server\n"},
+        mode="w:gz",
+    )
+
+    request = TriggerIngestionRequest(
+        repository_id=repository.id,
+        source_type=SourceType.SERVER_PATH,
+        source_reference=str(staged_archive),
+    )
+    ingestion = service.trigger_ingestion(request, user=owner)
+
+    assert ingestion.status == IngestionStatus.COMPLETED
+    assert ingestion.source_type == "server_path"
+
+    revisions = service.list_revisions(
+        project.id, repository.id, user=owner, limit=10, offset=0
+    )
+    assert len(revisions) == 1
+    assert revisions[0].total_files == 1

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ingestionService } from '../../services/ingestionService.js';
 
 export default function TriggerIngestionModal({
@@ -14,7 +14,22 @@ export default function TriggerIngestionModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  useEffect(() => {
+    if (isOpen) {
+      setSourceReference('');
+      setRevisionIdentifier('');
+      setError(null);
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const handleClose = () => {
+    setSourceReference('');
+    setRevisionIdentifier('');
+    setError(null);
+    onClose();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -32,6 +47,8 @@ export default function TriggerIngestionModal({
         source_reference: sourceReference.trim(),
         revision_identifier: revisionIdentifier.trim() || undefined,
       });
+      setSourceReference('');
+      setRevisionIdentifier('');
       onIngestionTriggered(ingestion);
       onClose();
     } catch (err) {
@@ -42,7 +59,7 @@ export default function TriggerIngestionModal({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="trigger-title">
+    <div className="modal-backdrop" onClick={handleClose} role="dialog" aria-modal="true" aria-labelledby="trigger-title">
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-header-icon blue">
@@ -51,15 +68,31 @@ export default function TriggerIngestionModal({
             </svg>
           </div>
           <div>
-            <h2 className="modal-title" id="trigger-title">Trigger Ingestion</h2>
-            <p className="modal-subtitle">Start an ingestion run from a verified local reference or staging path.</p>
+            <h2 className="modal-title" id="trigger-title">Trigger Ingestion (Server Path)</h2>
+            <p className="modal-subtitle">Advanced developer option: trigger an ingestion from a path already on the server filesystem.</p>
           </div>
-          <button type="button" className="modal-close-btn" onClick={onClose} aria-label="Close modal">
+          <button type="button" className="modal-close-btn" onClick={handleClose} aria-label="Close modal">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
+        </div>
+
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.65rem',
+          padding: '0.65rem 0.85rem',
+          background: 'rgba(99, 102, 241, 0.08)',
+          border: '1px solid rgba(99, 102, 241, 0.2)',
+          borderRadius: '8px',
+          fontSize: '0.82rem',
+          color: '#C7D2FE',
+          marginBottom: '1rem',
+          lineHeight: 1.4,
+        }}>
+          <span>ℹ️ <strong>Note:</strong> To upload a file directly from your computer or GitHub download, use <strong>Upload Archive</strong> instead.</span>
         </div>
 
         {error && (
@@ -85,8 +118,8 @@ export default function TriggerIngestionModal({
               onChange={(e) => setSourceType(e.target.value)}
               disabled={loading}
             >
-              <option value="archive">Archive (.zip file)</option>
-              <option value="directory">Local Directory Path</option>
+              <option value="archive">Archive file (.zip, .tar, .tar.gz, .tgz)</option>
+              <option value="server_path">Server Directory / Staged Path</option>
             </select>
           </div>
 

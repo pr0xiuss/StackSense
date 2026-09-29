@@ -15,11 +15,14 @@ from backend.platform.ingestion.application.service import (
     IngestionService,
 )
 from backend.platform.ingestion.application.validator import SourceValidator
-from backend.platform.ingestion.infra.acquisition.directory_handler import (
-    LocalDirectoryAcquisitionHandler,
+from backend.platform.ingestion.infra.acquisition.archive_handler import (
+    ArchiveAcquisitionHandler,
 )
-from backend.platform.ingestion.infra.acquisition.zip_handler import (
-    ZipArchiveAcquisitionHandler,
+from backend.platform.ingestion.infra.acquisition.github_handler import (
+    GitHubAcquisitionHandler,
+)
+from backend.platform.ingestion.infra.acquisition.server_path_handler import (
+    ServerPathAcquisitionHandler,
 )
 from backend.platform.ingestion.infra.artifact_repository import (
     SqlAlchemyArtifactRepository,
@@ -58,8 +61,9 @@ def get_ingestion_service(
     storage_service = LocalStorageService(settings.storage_root)
 
     acquisition_handlers = [
-        ZipArchiveAcquisitionHandler(),
-        LocalDirectoryAcquisitionHandler(),
+        GitHubAcquisitionHandler(),
+        ArchiveAcquisitionHandler(),
+        ServerPathAcquisitionHandler(),
     ]
     validator = SourceValidator()
     classifier = ArtifactClassifier()
