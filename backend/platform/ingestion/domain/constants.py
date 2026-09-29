@@ -13,6 +13,14 @@ MAX_ARCHIVE_NESTING_DEPTH: int = 2  # 2 levels (Section 7.10)
 MAX_COMPRESSION_RATIO: float = 100.0  # 100:1 ratio (Section 7.11)
 
 
+class SourceType(StrEnum):
+    """Canonical repository source types for acquisition."""
+
+    GITHUB = "github"
+    ARCHIVE = "archive"
+    SERVER_PATH = "server_path"
+
+
 class IngestionStatus(StrEnum):
     """Lifecycle states for an ingestion operation."""
 

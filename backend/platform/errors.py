@@ -301,3 +301,181 @@ class StorageOperationError(StackSenseError):
             category=ErrorCategory.INTERNAL,
             severity=ErrorSeverity.ERROR,
         )
+
+
+class RevisionAlreadyExistsError(StackSenseError):
+    """Raised when a revision identifier already exists for the repository."""
+
+    def __init__(
+        self,
+        message: str = (
+            "A revision with this identifier already exists for this repository."
+        ),
+    ) -> None:
+        super().__init__(
+            code="revision_already_exists",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class InvalidSourceTypeError(StackSenseError):
+    """Raised when an unsupported or invalid repository source type is provided."""
+
+    def __init__(
+        self,
+        message: str = "Unsupported or invalid repository source type.",
+    ) -> None:
+        super().__init__(
+            code="invalid_source_type",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class InvalidGitHubUrlError(StackSenseError):
+    """Raised when a provided GitHub repository URL is malformed, invalid, or unsafe."""
+
+    def __init__(
+        self,
+        message: str = "Invalid GitHub repository URL.",
+    ) -> None:
+        super().__init__(
+            code="invalid_github_url",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class InvalidGitHubRefError(StackSenseError):
+    """Raised when a provided GitHub ref contains invalid or unsafe characters."""
+
+    def __init__(
+        self,
+        message: str = "Invalid GitHub ref (branch, tag, or commit).",
+    ) -> None:
+        super().__init__(
+            code="invalid_github_ref",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class GitHubRepositoryNotFoundError(StackSenseError):
+    """Raised when a public GitHub repository does not exist or is private."""
+
+    def __init__(
+        self,
+        message: str = "Repository not found or access denied.",
+    ) -> None:
+        super().__init__(
+            code="github_repository_not_found",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class GitHubAcquisitionError(StackSenseError):
+    """Raised when acquiring a public GitHub repository fails.
+
+    Occurs due to network failures, timeouts, or provider rejection.
+    """
+
+    def __init__(
+        self,
+        message: str = "Failed to acquire GitHub repository.",
+    ) -> None:
+        super().__init__(
+            code="github_acquisition_failed",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )
+
+
+class GitHubRateLimitExceededError(GitHubAcquisitionError):
+    """Raised when GitHub API or codeload rate limits are exceeded."""
+
+    def __init__(
+        self,
+        message: str = "Repository not found or access denied.",
+    ) -> None:
+        super().__init__(message=message)
+        self.code = "github_rate_limit_exceeded"
+
+
+class GitHubAccessDeniedError(GitHubAcquisitionError):
+    """Raised when GitHub access is denied (private repository or forbidden)."""
+
+    def __init__(
+        self,
+        message: str = "Repository not found or access denied.",
+    ) -> None:
+        super().__init__(message=message)
+        self.code = "github_access_denied"
+        self.category = ErrorCategory.AUTHORIZATION
+
+
+class GitHubNetworkError(GitHubAcquisitionError):
+    """Raised when network failures or timeouts occur during GitHub acquisition."""
+
+    def __init__(
+        self,
+        message: str = "GitHub repository acquisition failed due to network error.",
+    ) -> None:
+        super().__init__(message=message)
+        self.code = "github_network_error"
+
+
+class MaxFileCountExceededError(SourceValidationError):
+    """Raised when repository archive exceeds maximum permitted file count."""
+
+    def __init__(
+        self,
+        message: str = "Repository archive exceeds maximum permitted file count.",
+    ) -> None:
+        super().__init__(message=message)
+        self.code = "max_file_count_exceeded"
+
+
+class UnsupportedArchiveFormatError(SourceValidationError):
+    """Raised when an archive has an unsupported format or extension."""
+
+    def __init__(
+        self,
+        message: str = (
+            "Unsupported archive format. Supported formats: .zip, .tar, .tar.gz, .tgz."
+        ),
+    ) -> None:
+        super().__init__(message=message)
+        self.code = "unsupported_archive_format"
+
+
+class ServerPathNotAllowedError(StackSenseError):
+    """Raised when a server filesystem path is outside the allowed source roots."""
+
+    def __init__(
+        self,
+        message: str = "Server filesystem path is outside the allowed source roots.",
+    ) -> None:
+        super().__init__(
+            code="server_path_not_allowed",
+            message=message,
+            category=ErrorCategory.AUTHORIZATION,
+        )
+
+
+ServerPathAccessDeniedError = ServerPathNotAllowedError
+
+
+class ServerPathNotFoundError(StackSenseError):
+    """Raised when a requested server filesystem path does not exist."""
+
+    def __init__(
+        self,
+        message: str = "Server filesystem path not found.",
+    ) -> None:
+        super().__init__(
+            code="server_path_not_found",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+        )

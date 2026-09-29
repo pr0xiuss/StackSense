@@ -25,15 +25,26 @@ function formatFullDateTime(dateString) {
   return new Date(dateString).toLocaleString();
 }
 
+function formatSourceType(sourceType) {
+  if (!sourceType) return '—';
+  const norm = sourceType.toLowerCase();
+  if (norm === 'github') return 'GitHub';
+  if (norm === 'archive' || norm === 'zip') return 'Archive Upload';
+  if (norm === 'server_path' || norm === 'directory' || norm === 'local') return 'Server Path';
+  return sourceType;
+}
+
 export default function IngestionTab({
   ingestions,
   loading,
   error,
+  onOpenNewIngestion,
   onOpenUpload,
   onOpenTrigger,
   onSelectIngestion,
   selectedIngestion,
 }) {
+  const handleOpenNewIngestion = onOpenNewIngestion || onOpenUpload;
   const [filterActive, setFilterActive] = useState(false);
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('ALL');
   const [copiedId, setCopiedId] = useState(false);
@@ -168,7 +179,7 @@ export default function IngestionTab({
                   </svg>
                   <span className="meta-label">Source:</span>
                   <span className="meta-value">
-                    {latestIngestion.source_type === 'archive' ? 'Archive Upload' : latestIngestion.source_type}
+                    {formatSourceType(latestIngestion.source_type)}
                   </span>
                 </div>
 
@@ -187,30 +198,18 @@ export default function IngestionTab({
           </div>
         </div>
 
-        {/* Action Trigger Buttons */}
+        {/* Action Trigger Button */}
         <div className="status-actions-col">
           <button
             type="button"
             className="btn-trigger-primary"
-            onClick={onOpenTrigger}
+            onClick={handleOpenNewIngestion}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3" />
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            <span>Trigger New Ingestion</span>
-          </button>
-
-          <button
-            type="button"
-            className="btn-upload-secondary"
-            onClick={onOpenUpload}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            <span>Upload Archive</span>
+            <span>+ New Ingestion</span>
           </button>
         </div>
       </div>
@@ -261,9 +260,21 @@ export default function IngestionTab({
 
         {!loading && !error && filteredIngestions.length === 0 && (
           <div className="table-empty-wrap">
-            <p>No ingestion jobs recorded yet.</p>
-            <button type="button" className="btn-link-action" onClick={onOpenUpload}>
-              + Upload an archive to run first ingestion
+            <p>No ingestions yet.</p>
+            <p className="empty-subtext">
+              Start your first ingestion by connecting a GitHub repository or uploading an archive.
+            </p>
+            <button
+              type="button"
+              className="btn-trigger-primary"
+              onClick={handleOpenNewIngestion}
+              style={{ marginTop: '0.75rem' }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>+ New Ingestion</span>
             </button>
           </div>
         )}
@@ -319,7 +330,7 @@ export default function IngestionTab({
                         <span>{item.completed_at ? formatRelativeTime(item.completed_at) : '—'}</span>
                       </td>
                       <td className="cell-source">
-                        <span>{item.source_type === 'archive' ? 'Archive Upload' : item.source_type}</span>
+                        <span>{formatSourceType(item.source_type)}</span>
                       </td>
                       <td className="cell-revision">
                         <span className="mono-text">{item.revision_identifier || '—'}</span>
@@ -416,9 +427,7 @@ export default function IngestionTab({
               <div className="detail-row">
                 <span className="detail-label">Source</span>
                 <span className="detail-value">
-                  {activeDetail.source_type === 'archive'
-                    ? 'Archive Upload'
-                    : activeDetail.source_type}
+                  {formatSourceType(activeDetail.source_type)}
                 </span>
               </div>
               <div className="detail-row">

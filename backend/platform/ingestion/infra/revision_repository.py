@@ -43,6 +43,20 @@ class SqlAlchemyRevisionRepository(RevisionRepository):
             return None
         return self._to_domain(model)
 
+    def get_by_repository_and_identifier(
+        self,
+        repository_id: UUID,
+        revision_identifier: str,
+    ) -> RepositoryRevision | None:
+        statement = select(RevisionModel).where(
+            RevisionModel.repository_id == repository_id,
+            RevisionModel.revision_identifier == revision_identifier,
+        )
+        model = self._session.scalar(statement)
+        if model is None:
+            return None
+        return self._to_domain(model)
+
     def list_by_repository(
         self,
         repository_id: UUID,

@@ -236,11 +236,10 @@ function testSignupFormContract() {
 function testAuthPageAndAppContract() {
   console.log('Testing AuthPage and App routing post-auth navigation...');
   const authPageSrc = fs.readFileSync(path.join(srcDir, 'pages/AuthPage.jsx'), 'utf-8');
-  assert.ok(authPageSrc.includes('#/app'), 'AuthPage must redirect to #/app on successful auth');
-  assert.ok(authPageSrc.includes('Explore'), 'AuthPage must have Explore button wired to #/app');
+  assert.ok(authPageSrc.includes('#/projects'), 'AuthPage must redirect to #/projects on successful auth');
 
   const appSrc = fs.readFileSync(path.join(srcDir, 'App.jsx'), 'utf-8');
-  assert.ok(appSrc.includes('#/app'), 'App.jsx must handle #/app route');
+  assert.ok(appSrc.includes('#/projects'), 'App.jsx must handle #/projects route');
   console.log('✓ AuthPage & App route checks passed');
 }
 

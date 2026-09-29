@@ -31,20 +31,37 @@ export const ingestionService = {
   },
 
   /**
-   * Trigger ingestion via a staged local reference or URI.
+   * Trigger ingestion via a public GitHub URL, server path, or staged archive.
+   * Supports: 'github', 'archive', and 'server_path'.
    * @param {string} projectId
    * @param {string} repositoryId
-   * @param {{ source_type?: string, source_reference: string, revision_identifier?: string }} payload
+   * @param {{ source_type?: string, repository_url?: string, ref?: string, source_reference?: string, revision_identifier?: string }} payload
    */
   async triggerIngestion(projectId, repositoryId, payload) {
+    const body = {
+      repository_id: repositoryId,
+      source_type: payload.source_type || 'archive',
+    };
+
+    if (payload.repository_url && typeof payload.repository_url === 'string') {
+      body.repository_url = payload.repository_url.trim();
+    }
+    if (payload.ref && typeof payload.ref === 'string') {
+      body.ref = payload.ref.trim();
+    }
+    if (payload.source_reference && typeof payload.source_reference === 'string') {
+      body.source_reference = payload.source_reference.trim();
+    }
+    if (payload.revision_identifier && typeof payload.revision_identifier === 'string') {
+      const cleanRev = payload.revision_identifier.trim();
+      if (cleanRev) {
+        body.revision_identifier = cleanRev;
+      }
+    }
+
     return apiClient.post(
       `/projects/${projectId}/repositories/${repositoryId}/ingestions`,
-      {
-        repository_id: repositoryId,
-        source_type: payload.source_type || 'archive',
-        source_reference: payload.source_reference.trim(),
-        revision_identifier: payload.revision_identifier ? payload.revision_identifier.trim() : null,
-      }
+      body
     );
   },
 

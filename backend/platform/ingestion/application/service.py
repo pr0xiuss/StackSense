@@ -14,6 +14,7 @@ from backend.platform.errors import (
     ActiveIngestionExistsError,
     IngestionNotFoundError,
     RepositoryNotFoundError,
+    RevisionAlreadyExistsError,
     SourceValidationError,
     StackSenseError,
 )
@@ -158,9 +159,16 @@ class DefaultIngestionService(IngestionService):
         request: TriggerIngestionRequest,
         user: User,
     ) -> IngestionResponse:
+        if request.repository_id is None:
+            raise RepositoryNotFoundError()
+
         repository = self._repository_repo.get_by_id(request.repository_id)
         if repository is None:
             raise RepositoryNotFoundError()
+
+        source_reference = request.source_reference
+        if not source_reference:
+            raise SourceValidationError("Source reference is required for ingestion.")
 
         # Enforce server-side project authorization boundary
         self._project_authorization.require_create_access(
@@ -177,13 +185,25 @@ class DefaultIngestionService(IngestionService):
         if any(ing.status == IngestionStatus.PROCESSING for ing in recent_ingestions):
             raise ActiveIngestionExistsError()
 
+        if request.revision_identifier:
+            existing_rev = self._revision_repo.get_by_repository_and_identifier(
+                repository.id,
+                request.revision_identifier.strip(),
+            )
+            if existing_rev is not None:
+                rev_str = request.revision_identifier.strip()
+                raise RevisionAlreadyExistsError(
+                    f"A revision with identifier '{rev_str}' "
+                    "already exists for this repository."
+                )
+
         now = datetime.now(UTC)
         ingestion = Ingestion(
             id=uuid4(),
             project_id=repository.project_id,
             repository_id=repository.id,
             source_type=request.source_type,
-            source_reference=request.source_reference,
+            source_reference=source_reference,
             status=IngestionStatus.PENDING,
             error_code=None,
             error_message=None,
@@ -235,10 +255,21 @@ class DefaultIngestionService(IngestionService):
                 )
 
             acquisition_result = handler.acquire(
-                request.source_reference,
+                source_reference,
                 request.revision_identifier,
                 temp_path,
             )
+
+            existing_rev = self._revision_repo.get_by_repository_and_identifier(
+                repository.id,
+                acquisition_result.revision_identifier,
+            )
+            if existing_rev is not None:
+                rev_id_str = acquisition_result.revision_identifier
+                raise RevisionAlreadyExistsError(
+                    f"A revision with identifier '{rev_id_str}' "
+                    "already exists for this repository."
+                )
 
             validated_source = self._validator.validate(acquisition_result.root_path)
 
@@ -291,7 +322,16 @@ class DefaultIngestionService(IngestionService):
                 total_bytes=validated_source.total_bytes,
                 created_at=art_now,
             )
-            self._revision_repo.save(revision)
+            try:
+                self._revision_repo.save(revision)
+            except IntegrityError as exc:
+                if "uq_repository_revisions_repo_rev" in str(exc).lower():
+                    rev_name = revision.revision_identifier
+                    raise RevisionAlreadyExistsError(
+                        f"A revision with identifier '{rev_name}' "
+                        "already exists for this repository."
+                    ) from exc
+                raise
 
             # Persist artifact batch
             self._artifact_repo.save_batch(artifacts)
@@ -334,7 +374,10 @@ class DefaultIngestionService(IngestionService):
                 created_at=ingestion.created_at,
                 updated_at=failed_now,
             )
-            self._ingestion_repo.update(failed_ingestion)
+            try:
+                self._ingestion_repo.update(failed_ingestion)
+            except Exception:
+                pass
             raise
 
         finally:

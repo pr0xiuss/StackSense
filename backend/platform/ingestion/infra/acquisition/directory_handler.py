@@ -17,7 +17,7 @@ class LocalDirectoryAcquisitionHandler(AcquisitionHandler):
     """Acquires a repository directly from a local staging or filesystem directory."""
 
     def can_handle(self, source_type: str) -> bool:
-        return source_type.lower() in {"directory", "dir", "local"}
+        return source_type.lower() in {"server_path", "directory", "dir", "local"}
 
     def acquire(
         self,

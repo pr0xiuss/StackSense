@@ -46,8 +46,21 @@ def register_exception_handlers(application: FastAPI) -> None:
             "ingestion_not_found": 404,
             "active_ingestion_exists": 409,
             "invalid_ingestion_state": 409,
+            "revision_already_exists": 409,
             "source_validation_failed": 422,
             "storage_operation_failed": 500,
+            "invalid_source_type": 422,
+            "invalid_github_url": 422,
+            "invalid_github_ref": 422,
+            "github_repository_not_found": 404,
+            "github_acquisition_failed": 502,
+            "github_rate_limit_exceeded": 429,
+            "github_access_denied": 403,
+            "github_network_error": 503,
+            "unsupported_archive_format": 422,
+            "server_path_not_allowed": 403,
+            "server_path_not_found": 404,
+            "max_file_count_exceeded": 422,
         }
 
         status_code = status_codes.get(
@@ -55,7 +68,11 @@ def register_exception_handlers(application: FastAPI) -> None:
             (
                 401
                 if exc.category is ErrorCategory.AUTHENTICATION
-                else 403 if exc.category is ErrorCategory.AUTHORIZATION else 500
+                else (
+                    403
+                    if exc.category is ErrorCategory.AUTHORIZATION
+                    else 422 if exc.category is ErrorCategory.VALIDATION else 500
+                )
             ),
         )
 

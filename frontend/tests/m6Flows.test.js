@@ -270,6 +270,38 @@ async function testServicesContracts() {
   await ingestionService.listIngestions('proj-123', 'repo-456', 20, 0);
   assert.equal(lastUrl, '/api/v1/projects/proj-123/repositories/repo-456/ingestions?limit=20&offset=0');
 
+  // ingestionService - triggerIngestion with GitHub mode
+  await ingestionService.triggerIngestion('proj-123', 'repo-456', {
+    source_type: 'github',
+    repository_url: 'https://github.com/owner/repo',
+    ref: 'main',
+    revision_identifier: 'v1.0.0',
+  });
+  assert.equal(lastUrl, '/api/v1/projects/proj-123/repositories/repo-456/ingestions');
+  assert.equal(lastMethod, 'POST');
+  assert.deepEqual(JSON.parse(lastBody), {
+    repository_id: 'repo-456',
+    source_type: 'github',
+    repository_url: 'https://github.com/owner/repo',
+    ref: 'main',
+    revision_identifier: 'v1.0.0',
+  });
+
+  // ingestionService - triggerIngestion with Server Path mode
+  await ingestionService.triggerIngestion('proj-123', 'repo-456', {
+    source_type: 'server_path',
+    source_reference: '/var/stacksense/staged/archive.tar.gz',
+    revision_identifier: 'v1.2.0',
+  });
+  assert.equal(lastUrl, '/api/v1/projects/proj-123/repositories/repo-456/ingestions');
+  assert.equal(lastMethod, 'POST');
+  assert.deepEqual(JSON.parse(lastBody), {
+    repository_id: 'repo-456',
+    source_type: 'server_path',
+    source_reference: '/var/stacksense/staged/archive.tar.gz',
+    revision_identifier: 'v1.2.0',
+  });
+
   await ingestionService.listRevisions('proj-123', 'repo-456', 20, 0);
   assert.equal(lastUrl, '/api/v1/projects/proj-123/repositories/repo-456/revisions?limit=20&offset=0');
 
@@ -305,10 +337,20 @@ function testRepositoryPageContracts() {
   assert.ok(repoPageSrc.includes('IngestionTab'), 'Must include IngestionTab');
   assert.ok(repoPageSrc.includes('RevisionsTab'), 'Must include RevisionsTab');
   assert.ok(repoPageSrc.includes('ArtifactsTab'), 'Must include ArtifactsTab');
+  assert.ok(repoPageSrc.includes('NewIngestionModal'), 'Must support unified NewIngestionModal');
   assert.ok(repoPageSrc.includes('UploadArchiveModal'), 'Must support archive upload');
   assert.ok(repoPageSrc.includes('TriggerIngestionModal'), 'Must support local path ingestion trigger');
 
+  const modalSrc = fs.readFileSync(path.join(srcDir, 'components/repository/NewIngestionModal.jsx'), 'utf-8');
+  assert.ok(modalSrc.includes('GitHub Repository'), 'NewIngestionModal must include GitHub option');
+  assert.ok(modalSrc.includes('Upload Archive'), 'NewIngestionModal must include Upload Archive option');
+  assert.ok(modalSrc.includes('Server Path'), 'NewIngestionModal must include Server Path option');
+  assert.ok(modalSrc.includes('badge-advanced'), 'NewIngestionModal must visually mark Server Path as Advanced');
+  assert.ok(modalSrc.includes('.zip') && modalSrc.includes('.tar.gz') && modalSrc.includes('.tgz'), 'NewIngestionModal must support .zip, .tar, .tar.gz, .tgz');
+  assert.ok(modalSrc.includes('role="dialog"'), 'NewIngestionModal must have accessible dialog semantics');
+
   const ingTabSrc = fs.readFileSync(path.join(srcDir, 'components/repository/IngestionTab.jsx'), 'utf-8');
+  assert.ok(ingTabSrc.includes('+ New Ingestion'), 'IngestionTab must feature unified + New Ingestion button');
   assert.ok(ingTabSrc.includes('Ingestion History'), 'Must show Ingestion History table');
   assert.ok(ingTabSrc.includes('Current Ingestion Status'), 'Must show Current Ingestion Status card');
   assert.ok(ingTabSrc.includes('Ingestion Details'), 'Must show Ingestion Details');
