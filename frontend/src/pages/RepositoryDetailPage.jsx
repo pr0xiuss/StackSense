@@ -56,6 +56,30 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
     }
   }, [projectId, repositoryId]);
 
+  const [refreshingIngestions, setRefreshingIngestions] = useState(false);
+
+  // Manual refresh ingestion status handler (F-003)
+  const handleManualRefreshIngestions = useCallback(async () => {
+    setRefreshingIngestions(true);
+    setIngestionError(null);
+    try {
+      const data = await ingestionService.listIngestions(projectId, repositoryId, 50, 0);
+      const list = Array.isArray(data) ? data : [];
+      setIngestions(list);
+      if (list.length > 0) {
+        setSelectedIngestion((prev) => {
+          if (!prev) return list[0];
+          const updated = list.find((item) => item.id === prev.id);
+          return updated || list[0];
+        });
+      }
+    } catch (err) {
+      setIngestionError(err.message || 'Failed to refresh ingestion records.');
+    } finally {
+      setRefreshingIngestions(false);
+    }
+  }, [projectId, repositoryId]);
+
   // Load ingestion history
   const loadIngestions = useCallback(async () => {
     setLoadingIngestions(true);
@@ -225,6 +249,8 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
                 <IngestionTab
                   ingestions={ingestions}
                   loading={loadingIngestions}
+                  refreshing={refreshingIngestions}
+                  onRefreshIngestions={handleManualRefreshIngestions}
                   error={ingestionError}
                   onOpenNewIngestion={() => setNewIngestionModalOpen(true)}
                   onOpenUpload={() => setNewIngestionModalOpen(true)}

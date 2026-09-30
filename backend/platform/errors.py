@@ -416,7 +416,7 @@ class GitHubAccessDeniedError(GitHubAcquisitionError):
 
 
 class GitHubNetworkError(GitHubAcquisitionError):
-    """Raised when network failures or timeouts occur during GitHub acquisition."""
+    """Raised on network failures or connection drops during GitHub acquisition."""
 
     def __init__(
         self,
@@ -424,6 +424,17 @@ class GitHubNetworkError(GitHubAcquisitionError):
     ) -> None:
         super().__init__(message=message)
         self.code = "github_network_error"
+
+
+class GitHubTimeoutError(GitHubAcquisitionError):
+    """Raised when GitHub acquisition times out (gateway timeout)."""
+
+    def __init__(
+        self,
+        message: str = "GitHub repository download timed out.",
+    ) -> None:
+        super().__init__(message=message)
+        self.code = "github_timeout"
 
 
 class MaxFileCountExceededError(SourceValidationError):

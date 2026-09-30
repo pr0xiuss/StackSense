@@ -52,10 +52,32 @@ export function AuthProvider({ children }) {
 
     restoreSession();
 
+    const isPublicRoute = () => {
+      const hash = (window.location.hash || '').toLowerCase();
+      const path = (window.location.pathname || '').toLowerCase();
+
+      return (
+        hash === '' ||
+        hash === '#/' ||
+        hash.startsWith('#/login') ||
+        hash.startsWith('#login') ||
+        hash.startsWith('#/signup') ||
+        hash.startsWith('#signup') ||
+        hash.startsWith('#/auth') ||
+        hash.startsWith('#auth') ||
+        path === '/' ||
+        path === '/login' ||
+        path === '/signin' ||
+        path === '/signup' ||
+        path === '/register' ||
+        path === '/auth'
+      );
+    };
+
     // Listen for auth:expired event dispatched by apiClient when refresh token is rejected
     const handleAuthExpired = () => {
       clearSession();
-      if (window.location.hash.startsWith('#/projects') || window.location.pathname.startsWith('/projects')) {
+      if (!isPublicRoute()) {
         if (window.history.replaceState) {
           window.history.replaceState(null, '', '#/login');
         } else {

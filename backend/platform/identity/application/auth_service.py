@@ -143,6 +143,10 @@ class AuthenticationService:
         """Rotate active refresh token and issue a fresh access/refresh token pair."""
         token_hash = self._token_service.hash_refresh_token(refresh_token)
         record = self._refresh_token_repo.get_by_token_hash(token_hash)
+        if record is None:
+            # Backward-compatible lookup for legacy unkeyed SHA-256 tokens
+            legacy_hash = self._token_service.legacy_hash_refresh_token(refresh_token)
+            record = self._refresh_token_repo.get_by_token_hash(legacy_hash)
 
         if record is None:
             raise InvalidRefreshTokenError()
@@ -193,6 +197,9 @@ class AuthenticationService:
         """Revoke a refresh token upon logout."""
         token_hash = self._token_service.hash_refresh_token(refresh_token)
         record = self._refresh_token_repo.get_by_token_hash(token_hash)
+        if record is None:
+            legacy_hash = self._token_service.legacy_hash_refresh_token(refresh_token)
+            record = self._refresh_token_repo.get_by_token_hash(legacy_hash)
         if record is not None and not record.is_revoked:
             self._refresh_token_repo.revoke(record.id)
 

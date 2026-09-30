@@ -300,9 +300,10 @@
 /* Tier Layout */
 .arch-tier {
   width: 100%;
+  max-width: 440px;
   display: flex;
   justify-content: center;
-  gap: 1rem;
+  gap: 16px;
   position: relative;
   z-index: 2;
 }
@@ -313,13 +314,15 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0.65rem 1rem;
+  padding: 0.65rem 0.5rem;
   border-radius: var(--radius-md);
   background: rgba(13, 20, 32, 0.95);
   border: 1px solid var(--border-subtle);
   transition: all var(--transition-fast);
   text-align: center;
-  min-width: 110px;
+  width: 136px;
+  flex: 0 0 136px;
+  box-sizing: border-box;
 }
 
 .arch-node:hover {
@@ -333,12 +336,14 @@
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 2px;
+  white-space: nowrap;
 }
 
 .arch-node-tech {
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
+  font-size: 0.65rem;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
 /* Node Variants */
@@ -393,36 +398,20 @@
   background: var(--accent-secondary);
 }
 
-.arch-connector-bus {
-  width: 75%;
+.arch-bus-svg {
+  width: 100%;
+  max-width: 440px;
   height: 28px;
-  border-top: 1px solid var(--border-medium);
-  border-left: 1px solid var(--border-medium);
-  border-right: 1px solid var(--border-medium);
-  border-radius: 4px 4px 0 0;
+  display: block;
   margin: 0 auto;
-  position: relative;
+  overflow: visible;
+  color: var(--border-medium);
 }
 
-.arch-connector-bus.inverted {
-  border-top: none;
-  border-bottom: 1px solid var(--border-medium);
-  border-radius: 0 0 4px 4px;
-}
-
-.arch-bus-stem {
-  position: absolute;
-  top: -12px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 1px;
-  height: 12px;
-  background: var(--border-medium);
-}
-
-.arch-bus-stem.down {
-  top: auto;
-  bottom: -12px;
+.arch-bus-line {
+  stroke: currentColor;
+  stroke-width: 1;
+  fill: none;
 }
 
 /* --------------------------------------------------------------------------
@@ -742,7 +731,7 @@
   font-size: 1.125rem;
   color: var(--text-secondary);
   max-width: 520px;
-  margin: 0 auto 2.25rem auto;
+  margin: 0 auto;
 }
 
 /* --------------------------------------------------------------------------

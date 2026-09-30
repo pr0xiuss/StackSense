@@ -82,40 +82,65 @@ async function refreshAccessToken() {
 
   isRefreshing = true;
   refreshPromise = (async () => {
+    let response;
     try {
-      const response = await fetch('/api/v1/auth/refresh', {
+      response = await fetch('/api/v1/auth/refresh', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ refresh_token: currentRefreshToken.trim() }),
       });
-
-      if (!response.ok) {
-        tokenStorage.clearTokens();
-        window.dispatchEvent(new CustomEvent('auth:expired'));
-        throw new ApiError('Session expired. Please log in again.', 401, 'refresh_failed');
-      }
-
-      const data = await response.json();
-      if (data?.access_token) {
-        tokenStorage.setTokens(data.access_token, data.refresh_token);
-        return data.access_token;
-      }
-
-      tokenStorage.clearTokens();
-      window.dispatchEvent(new CustomEvent('auth:expired'));
-      throw new ApiError('Invalid refresh response from server.', 401, 'refresh_failed');
-    } catch (err) {
-      tokenStorage.clearTokens();
-      window.dispatchEvent(new CustomEvent('auth:expired'));
-      if (err instanceof ApiError) throw err;
-      throw new ApiError('Unable to refresh session.', 401, 'refresh_failed');
-    } finally {
-      isRefreshing = false;
-      refreshPromise = null;
+    } catch (networkErr) {
+      // Network failure (offline, timeout, connection drop):
+      // Do NOT clear tokens or dispatch auth:expired!
+      throw new ApiError(
+        'Network error while refreshing session. Please check your connection.',
+        0,
+        'network_error'
+      );
     }
-  })();
+
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+
+    // Definitive authentication failure: invalid, expired, or revoked refresh token
+    if (response.status === 401 || response.status === 403) {
+      tokenStorage.clearTokens();
+      window.dispatchEvent(new CustomEvent('auth:expired'));
+      const errorCode = data?.error?.code || 'refresh_failed';
+      const errorMessage =
+        data?.error?.message ||
+        data?.detail ||
+        'Session expired. Please log in again.';
+      throw new ApiError(errorMessage, response.status, errorCode);
+    }
+
+    if (!response.ok) {
+      // Transient server/gateway error (5xx, etc.): do NOT clear tokens
+      const errorCode = data?.error?.code || 'server_error';
+      const errorMessage =
+        data?.error?.message ||
+        data?.detail ||
+        `Failed to refresh session (${response.status}).`;
+      throw new ApiError(errorMessage, response.status, errorCode);
+    }
+
+    if (data?.access_token) {
+      tokenStorage.setTokens(data.access_token, data.refresh_token);
+      return data.access_token;
+    }
+
+    // Response succeeded but had unexpected structure: do not evict user session
+    throw new ApiError('Invalid refresh response from server.', 500, 'invalid_response');
+  })().finally(() => {
+    isRefreshing = false;
+    refreshPromise = null;
+  });
 
   return refreshPromise;
 }

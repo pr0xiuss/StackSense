@@ -42,9 +42,15 @@ export default function ArchitecturePreview() {
           </div>
 
           {/* Branching Bus to Services */}
-          <div className="arch-connector-bus" aria-hidden="true">
-            <div className="arch-bus-stem" />
-          </div>
+          <svg className="arch-bus-svg" viewBox="0 0 440 28" fill="none" aria-hidden="true">
+            {/* Center vertical stem from API Gateway into User Service */}
+            <line x1="220" y1="0" x2="220" y2="28" className="arch-bus-line" />
+            {/* Horizontal branching bus to Auth Service and Product Service */}
+            <path
+              d="M 68 28 L 68 18 Q 68 14 72 14 L 368 14 Q 372 14 372 18 L 372 28"
+              className="arch-bus-line"
+            />
+          </svg>
 
           {/* Tier 3: Core Domain Services */}
           <div className="arch-tier">
@@ -63,9 +69,14 @@ export default function ArchitecturePreview() {
           </div>
 
           {/* Converging Bus to Data Tier */}
-          <div className="arch-connector-bus inverted" aria-hidden="true">
-            <div className="arch-bus-stem down" />
-          </div>
+          <svg className="arch-bus-svg" viewBox="0 0 440 28" fill="none" aria-hidden="true">
+            {/* Vertical lines connecting each service to its data/infra layer */}
+            <line x1="68" y1="0" x2="68" y2="28" className="arch-bus-line" />
+            <line x1="220" y1="0" x2="220" y2="28" className="arch-bus-line" />
+            <line x1="372" y1="0" x2="372" y2="28" className="arch-bus-line" />
+            {/* Horizontal cross-tier bus */}
+            <line x1="68" y1="14" x2="372" y2="14" className="arch-bus-line" />
+          </svg>
 
           {/* Tier 4: Data & External Infrastructure */}
           <div className="arch-tier">

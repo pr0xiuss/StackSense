@@ -224,6 +224,159 @@ async function testRefreshFailureSessionClear() {
   console.log('✓ Refresh failure session cleanup verified');
 }
 
+async function testNetworkErrorDuringRefreshPreservesTokens() {
+  console.log('Testing network dropout during refresh preserves tokens and avoids auth:expired...');
+  tokenStorage.setTokens('expired-access-token', 'valid-refresh-token');
+  windowEvents.length = 0;
+
+  globalThis.fetch = async (url) => {
+    if (url.includes('/auth/refresh')) {
+      throw new TypeError('Failed to fetch (offline network error)');
+    }
+    return new Response(JSON.stringify({ detail: 'Token expired' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  let threw = false;
+  try {
+    await apiClient.get('/projects');
+  } catch (err) {
+    threw = true;
+    assert.equal(err.status, 0);
+    assert.equal(err.code, 'network_error');
+  }
+
+  assert.ok(threw, 'Should throw ApiError on network error during refresh');
+  assert.equal(
+    tokenStorage.getAccessToken(),
+    'expired-access-token',
+    'Access token must NOT be cleared on transient network error'
+  );
+  assert.equal(
+    tokenStorage.getRefreshToken(),
+    'valid-refresh-token',
+    'Refresh token must NOT be cleared on transient network error'
+  );
+  assert.equal(
+    windowEvents.some((e) => e.type === 'auth:expired'),
+    false,
+    'auth:expired must NOT be dispatched on network error'
+  );
+  console.log('✓ Network error resilience verified (tokens preserved, no auth:expired)');
+}
+
+async function testServer5xxErrorDuringRefreshPreservesTokens() {
+  console.log('Testing 5xx error during refresh preserves tokens and avoids auth:expired...');
+  tokenStorage.setTokens('expired-access-token', 'valid-refresh-token');
+  windowEvents.length = 0;
+
+  globalThis.fetch = async (url) => {
+    if (url.includes('/auth/refresh')) {
+      return new Response(
+        JSON.stringify({ error: { code: 'bad_gateway', message: 'Bad Gateway' } }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ detail: 'Token expired' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  let threw = false;
+  try {
+    await apiClient.get('/projects');
+  } catch (err) {
+    threw = true;
+    assert.equal(err.status, 502);
+    assert.equal(err.code, 'bad_gateway');
+  }
+
+  assert.ok(threw, 'Should throw ApiError on 5xx during refresh');
+  assert.equal(
+    tokenStorage.getAccessToken(),
+    'expired-access-token',
+    'Access token must NOT be cleared on transient 5xx error'
+  );
+  assert.equal(
+    tokenStorage.getRefreshToken(),
+    'valid-refresh-token',
+    'Refresh token must NOT be cleared on transient 5xx error'
+  );
+  assert.equal(
+    windowEvents.some((e) => e.type === 'auth:expired'),
+    false,
+    'auth:expired must NOT be dispatched on transient 5xx error'
+  );
+  console.log('✓ 5xx transient error resilience verified (tokens preserved, no auth:expired)');
+}
+
+async function testRefreshPreservesBackendSemanticErrorCode() {
+  console.log('Testing refresh preserves backend semantic error code...');
+  tokenStorage.setTokens('expired-token', 'invalid-refresh');
+  windowEvents.length = 0;
+
+  globalThis.fetch = async (url) => {
+    if (url.includes('/auth/refresh')) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'refresh_token_expired',
+            message: 'The refresh token has expired. Please log in again.',
+          },
+        }),
+        {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+    return new Response(JSON.stringify({ detail: 'Token expired' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  let threw = false;
+  try {
+    await apiClient.get('/projects');
+  } catch (err) {
+    threw = true;
+    assert.equal(err.status, 401);
+    assert.equal(err.code, 'refresh_token_expired');
+    assert.equal(err.message, 'The refresh token has expired. Please log in again.');
+  }
+
+  assert.ok(threw, 'Should throw ApiError on refresh failure');
+  assert.equal(tokenStorage.getAccessToken(), null, 'Access token must be cleared on 401');
+  assert.equal(tokenStorage.getRefreshToken(), null, 'Refresh token must be cleared on 401');
+  assert.ok(
+    windowEvents.some((e) => e.type === 'auth:expired'),
+    'auth:expired must be dispatched on 401'
+  );
+  console.log('✓ Backend semantic error code preservation verified');
+}
+
+function testAuthContextSessionResilienceContracts() {
+  console.log('Testing AuthContext session resilience & routing contracts...');
+  const authCtxSrc = fs.readFileSync(path.join(srcDir, 'auth/AuthContext.jsx'), 'utf-8');
+  assert.ok(authCtxSrc.includes('const isPublicRoute = () => {'), 'Must define isPublicRoute check');
+  assert.ok(authCtxSrc.includes("hash.startsWith('#/login')"), 'isPublicRoute must include login route');
+  assert.ok(authCtxSrc.includes("hash.startsWith('#/signup')"), 'isPublicRoute must include signup route');
+  assert.ok(authCtxSrc.includes("hash.startsWith('#/auth')"), 'isPublicRoute must include auth routes');
+  assert.ok(
+    authCtxSrc.includes('if (!isPublicRoute()) {'),
+    'handleAuthExpired must check !isPublicRoute() before redirect'
+  );
+  assert.ok(
+    authCtxSrc.includes("window.addEventListener('auth:expired', handleAuthExpired)"),
+    'Must subscribe to auth:expired event'
+  );
+  console.log('✓ AuthContext session resilience contracts passed');
+}
+
 async function testServicesContracts() {
   console.log('Testing Project, Repository, and Ingestion services...');
   tokenStorage.setTokens('test-token', 'test-refresh');
@@ -349,8 +502,13 @@ function testRepositoryPageContracts() {
   assert.ok(modalSrc.includes('.zip') && modalSrc.includes('.tar.gz') && modalSrc.includes('.tgz'), 'NewIngestionModal must support .zip, .tar, .tar.gz, .tgz');
   assert.ok(modalSrc.includes('role="dialog"'), 'NewIngestionModal must have accessible dialog semantics');
 
+  assert.ok(repoPageSrc.includes('handleManualRefreshIngestions'), 'RepositoryDetailPage must implement manual ingestion refresh');
+  assert.ok(repoPageSrc.includes('onRefreshIngestions'), 'RepositoryDetailPage must pass onRefreshIngestions to IngestionTab');
+
   const ingTabSrc = fs.readFileSync(path.join(srcDir, 'components/repository/IngestionTab.jsx'), 'utf-8');
   assert.ok(ingTabSrc.includes('+ New Ingestion'), 'IngestionTab must feature unified + New Ingestion button');
+  assert.ok(ingTabSrc.includes('Refresh Status'), 'IngestionTab must feature manual Refresh Status button');
+  assert.ok(ingTabSrc.includes('btn-refresh-status'), 'IngestionTab must use btn-refresh-status class');
   assert.ok(ingTabSrc.includes('Ingestion History'), 'Must show Ingestion History table');
   assert.ok(ingTabSrc.includes('Current Ingestion Status'), 'Must show Current Ingestion Status card');
   assert.ok(ingTabSrc.includes('Ingestion Details'), 'Must show Ingestion Details');
@@ -377,6 +535,7 @@ function testCssFidelity() {
 
   const repoCss = fs.readFileSync(path.join(srcDir, 'styles/repository.css'), 'utf-8');
   assert.ok(repoCss.includes('.repo-tab-btn'), 'Tab styles defined');
+  assert.ok(repoCss.includes('.btn-refresh-status'), 'Manual refresh button styles defined');
   assert.ok(
     repoCss.includes('.repo-status-pill') || repoCss.includes('.status-badge'),
     'Status badge/pill styles defined'
@@ -389,10 +548,14 @@ async function runM6Tests() {
   await testAutomaticRefreshAndRetry();
   await testConcurrent401Deduplication();
   await testRefreshFailureSessionClear();
+  await testNetworkErrorDuringRefreshPreservesTokens();
+  await testServer5xxErrorDuringRefreshPreservesTokens();
+  await testRefreshPreservesBackendSemanticErrorCode();
   await testServicesContracts();
   testDashboardPageContracts();
   testRepositoryPageContracts();
   testCssFidelity();
+  testAuthContextSessionResilienceContracts();
   console.log('\n=============================================');
   console.log(' All M6 Product Flow Tests Passed with 100%! ');
   console.log('=============================================\n');
