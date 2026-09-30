@@ -28,24 +28,10 @@ docker compose version
 
 ---
 
-## 1. Clone the Repository
+### Backend
 
-```bash
-git clone https://github.com/pr0xiuss/StackSense.git
-cd StackSense
-```
+## 1. Activate the Virtual Environment
 
----
-
-## 2. Create the Virtual Environment
-
-Create the project virtual environment:
-
-```bash
-python -m venv venv
-```
-
-Activate it.
 
 ### Linux / macOS
 
@@ -61,18 +47,17 @@ venv\Scripts\activate
 
 ---
 
-## 3. Install Dependencies
+## 2. Install Dependencies
 
 With the virtual environment activated:
 
 ```bash
-pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
 ---
 
-## 4. Configure Environment Variables
+## 3. Configure Environment Variables
 
 Create your local environment file from the example:
 
@@ -86,24 +71,13 @@ Use the environment variable names and development configuration provided in `.e
 
 ---
 
-## 5. Start PostgreSQL
+## 4. Start PostgreSQL
 
 Start the PostgreSQL container:
 
 ```bash
-docker compose -f infra/docker/compose.yml up -d
-```
-
-Check the container status:
-
-```bash
-docker compose -f infra/docker/compose.yml ps
-```
-
-To view PostgreSQL logs:
-
-```bash
-docker compose -f infra/docker/compose.yml logs postgres
+cd infra/docker
+docker compose up -d
 ```
 
 PostgreSQL is exposed locally on port `5434`.
@@ -112,7 +86,7 @@ The PostgreSQL container itself listens on port `5432`.
 
 ---
 
-## 6. Run Database Migrations
+## 5. Run Database Migrations
 
 Apply all Alembic migrations:
 
@@ -128,7 +102,7 @@ alembic current
 
 ---
 
-## 7. Run the FastAPI Application
+## 6. Run the FastAPI Application
 
 Start the development server:
 
@@ -150,9 +124,49 @@ http://127.0.0.1:8000/docs
 
 ---
 
+### Frontend
+
+## 1. Handle Node MODULES
+Delete node modules if package json or package-lock json changed
+
+### Linux / macOS
+```bash
+rm -rf node_modules
+```
+
+### windows powershell
+```bash
+Remove-Item -Recurse -Force node_modules
+```
+
+## 2. Install dependencies
+```bash
+npm install
+```
+
+if dependency issue comes run
+```bash
+npm install --legacy-peer-deps
+```
+
+## 3. Start the server
+```bash
+npm run dev
+```
+
+The server runs on http://localhost:3000/
+
+
 # Development Checks
 
 Run these checks before creating a pull request on your feature branch.
+
+## Requirements.txt in backend if new dependencies installed
+
+```bash
+rm requirements.txt
+pip freeze > requirementx.txt
+```
 
 ## Formatting
 
@@ -188,42 +202,6 @@ pytest
 
 ---
 
-# Recommended Development Workflow
-
-Activate the virtual environment:
-
-```bash
-source venv/bin/activate
-```
-
-Start PostgreSQL:
-
-```bash
-docker compose -f infra/docker/compose.yml up -d
-```
-
-Apply migrations:
-
-```bash
-alembic upgrade head
-```
-
-Run the application:
-
-```bash
-uvicorn backend.api.app:app --reload
-```
-
-Before committing changes:
-
-```bash
-black .
-ruff check . --fix
-mypy backend
-pytest
-```
-
----
 
 # Database
 
@@ -247,6 +225,11 @@ Docker port mapping:
 
 ```text
 5434:5432
+```
+
+Acess DB using docker
+```bash
+docker exec -it stacksense-postgres psql -U postgres -d stacksense
 ```
 
 ---
@@ -277,66 +260,3 @@ When adding a new environment variable:
 4. Never commit credentials or other secrets.
 
 ---
-
-# Git Branching
-
-StackSense uses phase branches and feature branches.
-
-The current phase branch is:
-
-```text
-p2-project-repository-platform
-```
-
-Create feature branches from the current phase branch:
-
-```bash
-git switch p2-project-repository-platform
-git switch -c feature/<feature-name>
-```
-
-Feature branches are merged into the phase branch through pull requests.
-
-The phase branch is merged into `main` only after the phase has been completed, verified, and frozen.
-
----
-
-# Architecture
-
-The authoritative architecture specification is:
-
-```text
-master.txt
-```
-
-Implementation decisions must follow the architecture specification.
-
-The current ownership hierarchy is:
-
-```text
-User
-  ↓
-Project
-  ↓
-Repository
-```
-
-Project is the primary ownership, authorization, and isolation boundary.
-
----
-
-# Project Status
-
-Current phase:
-
-**P2 — Project & Repository Platform**
-
-Completed:
-
-- P1 — Engineering Foundation
-- P2 M1 — Project Domain Foundation
-- P2 M2 — Project Access / Ownership Boundary
-
-P2 M1 and M2 are frozen.
-
-Development continues with the remaining P2 modules.

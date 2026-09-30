@@ -18,9 +18,25 @@ class CurrentUserProvider(ABC):
 class StaticCurrentUserProvider(CurrentUserProvider):
     """Temporary development provider for the current user."""
 
-    def __init__(self, user_id: UUID) -> None:
-        self._user = User(id=user_id)
+    def __init__(self, user_id: UUID, username: str | None = None) -> None:
+        self._user = User(
+            id=user_id,
+            email=f"user-{user_id}@stacksense.local",
+            username=username or f"user_{str(user_id).replace('-', '')[-8:]}",
+            is_active=True,
+        )
 
     def get_current_user(self) -> User:
         """Return the configured development user."""
+        return self._user
+
+
+class AuthenticatedCurrentUserProvider(CurrentUserProvider):
+    """Current-user provider holding the authenticated user from a validated token."""
+
+    def __init__(self, user: User) -> None:
+        self._user = user
+
+    def get_current_user(self) -> User:
+        """Return the authenticated user."""
         return self._user

@@ -53,3 +53,4 @@ frontend/.vite/
 
 # Local Docker data
 *.pid
+data/

@@ -121,7 +121,7 @@ def test_project_access_is_required(
 
 def test_project_access_is_user_scoped(
     client: TestClient,
-    set_current_user: callable,
+    set_current_user: Callable[[UUID], None],
 ) -> None:
     owner_id = UUID(
         "00000000-0000-0000-0000-000000000001",
