@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -109,5 +110,10 @@ class JwtTokenService(TokenService):
         return raw_token, token_hash, expires_at
 
     def hash_refresh_token(self, raw_token: str) -> str:
-        """Compute the deterministic SHA-256 hash of a raw refresh token."""
+        """Compute the deterministic HMAC-SHA256 keyed hash of a raw refresh token."""
+        key = self._secret_key.encode("utf-8")
+        return hmac.new(key, raw_token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def legacy_hash_refresh_token(self, raw_token: str) -> str:
+        """Compute unkeyed SHA-256 hash for backward compatibility."""
         return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()

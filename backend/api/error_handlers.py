@@ -57,6 +57,7 @@ def register_exception_handlers(application: FastAPI) -> None:
             "github_rate_limit_exceeded": 429,
             "github_access_denied": 403,
             "github_network_error": 503,
+            "github_timeout": 504,
             "unsupported_archive_format": 422,
             "server_path_not_allowed": 403,
             "server_path_not_found": 404,

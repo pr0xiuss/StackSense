@@ -29,7 +29,6 @@ export default function Navbar() {
             <li><a href="#how-it-works" className="nav-link">How It Works</a></li>
             <li><a href="#why-stacksense" className="nav-link">Features</a></li>
             <li><a href="#architecture" className="nav-link">Use Cases</a></li>
-            <li><a href="#docs" className="nav-link">Docs</a></li>
           </ul>
         </nav>
 
@@ -67,7 +66,6 @@ export default function Navbar() {
           <a href="#how-it-works" className="mobile-nav-link" onClick={closeMenu}>How It Works</a>
           <a href="#why-stacksense" className="mobile-nav-link" onClick={closeMenu}>Features</a>
           <a href="#architecture" className="mobile-nav-link" onClick={closeMenu}>Use Cases</a>
-          <a href="#docs" className="mobile-nav-link" onClick={closeMenu}>Docs</a>
         </div>
       )}
     </header>

@@ -1,6 +1,7 @@
 """Public GitHub repository acquisition handler."""
 
 import shutil
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -8,11 +9,11 @@ import httpx
 
 from backend.platform.config import get_settings
 from backend.platform.errors import (
-    GitHubAccessDeniedError,
     GitHubAcquisitionError,
     GitHubNetworkError,
     GitHubRateLimitExceededError,
     GitHubRepositoryNotFoundError,
+    GitHubTimeoutError,
     SourceValidationError,
 )
 from backend.platform.ingestion.application.acquisition import (
@@ -87,16 +88,14 @@ class GitHubAcquisitionHandler(AcquisitionHandler):
         try:
             try:
                 with client.stream("GET", codeload_url, headers=headers) as response:
-                    if response.status_code == 404:
+                    # Unify 401, 403, and 404 to avoid leaking private repository
+                    # existence
+                    if response.status_code in (401, 403, 404):
                         raise GitHubRepositoryNotFoundError(
                             "Repository not found or access denied."
                         )
                     if response.status_code == 429:
                         raise GitHubRateLimitExceededError(
-                            "Repository not found or access denied."
-                        )
-                    if response.status_code in (401, 403):
-                        raise GitHubAccessDeniedError(
                             "Repository not found or access denied."
                         )
                     if response.status_code >= 400:
@@ -106,8 +105,14 @@ class GitHubAcquisitionHandler(AcquisitionHandler):
                         )
 
                     total_downloaded = 0
+                    stream_start = time.monotonic()
                     with open(download_path, "wb") as f:
                         for chunk in response.iter_bytes(chunk_size=65536):
+                            if (time.monotonic() - stream_start) > timeout:
+                                raise GitHubTimeoutError(
+                                    "GitHub repository download timed out after "
+                                    f"{timeout} seconds."
+                                )
                             total_downloaded += len(chunk)
                             if total_downloaded > MAX_REPOSITORY_SIZE_BYTES:
                                 raise SourceValidationError(
@@ -116,7 +121,7 @@ class GitHubAcquisitionHandler(AcquisitionHandler):
                                 )
                             f.write(chunk)
             except httpx.TimeoutException as exc:
-                raise GitHubNetworkError(
+                raise GitHubTimeoutError(
                     "GitHub repository download timed out."
                 ) from exc
             except httpx.RequestError as exc:

@@ -144,6 +144,11 @@ Remove-Item -Recurse -Force node_modules
 npm install
 ```
 
+if dependency issue comes run
+```bash
+npm install --legacy-peer-deps
+```
+
 ## 3. Start the server
 ```bash
 npm run dev

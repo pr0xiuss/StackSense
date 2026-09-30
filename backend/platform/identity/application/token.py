@@ -41,3 +41,8 @@ class TokenService(ABC):
     def hash_refresh_token(self, raw_token: str) -> str:
         """Compute the deterministic cryptographic hash of a raw refresh token."""
         ...
+
+    @abstractmethod
+    def legacy_hash_refresh_token(self, raw_token: str) -> str:
+        """Compute unkeyed SHA-256 hash for backward compatibility."""
+        ...

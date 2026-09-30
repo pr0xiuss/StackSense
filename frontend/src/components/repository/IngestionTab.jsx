@@ -37,6 +37,8 @@ function formatSourceType(sourceType) {
 export default function IngestionTab({
   ingestions,
   loading,
+  refreshing,
+  onRefreshIngestions,
   error,
   onOpenNewIngestion,
   onOpenUpload,
@@ -209,8 +211,35 @@ export default function IngestionTab({
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            <span>+ New Ingestion</span>
+            <span>New Ingestion</span>
           </button>
+          {onRefreshIngestions && (
+            <button
+              type="button"
+              className={`btn-refresh-status ${refreshing ? 'spinning' : ''}`}
+              onClick={onRefreshIngestions}
+              disabled={refreshing || loading}
+              title="Refresh Ingestion Status"
+              aria-label="Refresh Ingestion Status"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={refreshing ? 'spin-icon' : ''}
+              >
+                <path d="M23 4v6h-6" />
+                <path d="M1 20v-6h6" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+              <span>{refreshing ? 'Refreshing...' : 'Refresh Status'}</span>
+            </button>
+          )}
         </div>
       </div>
 

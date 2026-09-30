@@ -1,7 +1,9 @@
 """Safe extraction utility for repository archives (.zip, .tar, .tar.gz, .tgz)."""
 
 import hashlib
+import re
 import shutil
+import stat
 import tarfile
 import zipfile
 from dataclasses import dataclass
@@ -22,6 +24,118 @@ from backend.platform.ingestion.domain.constants import (
 )
 
 ARCHIVE_EXTENSIONS = {".zip", ".tar", ".gz", ".tgz", ".bz2", ".7z"}
+
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+_WINDOWS_DRIVE_PATTERN = re.compile(r"^[a-zA-Z]:")
+
+
+def _sanitize_and_validate_member_path(
+    raw_path: str,
+    *,
+    is_dir: bool,
+    destination_dir: Path,
+    dest_resolved: Path,
+) -> Path | None:
+    """Validate archive member path against traversal, escaping, and device injection.
+
+    Returns:
+        The target Path under destination_dir if valid, or None if the entry
+        represents the archive root itself and should be skipped.
+
+    Raises:
+        SourceValidationError: if any path traversal, drive prefix, UNC prefix,
+        reserved device, or escape condition is detected.
+    """
+    if "\x00" in raw_path:
+        raise SourceValidationError(
+            f"Path traversal detected in archive member (null byte): {raw_path!r}"
+        )
+
+    # Check for absolute paths before any stripping
+    if raw_path.startswith("/") or raw_path.startswith("\\"):
+        raise SourceValidationError(
+            f"Path traversal detected in archive member: {raw_path}"
+        )
+
+    # Check for UNC network share paths
+    if raw_path.startswith("//") or raw_path.startswith("\\\\"):
+        raise SourceValidationError(
+            f"Path traversal detected in archive member: {raw_path}"
+        )
+
+    # Check for Windows drive-letter paths (e.g. C:, C:\, C:/, d:foo)
+    if _WINDOWS_DRIVE_PATTERN.match(raw_path):
+        raise SourceValidationError(
+            f"Path traversal detected in archive member: {raw_path}"
+        )
+
+    # Normalize backslashes to forward slashes
+    normalized = raw_path.replace("\\", "/")
+
+    # Strip leading/trailing slashes for segment parsing
+    clean_name = normalized.strip("/")
+    if not clean_name:
+        return None  # Root directory entry (e.g. "" or "./")
+
+    # If the path starts with './', strip that prefix for consistent traversal analysis
+    if clean_name.startswith("./"):
+        clean_name = clean_name[2:].lstrip("/")
+        if not clean_name:
+            return None
+
+    if len(clean_name) > MAX_PATH_LENGTH:
+        raise SourceValidationError(
+            f"Archive member path exceeds {MAX_PATH_LENGTH} "
+            f"characters: {clean_name}"
+        )
+
+    parts = clean_name.split("/")
+    if ".." in parts:
+        raise SourceValidationError(
+            f"Path traversal detected in archive member: {raw_path}"
+        )
+
+    if "" in parts:
+        raise SourceValidationError(
+            f"Path traversal detected in archive member: {raw_path}"
+        )
+
+    if any(":" in part for part in parts):
+        raise SourceValidationError(
+            f"Path traversal detected in archive member: {raw_path}"
+        )
+
+    for part in parts:
+        stem = part.split(".")[0].upper()
+        if stem in _WINDOWS_RESERVED_NAMES:
+            raise SourceValidationError(
+                f"Prohibited Windows reserved device name in archive member: {raw_path}"
+            )
+
+    depth = len(parts) - (1 if is_dir else 0)
+    if depth > MAX_DIRECTORY_DEPTH:
+        raise SourceValidationError(
+            f"Directory depth ({depth}) exceeds limit of "
+            f"{MAX_DIRECTORY_DEPTH}: {clean_name}"
+        )
+
+    dest_path = destination_dir / clean_name
+    try:
+        resolved = dest_path.resolve()
+    except (ValueError, RuntimeError) as exc:
+        raise SourceValidationError(
+            f"Invalid archive member path '{clean_name}': {exc}"
+        ) from exc
+
+    if not resolved.is_relative_to(dest_resolved):
+        raise SourceValidationError(f"Member extraction escapes target: {clean_name}")
+
+    return dest_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,31 +239,25 @@ class ArchiveExtractor:
 
                 total_uncompressed = 0
                 for member in members:
-                    clean_name = member.filename.replace("\\", "/").strip("/")
-                    if not clean_name:
+                    # Reject symlinks encoded in external attributes
+                    mode = member.external_attr >> 16
+                    if stat.S_ISLNK(mode):
+                        raise SourceValidationError(
+                            f"Archive member '{member.filename}' is a link. "
+                            "Symbolic and hard links are not permitted."
+                        )
+
+                    dest_file = _sanitize_and_validate_member_path(
+                        member.filename,
+                        is_dir=member.is_dir(),
+                        destination_dir=destination_dir,
+                        dest_resolved=dest_resolved,
+                    )
+                    if dest_file is None:
                         continue
 
-                    parts = clean_name.split("/")
-                    if ".." in parts or clean_name.startswith("/") or ":" in clean_name:
-                        raise SourceValidationError(
-                            f"Path traversal detected in archive member: "
-                            f"{member.filename}"
-                        )
-
-                    if len(clean_name) > MAX_PATH_LENGTH:
-                        raise SourceValidationError(
-                            f"Archive member path exceeds {MAX_PATH_LENGTH} "
-                            f"characters: {clean_name}"
-                        )
-
-                    depth = len(parts) - (1 if member.is_dir() else 0)
-                    if depth > MAX_DIRECTORY_DEPTH:
-                        raise SourceValidationError(
-                            f"Directory depth ({depth}) exceeds limit of "
-                            f"{MAX_DIRECTORY_DEPTH}: {clean_name}"
-                        )
-
-                    file_ext = Path(clean_name).suffix.lower()
+                    parts = dest_file.relative_to(destination_dir).as_posix().split("/")
+                    file_ext = dest_file.suffix.lower()
                     if file_ext in ARCHIVE_EXTENSIONS:
                         archive_nesting = sum(
                             1
@@ -159,7 +267,7 @@ class ArchiveExtractor:
                         if archive_nesting > MAX_ARCHIVE_NESTING_DEPTH:
                             raise SourceValidationError(
                                 f"Archive nesting depth exceeds limit of "
-                                f"{MAX_ARCHIVE_NESTING_DEPTH}: {clean_name}"
+                                f"{MAX_ARCHIVE_NESTING_DEPTH}: {dest_file.name}"
                             )
 
                     total_uncompressed += member.file_size
@@ -174,19 +282,11 @@ class ArchiveExtractor:
                         if ratio > MAX_COMPRESSION_RATIO:
                             raise SourceValidationError(
                                 f"High compression ratio ({ratio:.1f}:1) detected on "
-                                f"{clean_name}, exceeding safety limit."
+                                f"{dest_file.name}, exceeding safety limit."
                             )
 
                     if not member.is_dir():
-                        dest_file = destination_dir / clean_name
                         dest_file.parent.mkdir(parents=True, exist_ok=True)
-
-                        resolved = dest_file.resolve()
-                        if not str(resolved).startswith(str(dest_resolved)):
-                            raise SourceValidationError(
-                                f"Member extraction escapes target: {clean_name}"
-                            )
-
                         with (
                             zf.open(member) as source_stream,
                             open(dest_file, "wb") as target_file,
@@ -216,44 +316,39 @@ class ArchiveExtractor:
 
                 total_uncompressed = 0
                 for member in members:
-                    clean_name = member.name.replace("\\", "/").strip("/")
-                    if not clean_name:
-                        continue
-
-                    parts = clean_name.split("/")
-                    if ".." in parts or clean_name.startswith("/") or ":" in clean_name:
-                        raise SourceValidationError(
-                            f"Path traversal detected in archive member: "
-                            f"{member.name}"
-                        )
-
-                    if len(clean_name) > MAX_PATH_LENGTH:
-                        raise SourceValidationError(
-                            f"Archive member path exceeds {MAX_PATH_LENGTH} "
-                            f"characters: {clean_name}"
-                        )
-
-                    depth = len(parts) - (1 if member.isdir() else 0)
-                    if depth > MAX_DIRECTORY_DEPTH:
-                        raise SourceValidationError(
-                            f"Directory depth ({depth}) exceeds limit of "
-                            f"{MAX_DIRECTORY_DEPTH}: {clean_name}"
-                        )
-
-                    # Reject special devices and FIFOs
-                    if member.ischr() or member.isblk() or member.isfifo():
-                        raise SourceValidationError(
-                            f"Prohibited special device or FIFO entry: {clean_name}"
-                        )
-
                     # Reject symbolic and hard links
                     if member.issym() or member.islnk():
                         raise SourceValidationError(
-                            f"Archive member '{clean_name}' is a link. "
+                            f"Archive member '{member.name}' is a link. "
                             "Symbolic and hard links are not permitted."
                         )
 
-                    file_ext = Path(clean_name).suffix.lower()
+                    # Reject special devices, FIFOs, and sockets
+                    # (strictly whitelist regular files and directories)
+                    if (
+                        member.ischr()
+                        or member.isblk()
+                        or member.isfifo()
+                        or member.isdev()
+                        or not (member.isfile() or member.isdir())
+                    ):
+                        raise SourceValidationError(
+                            "Prohibited special device, FIFO, or socket entry: "
+                            f"{member.name}"
+                        )
+
+                    dest_entry = _sanitize_and_validate_member_path(
+                        member.name,
+                        is_dir=member.isdir(),
+                        destination_dir=destination_dir,
+                        dest_resolved=dest_resolved,
+                    )
+                    if dest_entry is None:
+                        continue
+
+                    rel_entry = dest_entry.relative_to(destination_dir)
+                    parts = rel_entry.as_posix().split("/")
+                    file_ext = dest_entry.suffix.lower()
                     if file_ext in ARCHIVE_EXTENSIONS:
                         archive_nesting = sum(
                             1
@@ -263,7 +358,7 @@ class ArchiveExtractor:
                         if archive_nesting > MAX_ARCHIVE_NESTING_DEPTH:
                             raise SourceValidationError(
                                 f"Archive nesting depth exceeds limit of "
-                                f"{MAX_ARCHIVE_NESTING_DEPTH}: {clean_name}"
+                                f"{MAX_ARCHIVE_NESTING_DEPTH}: {dest_entry.name}"
                             )
 
                     total_uncompressed += member.size
@@ -278,26 +373,17 @@ class ArchiveExtractor:
                         if ratio > MAX_COMPRESSION_RATIO:
                             raise SourceValidationError(
                                 f"High compression ratio ({ratio:.1f}:1) detected on "
-                                f"{clean_name}, exceeding safety limit."
+                                f"{dest_entry.name}, exceeding safety limit."
                             )
 
                     if member.isfile():
-                        dest_file = destination_dir / clean_name
-                        dest_file.parent.mkdir(parents=True, exist_ok=True)
-
-                        resolved = dest_file.resolve()
-                        if not str(resolved).startswith(str(dest_resolved)):
-                            raise SourceValidationError(
-                                f"Member extraction escapes target: {clean_name}"
-                            )
-
+                        dest_entry.parent.mkdir(parents=True, exist_ok=True)
                         source_stream = tf.extractfile(member)
                         if source_stream is not None:
-                            with source_stream, open(dest_file, "wb") as target_file:
+                            with source_stream, open(dest_entry, "wb") as target_file:
                                 shutil.copyfileobj(source_stream, target_file)
                     elif member.isdir():
-                        dest_dir = destination_dir / clean_name
-                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        dest_entry.mkdir(parents=True, exist_ok=True)
 
         except tarfile.TarError as exc:
             raise SourceValidationError(f"Corrupt tar archive: {exc}") from exc

@@ -134,3 +134,16 @@ def test_token_service_refresh_token_generation_and_hashing(
     assert token_hash == token_service.hash_refresh_token(raw_token)
     assert expires_at > datetime.now(UTC)
     assert token_service.refresh_expiration_seconds == 30 * 86400
+
+    # Keyed HMAC-SHA256 must be distinct from unkeyed SHA-256
+    legacy_hash = token_service.legacy_hash_refresh_token(raw_token)
+    assert token_hash != legacy_hash
+
+    # A different secret key must yield a different HMAC hash for the same token
+    alt_service = JwtTokenService(
+        secret_key=SecretStr("an-alternative-secret-key-at-least-32-bytes"),
+        algorithm="HS256",
+    )
+    assert alt_service.hash_refresh_token(raw_token) != token_hash
+    # But legacy unkeyed hash is identical across services
+    assert alt_service.legacy_hash_refresh_token(raw_token) == legacy_hash

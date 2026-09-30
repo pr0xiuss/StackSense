@@ -1,5 +1,6 @@
 """Tests for refresh token domain, persistence, rotation, and lifecycle."""
 
+import secrets
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -368,3 +369,84 @@ def test_concurrent_sessions_multiple_refresh_tokens(
     # Session 2 still works independently
     rotated_2 = auth_service.refresh_access_token(login_2.refresh_token)
     assert rotated_2.refresh_token != login_2.refresh_token
+
+
+def test_refresh_token_legacy_sha256_backward_compatibility(
+    auth_components: dict[str, Any],
+) -> None:
+    """Legacy tokens hashed with plain SHA-256 can be refreshed to HMAC-SHA256."""
+    auth_service = auth_components["auth_service"]
+    token_service = auth_components["token_service"]
+    repo = auth_components["refresh_token_repo"]
+    tag = uuid4().hex[:8]
+    username = f"leg_{tag}"
+    email = f"leg_{tag}@stacksense.local"
+
+    user = auth_service.register(
+        email=email,
+        username=username,
+        password="ValidPassword123!",
+    )
+    raw_legacy_token = secrets.token_urlsafe(32)
+    legacy_hash = token_service.legacy_hash_refresh_token(raw_legacy_token)
+    legacy_record = RefreshToken(
+        id=uuid4(),
+        user_id=user.id,
+        token_hash=legacy_hash,
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+        revoked_at=None,
+        created_at=datetime.now(UTC),
+    )
+    repo.save(legacy_record)
+
+    # Refresh the legacy token
+    rotated_resp = auth_service.refresh_access_token(raw_legacy_token)
+    assert rotated_resp.access_token is not None
+    assert rotated_resp.refresh_token is not None
+    assert rotated_resp.refresh_token != raw_legacy_token
+
+    # Verify old legacy token was revoked
+    old_record = repo.get_by_token_hash(legacy_hash)
+    assert old_record is not None
+    assert old_record.is_revoked is True
+
+    # Verify the new token is stored using HMAC-SHA256
+    new_hmac_hash = token_service.hash_refresh_token(rotated_resp.refresh_token)
+    new_record = repo.get_by_token_hash(new_hmac_hash)
+    assert new_record is not None
+    assert new_record.is_active is True
+
+
+def test_revoke_legacy_sha256_refresh_token(
+    auth_components: dict[str, Any],
+) -> None:
+    """Legacy tokens hashed with plain SHA-256 can be revoked on logout."""
+    auth_service = auth_components["auth_service"]
+    token_service = auth_components["token_service"]
+    repo = auth_components["refresh_token_repo"]
+    tag = uuid4().hex[:8]
+    username = f"revleg_{tag}"
+    email = f"revleg_{tag}@stacksense.local"
+
+    user = auth_service.register(
+        email=email,
+        username=username,
+        password="ValidPassword123!",
+    )
+    raw_legacy_token = secrets.token_urlsafe(32)
+    legacy_hash = token_service.legacy_hash_refresh_token(raw_legacy_token)
+    legacy_record = RefreshToken(
+        id=uuid4(),
+        user_id=user.id,
+        token_hash=legacy_hash,
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+        revoked_at=None,
+        created_at=datetime.now(UTC),
+    )
+    repo.save(legacy_record)
+
+    # Revoke legacy token
+    auth_service.revoke_refresh_token(raw_legacy_token)
+    revoked_record = repo.get_by_token_hash(legacy_hash)
+    assert revoked_record is not None
+    assert revoked_record.is_revoked is True

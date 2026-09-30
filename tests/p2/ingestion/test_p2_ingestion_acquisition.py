@@ -480,12 +480,37 @@ def test_github_acquisition_not_found(tmp_path: Path) -> None:
     mock_client = httpx.Client(transport=httpx.MockTransport(mock_transport_handler))
     handler = GitHubAcquisitionHandler(http_client=mock_client)
 
-    with pytest.raises(GitHubRepositoryNotFoundError):
+    with pytest.raises(GitHubRepositoryNotFoundError) as exc:
         handler.acquire(
             source_reference="https://github.com/octocat/private-repo",
             revision_identifier=None,
             temp_root=tmp_path / "work",
         )
+    assert exc.value.code == "github_repository_not_found"
+    assert "not found or access denied" in str(exc.value).lower()
+
+
+@pytest.mark.parametrize("status_code", [401, 403])
+def test_github_acquisition_private_or_forbidden_unified_to_not_found(
+    tmp_path: Path, status_code: int
+) -> None:
+    """Test 401/403 maps to GitHubRepositoryNotFoundError to prevent enumeration."""
+
+    def mock_transport_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, request=request)
+
+    mock_client = httpx.Client(transport=httpx.MockTransport(mock_transport_handler))
+    handler = GitHubAcquisitionHandler(http_client=mock_client)
+
+    with pytest.raises(GitHubRepositoryNotFoundError) as exc:
+        handler.acquire(
+            source_reference="https://github.com/octocat/private-repo",
+            revision_identifier=None,
+            temp_root=tmp_path / "work",
+        )
+    # Status and message must match 404 exactly to prevent enumeration
+    assert exc.value.code == "github_repository_not_found"
+    assert "not found or access denied" in str(exc.value).lower()
 
 
 def test_github_acquisition_rate_limited(tmp_path: Path) -> None:
@@ -510,7 +535,8 @@ def test_github_acquisition_rate_limited(tmp_path: Path) -> None:
 
 
 def test_github_acquisition_timeout(tmp_path: Path) -> None:
-    """Test network timeout maps to GitHubAcquisitionError."""
+    """Test network timeout maps to GitHubTimeoutError with code github_timeout."""
+    from backend.platform.errors import GitHubTimeoutError
 
     def mock_transport_handler(request: httpx.Request) -> httpx.Response:
         raise httpx.TimeoutException("Network timeout")
@@ -518,12 +544,13 @@ def test_github_acquisition_timeout(tmp_path: Path) -> None:
     mock_client = httpx.Client(transport=httpx.MockTransport(mock_transport_handler))
     handler = GitHubAcquisitionHandler(http_client=mock_client)
 
-    with pytest.raises(GitHubAcquisitionError) as exc:
+    with pytest.raises(GitHubTimeoutError) as exc:
         handler.acquire(
             source_reference="https://github.com/octocat/Hello-World",
             revision_identifier=None,
             temp_root=tmp_path / "work",
         )
+    assert exc.value.code == "github_timeout"
     assert "timed out" in str(exc.value)
 
 
@@ -567,3 +594,159 @@ def test_parse_github_url_coordinates() -> None:
     assert canonical == "https://github.com/torvalds/linux"
     assert owner == "torvalds"
     assert repo == "linux"
+
+
+# ==============================================================================
+# Security & Adversarial Hardening Tests (IS-002, IS-003, IS-004)
+# ==============================================================================
+
+
+@pytest.mark.parametrize(
+    "malicious_path",
+    [
+        "/etc/passwd",
+        "\\Windows\\System32\\cmd.exe",
+        "C:\\autoexec.bat",
+        "d:/payload.exe",
+        "E:relative_drive",
+        "//server/share/file.txt",
+        "\\\\server\\share\\file.txt",
+        "subdir/CON",
+        "NUL.txt",
+        "aux.py",
+        "com1.bin",
+        "nested/lpt2",
+        "foo//bar.txt",
+        "foo/bar:stream",
+    ],
+)
+def test_zip_adversarial_paths_blocked(tmp_path: Path, malicious_path: str) -> None:
+    """Test that absolute, UNC, drive, and device paths are blocked in zip."""
+    archive_path = tmp_path / "adversarial.zip"
+    _create_zip_file(archive_path, {malicious_path: b"malicious content"})
+
+    handler = ArchiveAcquisitionHandler()
+    with pytest.raises(SourceValidationError):
+        handler.acquire(
+            str(archive_path),
+            revision_identifier=None,
+            temp_root=tmp_path / "work",
+        )
+
+
+@pytest.mark.parametrize(
+    "malicious_path",
+    [
+        "/etc/shadow",
+        "\\Windows\\win.ini",
+        "C:\\boot.ini",
+        "d:/hack.sh",
+        "E:drive_payload",
+        "//server/share/exploit",
+        "\\\\server\\share\\exploit",
+        "subdir/AUX",
+        "con.txt",
+        "prn",
+        "com9.dat",
+        "nested/lpt1.txt",
+        "a//b.txt",
+        "a:b",
+    ],
+)
+def test_tar_adversarial_paths_blocked(tmp_path: Path, malicious_path: str) -> None:
+    """Test that absolute, UNC, drive, and device paths are blocked in tar."""
+    archive_path = tmp_path / "adversarial.tar"
+    _create_tar_file(archive_path, {malicious_path: b"malicious content"}, mode="w")
+
+    handler = ArchiveAcquisitionHandler()
+    with pytest.raises(SourceValidationError):
+        handler.acquire(
+            str(archive_path),
+            revision_identifier=None,
+            temp_root=tmp_path / "work",
+        )
+
+
+def test_tar_socket_entry_blocked(tmp_path: Path) -> None:
+    """Test that socket entries in tar archives are strictly rejected (IS-002)."""
+    archive_path = tmp_path / "socket_entry.tar"
+    with tarfile.open(archive_path, "w") as tf:
+        ti = tarfile.TarInfo(name="mysocket")
+        # In POSIX tar, socket type is b's' or custom type
+        ti.type = getattr(tarfile, "SOCKTYPE", b"s")
+        tf.addfile(ti)
+
+    handler = ArchiveAcquisitionHandler()
+    with pytest.raises(SourceValidationError) as exc:
+        handler.acquire(
+            str(archive_path),
+            revision_identifier=None,
+            temp_root=tmp_path / "work",
+        )
+    assert "Prohibited special device" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("entry_type", "type_name"),
+    [
+        (tarfile.CHRTYPE, "character device"),
+        (tarfile.BLKTYPE, "block device"),
+        (tarfile.FIFOTYPE, "FIFO"),
+    ],
+)
+def test_tar_special_device_entries_blocked(
+    tmp_path: Path, entry_type: bytes, type_name: str
+) -> None:
+    """Test that character, block, and FIFO devices in tar are rejected (IS-002)."""
+    archive_path = tmp_path / f"device_{type_name}.tar"
+    with tarfile.open(archive_path, "w") as tf:
+        ti = tarfile.TarInfo(name=f"dev_{type_name}")
+        ti.type = entry_type
+        tf.addfile(ti)
+
+    handler = ArchiveAcquisitionHandler()
+    with pytest.raises(SourceValidationError) as exc:
+        handler.acquire(
+            str(archive_path),
+            revision_identifier=None,
+            temp_root=tmp_path / "work",
+        )
+    assert "Prohibited special device" in str(exc.value)
+
+
+def test_github_streaming_timeout_enforced(tmp_path: Path) -> None:
+    """Test that total streaming duration timeout is strictly enforced (IS-004)."""
+    from collections.abc import Iterator
+
+    def slow_byte_generator() -> Iterator[bytes]:
+        import time
+
+        yield b"chunk1"
+        # Sleep to exceed the 0.05s timeout
+        time.sleep(0.08)
+        yield b"chunk2"
+
+    def slow_stream_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=slow_byte_generator(),
+            request=request,
+        )
+
+    mock_client = httpx.Client(transport=httpx.MockTransport(slow_stream_handler))
+    # Configure tiny timeout to trigger elapsed duration check
+    handler = GitHubAcquisitionHandler(
+        http_client=mock_client,
+        timeout_seconds=0.05,
+    )
+
+    from backend.platform.errors import GitHubTimeoutError
+
+    with pytest.raises(GitHubTimeoutError) as exc:
+        handler.acquire(
+            source_reference="https://github.com/octocat/Hello-World",
+            revision_identifier=None,
+            temp_root=tmp_path / "work",
+        )
+    assert exc.value.code == "github_timeout"
+    assert "timed out" in str(exc.value)
