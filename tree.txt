@@ -1,0 +1,317 @@
+.
+├── AGENTS.md
+├── alembic.ini
+├── backend
+│   ├── ai
+│   ├── analysis
+│   ├── api
+│   │   ├── app.py
+│   │   ├── error_handlers.py
+│   │   ├── __init__.py
+│   │   └── v1
+│   │       ├── auth.py
+│   │       ├── ingestions.py
+│   │       ├── project_access.py
+│   │       ├── projects.py
+│   │       ├── repositories.py
+│   │       ├── root.py
+│   │       ├── router.py
+│   │       ├── schemas.py
+│   │       └── system.py
+│   ├── application
+│   ├── diagrams
+│   ├── domain
+│   ├── infra
+│   │   ├── migrations
+│   │   │   ├── env.py
+│   │   │   ├── README
+│   │   │   ├── script.py.mako
+│   │   │   └── versions
+│   │   └── postgres.py
+│   ├── __init__.py
+│   ├── knowledge
+│   ├── platform
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── dependency_injection.py
+│   │   ├── errors.py
+│   │   ├── health.py
+│   │   ├── identity
+│   │   │   ├── application
+│   │   │   ├── domain
+│   │   │   ├── infra
+│   │   │   └── repositories
+│   │   ├── ingestion
+│   │   │   ├── application
+│   │   │   ├── domain
+│   │   │   ├── infra
+│   │   │   ├── __init__.py
+│   │   │   └── repositories
+│   │   ├── __init__.py
+│   │   ├── logging.py
+│   │   ├── projects
+│   │   │   ├── application
+│   │   │   ├── domain
+│   │   │   ├── infra
+│   │   │   └── repositories
+│   │   └── repositories
+│   │       ├── application
+│   │       ├── domain
+│   │       ├── infra
+│   │       ├── __init__.py
+│   │       └── repositories
+│   ├── reports
+│   └── shared
+├── data
+│   └── storage
+│       └── content
+│           ├── 01
+│           ├── 02
+│           ├── 03
+│           ├── 05
+│           ├── 09
+│           ├── 10
+│           ├── 14
+│           ├── 15
+│           ├── 18
+│           ├── 19
+│           ├── 1c
+│           ├── 1e
+│           ├── 1f
+│           ├── 20
+│           ├── 22
+│           ├── 23
+│           ├── 24
+│           ├── 27
+│           ├── 2d
+│           ├── 2e
+│           ├── 31
+│           ├── 33
+│           ├── 35
+│           ├── 38
+│           ├── 3d
+│           ├── 44
+│           ├── 47
+│           ├── 48
+│           ├── 49
+│           ├── 4f
+│           ├── 50
+│           ├── 52
+│           ├── 53
+│           ├── 54
+│           ├── 55
+│           ├── 56
+│           ├── 58
+│           ├── 59
+│           ├── 5c
+│           ├── 62
+│           ├── 66
+│           ├── 67
+│           ├── 6a
+│           ├── 6b
+│           ├── 6f
+│           ├── 75
+│           ├── 78
+│           ├── 7e
+│           ├── 7f
+│           ├── 80
+│           ├── 85
+│           ├── 8a
+│           ├── 8c
+│           ├── 8d
+│           ├── 92
+│           ├── 93
+│           ├── 98
+│           ├── 9c
+│           ├── 9d
+│           ├── 9e
+│           ├── a0
+│           ├── a6
+│           ├── ad
+│           ├── ae
+│           ├── b7
+│           ├── bc
+│           ├── be
+│           ├── c3
+│           ├── c5
+│           ├── c6
+│           ├── cc
+│           ├── cd
+│           ├── ce
+│           ├── d0
+│           ├── d3
+│           ├── d9
+│           ├── da
+│           ├── dc
+│           ├── e0
+│           ├── e3
+│           ├── e6
+│           ├── e8
+│           ├── eb
+│           ├── ec
+│           ├── f0
+│           ├── f4
+│           ├── f5
+│           ├── f8
+│           ├── fb
+│           └── fd
+├── docs
+├── frontend
+│   ├── dist
+│   │   ├── assets
+│   │   │   ├── index-CVpRHIKx.css
+│   │   │   └── index-D27W9p7M.js
+│   │   ├── favicon.svg
+│   │   └── index.html
+│   ├── index.html
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── public
+│   │   └── favicon.svg
+│   ├── src
+│   │   ├── api
+│   │   │   └── authApi.js
+│   │   ├── App.jsx
+│   │   ├── auth
+│   │   │   └── AuthContext.jsx
+│   │   ├── components
+│   │   │   ├── ArchitecturePreview.jsx
+│   │   │   ├── ArchitectureSection.jsx
+│   │   │   ├── auth
+│   │   │   ├── CtaBanner.jsx
+│   │   │   ├── dashboard
+│   │   │   ├── Footer.jsx
+│   │   │   ├── Hero.jsx
+│   │   │   ├── HowItWorks.jsx
+│   │   │   ├── Navbar.jsx
+│   │   │   ├── ProtectedRoute.jsx
+│   │   │   ├── repository
+│   │   │   ├── ValueStrip.jsx
+│   │   │   └── WhyStackSense.jsx
+│   │   ├── main.jsx
+│   │   ├── pages
+│   │   │   ├── AuthPage.jsx
+│   │   │   ├── LandingPage.jsx
+│   │   │   ├── ProjectsDashboardPage.jsx
+│   │   │   └── RepositoryDetailPage.jsx
+│   │   ├── services
+│   │   │   ├── apiClient.js
+│   │   │   ├── authService.js
+│   │   │   ├── ingestionService.js
+│   │   │   ├── projectService.js
+│   │   │   └── repositoryService.js
+│   │   └── styles
+│   │       ├── auth.css
+│   │       ├── dashboard.css
+│   │       ├── index.css
+│   │       ├── landing.css
+│   │       └── repository.css
+│   ├── tests
+│   │   ├── authApi.test.js
+│   │   └── m6Flows.test.js
+│   └── vite.config.js
+├── infra
+│   └── docker
+│       └── compose.yml
+├── master.txt
+├── pyproject.toml
+├── pytest.ini
+├── README.md
+├── requirements.txt
+├── scripts
+├── tests
+│   ├── conftest.py
+│   ├── p1
+│   │   ├── __init__.py
+│   │   ├── integration
+│   │   │   ├── __init__.py
+│   │   │   └── test_p1_database.py
+│   │   ├── test_p1_api_root.py
+│   │   ├── test_p1_api_version.py
+│   │   ├── test_p1_architecture.py
+│   │   ├── test_p1_dependency_injection.py
+│   │   ├── test_p1_error_contract.py
+│   │   ├── test_p1_error_handlers.py
+│   │   ├── test_p1_errors_api.py
+│   │   ├── test_p1_errors.py
+│   │   ├── test_p1_health.py
+│   │   ├── test_p1_openapi.py
+│   │   ├── test_p1_system_database.py
+│   │   └── test_p1_system.py
+│   └── p2
+│       ├── identity
+│       │   ├── test_auth_api.py
+│       │   ├── test_auth_error_handlers.py
+│       │   ├── test_auth_regression.py
+│       │   ├── test_auth_service.py
+│       │   ├── test_identity_domain.py
+│       │   ├── test_identity_persistence.py
+│       │   ├── test_password_hasher.py
+│       │   ├── test_refresh_token.py
+│       │   └── test_token_service.py
+│       ├── ingestion
+│       │   ├── __init__.py
+│       │   ├── test_p2_ingestion_acquisition.py
+│       │   ├── test_p2_ingestion_api.py
+│       │   ├── test_p2_ingestion_classifier.py
+│       │   ├── test_p2_ingestion_domain.py
+│       │   ├── test_p2_ingestion_persistence.py
+│       │   ├── test_p2_ingestion_service.py
+│       │   ├── test_p2_ingestion_source_contracts.py
+│       │   ├── test_p2_ingestion_storage.py
+│       │   └── test_p2_ingestion_validation.py
+│       ├── projects
+│       │   └── test_p2_projects_api.py
+│       └── repositories
+│           ├── __init__.py
+│           ├── test_p2_repositories_api.py
+│           ├── test_p2_repositories_architecture.py
+│           ├── test_p2_repositories_auth.py
+│           ├── test_p2_repositories_domain.py
+│           ├── test_p2_repositories_isolation.py
+│           ├── test_p2_repositories_persistence.py
+│           └── test_p2_repositories_service.py
+├── tree.txt
+└── venv
+    ├── bin
+    │   ├── activate
+    │   ├── activate.csh
+    │   ├── activate.fish
+    │   ├── Activate.ps1
+    │   ├── alembic
+    │   ├── black
+    │   ├── blackd
+    │   ├── cffi-gen-src
+    │   ├── dmypy
+    │   ├── dotenv
+    │   ├── fastapi
+    │   ├── httpx
+    │   ├── httpx2
+    │   ├── idna
+    │   ├── mako-render
+    │   ├── mypy
+    │   ├── mypyc
+    │   ├── pip
+    │   ├── pip3
+    │   ├── pip3.14
+    │   ├── pygmentize
+    │   ├── py.test
+    │   ├── pytest
+    │   ├── python -> /usr/bin/python
+    │   ├── python3 -> python
+    │   ├── python3.14 -> python
+    │   ├── ruff
+    │   ├── stubgen
+    │   ├── stubtest
+    │   ├── uvicorn
+    │   └── 𝜋thon -> python
+    ├── include
+    │   └── site
+    │       └── python3.14
+    ├── lib
+    │   └── python3.14
+    │       └── site-packages
+    ├── lib64 -> lib
+    └── pyvenv.cfg
+
+165 directories, 150 files
