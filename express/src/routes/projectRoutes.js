@@ -1,5 +1,7 @@
 const express = require('express');
 const projectController = require('../controllers/projectController');
+const projectAccessRoutes = require('./projectAccessRoutes');
+const authenticate = require('../middleware/authenticate');
 const {
   validateProjectId,
   validateCreateProject,
@@ -8,6 +10,12 @@ const {
 } = require('../middleware/validate');
 
 const router = express.Router();
+
+// All project endpoints require authentication
+router.use(authenticate);
+
+// Project Access sub-resource routes
+router.use('/:projectId/access', validateProjectId, projectAccessRoutes);
 
 // Project collection routes
 router.post('/', validateCreateProject, projectController.createProject);
