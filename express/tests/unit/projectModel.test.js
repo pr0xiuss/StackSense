@@ -1,5 +1,7 @@
 const Project = require('../../src/models/Project');
+const ProjectAccess = require('../../src/models/ProjectAccess');
 const projectService = require('../../src/services/projectService');
+const projectAccessService = require('../../src/services/projectAccessService');
 
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -157,6 +159,59 @@ describe('Project Model & Service Unit Tests (Batch 2)', () => {
 
       const deleteAgain = await projectService.deleteProject(created._id);
       expect(deleteAgain).toBeNull();
+    });
+
+    it('deleteProject cascades deletion to associated ProjectAccess records', async () => {
+      const created = await projectService.createProject({ name: 'Project With Access' });
+      const userId = '11111111-1111-4111-8111-111111111111';
+
+      await projectAccessService.grantAccess({
+        projectId: created._id,
+        userId,
+        role: 'owner',
+      });
+
+      const accessBefore = await projectAccessService.getAccess(created._id, userId);
+      expect(accessBefore).not.toBeNull();
+
+      await projectService.deleteProject(created._id);
+
+      const accessAfter = await projectAccessService.getAccess(created._id, userId);
+      expect(accessAfter).toBeNull();
+
+      const remainingAccess = await projectAccessService.listProjectAccess(created._id);
+      expect(remainingAccess).toHaveLength(0);
+    });
+
+    it('createProject automatically grants OWNER access when ownerId is supplied', async () => {
+      const ownerId = '22222222-2222-4222-8222-222222222222';
+      const created = await projectService.createProject({
+        name: 'Auto Owner Project',
+        ownerId,
+      });
+
+      const access = await projectAccessService.getAccess(created._id, ownerId);
+      expect(access).not.toBeNull();
+      expect(access.role).toBe('owner');
+    });
+
+    it('listUserProjects returns only projects where user has access', async () => {
+      const userA = '33333333-3333-4333-8333-333333333333';
+      const userB = '44444444-4444-4444-8444-444444444444';
+
+      const pA1 = await projectService.createProject({ name: 'PA 1', ownerId: userA });
+      const pA2 = await projectService.createProject({ name: 'PA 2', ownerId: userA });
+      const pB1 = await projectService.createProject({ name: 'PB 1', ownerId: userB });
+
+      const listA = await projectService.listUserProjects(userA);
+      expect(listA).toHaveLength(2);
+      expect(listA.map((p) => p._id)).toContain(pA1._id);
+      expect(listA.map((p) => p._id)).toContain(pA2._id);
+      expect(listA.map((p) => p._id)).not.toContain(pB1._id);
+
+      const listB = await projectService.listUserProjects(userB);
+      expect(listB).toHaveLength(1);
+      expect(listB[0]._id).toBe(pB1._id);
     });
   });
 });

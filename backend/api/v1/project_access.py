@@ -61,6 +61,34 @@ def grant_project_access(
     return ProjectAccessResponse.model_validate(access)
 
 
+@router.get(
+    "",
+    response_model=list[ProjectAccessResponse],
+    status_code=status.HTTP_200_OK,
+)
+def list_project_access(
+    project_id: UUID,
+    current_user: User = Depends(get_current_user),
+    access_service: ProjectAccessService = Depends(
+        get_project_access_service,
+    ),
+    authorization: ProjectAuthorization = Depends(
+        get_project_authorization,
+    ),
+) -> list[ProjectAccessResponse]:
+    """List all access records for a project."""
+    authorization.require_access(
+        project_id=project_id,
+        user=current_user,
+    )
+
+    access_list = access_service.list_project_access(
+        project_id=project_id,
+    )
+
+    return [ProjectAccessResponse.model_validate(item) for item in access_list]
+
+
 @router.patch(
     "/{user_id}",
     response_model=ProjectAccessResponse,
