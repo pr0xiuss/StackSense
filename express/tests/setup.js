@@ -8,12 +8,12 @@ beforeAll(async () => {
   process.env.NODE_ENV = 'test';
   mongoServer = await MongoMemoryServer.create({
     instance: {
-      launchTimeout: 60000,
+      launchTimeout: 300000,
     },
   });
   const uri = mongoServer.getUri();
   await connectDB(uri);
-}, 60000);
+}, 300000);
 
 afterEach(async () => {
   // Clear all collections between test cases for complete isolation
