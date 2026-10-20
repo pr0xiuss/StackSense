@@ -42,6 +42,14 @@ function errorHandler(err, req, res, next) {
     status = 422;
     code = 'validation_error';
     message = `Invalid format for field ${err.path}.`;
+  } else if (err.name === 'TokenExpiredError') {
+    status = 401;
+    code = 'token_expired';
+    message = 'Authentication token has expired.';
+  } else if (err.name === 'JsonWebTokenError') {
+    status = 401;
+    code = 'invalid_token';
+    message = 'Authentication token is invalid.';
   }
 
   status = status || 500;

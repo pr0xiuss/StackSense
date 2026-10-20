@@ -2,7 +2,7 @@
 
 > **Authoritative Handoff Document**  
 > *Maintained under `.agents/skills/planning/SKILL.md` and `.agents/skills/implementing/SKILL.md`*  
-> *Last Updated: 2026-10-18*
+> *Last Updated: 2026-10-19*
 
 ---
 
@@ -79,15 +79,15 @@ graph TD
     style M2 fill:#1e3a5f,stroke:#3b82f6,color:#fff
     style M3 fill:#1e3a5f,stroke:#3b82f6,color:#fff
     style M4 fill:#1e3a5f,stroke:#3b82f6,color:#fff
-    style M5 fill:#4c1d95,stroke:#a855f7,color:#fff,stroke-width:2px
-    style M6 fill:#064e3b,stroke:#10b981,color:#fff,stroke-width:2px
+    style M5 fill:#1e3a5f,stroke:#3b82f6,color:#fff
+    style M6 fill:#4c1d95,stroke:#a855f7,color:#fff,stroke-width:2px
 ```
 
 - **M1: Project Domain Foundation** — **STATUS: COMPLETED & VERIFIED** (15 tests passing)
 - **M2: Project Access & Resource Boundary (RBAC)** — **STATUS: COMPLETED & VERIFIED** (PR #20 merged)
 - **M3: Repository Domain & Registration** — **STATUS: COMPLETED & VERIFIED** (PR #22 reviewed)
 - **M4: Repository Ingestion, Validation & Storage** — **STATUS: COMPLETED & VERIFIED** (PR #22 reviewed, 22 suites / 268 tests passing)
-- **M5: Main Identity & Authentication** — **STATUS: PLANNED (REFINED & APPROVED FOR M5-B1)**
+- **M5: Main Identity & Authentication** — **STATUS: COMPLETED & VERIFIED** (All 3 Batches verified, 28 suites / 367 tests passing)
 - **M6: Frontend API Transition & Verification** — **STATUS: PLANNED (REFINED & READY FOR EXECUTION)**
 
 ---
@@ -118,7 +118,7 @@ Implement a robust, cryptographically secure Identity & Authentication subsystem
 
 ##### M5 — Batch 1: User & RefreshToken Models, Password & Token Services, Runtime Configuration
 - **Scope**: Data persistence models, runtime secret validation, and cryptographic services with verified Python parity.
-- **Dependencies**: `bcryptjs` (^2.4.3), `jsonwebtoken` (^9.0.2).
+- **Dependencies**: `bcryptjs` (^3.0.3), `jsonwebtoken` (^9.0.3).
 - **Files**:
   - `express/package.json`: Add runtime dependencies `bcryptjs` and `jsonwebtoken`.
   - `express/src/config/authConfig.js`: Validate `JWT_SECRET` and `REFRESH_TOKEN_HMAC_KEY` (minimum 32 chars). Enforce strict failure on startup in production if missing. Export token lifetimes (access: 60 min, refresh: 30 days) and bcrypt rounds (12 production, 4 test).
@@ -255,9 +255,9 @@ Implement a robust, cryptographically secure Identity & Authentication subsystem
 | **M2 (All)** | Project Access model, service, RBAC & routes | **Passed** | PR #20 merged |
 | **M3 (All)** | Repository model, service & routes | **Passed** | PR #22 verified |
 | **M4 (All)** | Ingestion, acquisition handlers, storage & validation | **Passed** | PR #22 verified (22 suites / 268 tests passed) |
-| **M5 Batch 1** | User & RefreshToken models, Password & Token services, AuthConfig | **Ready** | Python parity verified, sub claim & 72-byte ceiling settled |
-| **M5 Batch 2** | AuthService, Auth Controller & Routes, Atomic Rotation | Planned | Concurrent rotation & registration race tests |
-| **M5 Batch 3** | Authenticate middleware upgrade, Production Guard & Regression | Planned | Reject header in prod, sub mapping, verify M2 RBAC |
+| **M5 Batch 1** | User & RefreshToken models, Password & Token services, AuthConfig | **Passed** | 5 suites / 56 tests passed (review follow-ups resolved) |
+| **M5 Batch 2** | AuthService, Auth Controller & Routes, Atomic Rotation | **Passed** | 34 integration tests passed (28 suites / 358 tests total) |
+| **M5 Batch 3** | Authenticate middleware upgrade, Production Guard & Regression | **Passed** | 15 unit tests passed, prod guard verified, 28 suites / 367 tests total |
 | **M6 Batch 1** | Vite proxy transition & API client alignment | Planned | Resolve canonical ingestion endpoint & test refresh |
 | **M6 Batch 2** | E2E vertical slice validation & production build | Planned | Deterministic bounded polling, full stack build |
 | **Phase 2 Closeout**| Evaluation 1 readiness, architectural compliance & freeze | Planned | Tracked until all acceptance criteria verified |
@@ -289,6 +289,7 @@ Implement a robust, cryptographically secure Identity & Authentication subsystem
 
 ## 8. Current Handoff
 
-- **Current Stage**: Finalized Planning complete for remainder of Phase 2 (M5 & M6).
-- **Last Verified Milestone**: M4 (Repository Ingestion, Storage & Validation) passed with 22 test suites and 268 passing tests.
-- **Next Recommended Action**: Proceed with **M5 Batch 1** implementation (User/RefreshToken models, Password/Token services, and AuthConfig runtime secret validation).
+- **Current Stage**: Phase 2 MERN Migration — M5 Completed & Verified; Ready for M6.
+- **Last Verified Milestone**: M5 Batch 3 (Authenticate middleware upgrade, production guard rejecting `x-user-id` outside test, `sub -> req.user.id` mapping, M2 RBAC capability enforcement, and full regression) passed with 15 unit tests in `authenticate.test.js` and zero regressions across M1–M5 (28 test suites / 367 tests passing total).
+- **Next Recommended Action**: Proceed with **M6 Batch 1** implementation (Vite Proxy Transition & Frontend API Contract Alignment).
+

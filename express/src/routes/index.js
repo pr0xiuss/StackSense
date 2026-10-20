@@ -1,5 +1,6 @@
 const express = require('express');
 const projectRoutes = require('./projectRoutes');
+const authRoutes = require('./authRoutes');
 
 const router = express.Router();
 
@@ -12,6 +13,11 @@ router.get('/health', (req, res) => {
     service: 'stacksense-express',
   });
 });
+
+/**
+ * Authentication endpoints.
+ */
+router.use('/auth', authRoutes);
 
 /**
  * Project resource endpoints.

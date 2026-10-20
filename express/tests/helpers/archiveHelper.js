@@ -25,7 +25,19 @@ with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(name, content.encode('utf-8'))
 `;
 
-  execFileSync('python', ['-c', pyScript, resolvedZip, JSON.stringify(entries)]);
+  const pythonBin =
+    process.env.PYTHON_PATH ||
+    (process.platform === 'win32' ? 'py' : 'python3');
+  try {
+    execFileSync(pythonBin, ['-c', pyScript, resolvedZip, JSON.stringify(entries)]);
+  } catch (err) {
+    // Only attempt fallback if the primary launcher binary was not found (ENOENT)
+    if (err.code === 'ENOENT' && pythonBin !== 'python') {
+      execFileSync('python', ['-c', pyScript, resolvedZip, JSON.stringify(entries)]);
+    } else {
+      throw err;
+    }
+  }
   return resolvedZip;
 }
 
