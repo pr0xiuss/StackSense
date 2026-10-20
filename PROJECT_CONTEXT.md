@@ -2,7 +2,7 @@
 
 > **Authoritative Handoff Document**  
 > *Maintained under `.agents/skills/planning/SKILL.md` and `.agents/skills/implementing/SKILL.md`*  
-> *Last Updated: 2026-10-19*
+> *Last Updated: 2026-10-21*
 
 ---
 
@@ -87,8 +87,8 @@ graph TD
 - **M2: Project Access & Resource Boundary (RBAC)** — **STATUS: COMPLETED & VERIFIED** (PR #20 merged)
 - **M3: Repository Domain & Registration** — **STATUS: COMPLETED & VERIFIED** (PR #22 reviewed)
 - **M4: Repository Ingestion, Validation & Storage** — **STATUS: COMPLETED & VERIFIED** (PR #22 reviewed, 22 suites / 268 tests passing)
-- **M5: Main Identity & Authentication** — **STATUS: COMPLETED & VERIFIED** (All 3 Batches verified, 28 suites / 367 tests passing)
-- **M6: Frontend API Transition & Verification** — **STATUS: PLANNED (REFINED & READY FOR EXECUTION)**
+- **M5: Main Identity & Authentication** — **STATUS: COMPLETED & VERIFIED** (active-user correction verified; 28 suites / 372 tests passing)
+- **M6: Frontend API Transition & Verification** — **STATUS: COMPLETED & VERIFIED** (M6-B1 and M6-B2 complete; Phase 2 closeout remains separate)
 
 ---
 
@@ -170,54 +170,117 @@ Implement a robust, cryptographically secure Identity & Authentication subsystem
 
 ---
 
-### 4.4 Detailed Plan: Module 6 (Frontend API Transition & Verification)
+### 4.4 Current Detailed Plan: M6-B1 Frontend API Integration and Contract Alignment
 
-#### 4.4.1 Objectives & Contract Resolution
-1. **Endpoint Resolution**: All ingestion routes use the established canonical contract:
-   `POST /api/v1/projects/:projectId/repositories/:repositoryId/ingestions` (returns 201 Created)
-   `GET /api/v1/projects/:projectId/repositories/:repositoryId/ingestions/:ingestionId` (returns 200 OK)
-   Explicit parameter names (`projectId`, `repositoryId`) are strictly enforced. Shorthand un-nested routes are prohibited.
-2. **Frontend Session Resilience**: Verify `apiClient.js` token refresh flow:
-   - Expired access tokens automatically trigger `/api/v1/auth/refresh`.
-   - Concurrent 401 requests share exactly ONE refresh promise (no token rotation storm).
-   - Definite refresh failure (401/403) clears session and dispatches `auth:expired` without entering infinite retry loops.
-   - Network dropouts (status 0) preserve session credentials.
-3. **Deterministic Asynchronous Ingestion Verification**:
-   - The E2E test polls `GET /api/v1/projects/:projectId/repositories/:repositoryId/ingestions/:ingestionId` using bounded polling until reaching terminal state.
-   - Both `completed` and `failed` are terminal states.
-   - If `status === 'completed'`: Polling halts and test proceeds to verify revisions and artifacts.
-   - If `status === 'failed'`: Polling halts immediately and test fails reporting `error_code` and `error_message`.
-   - If timeout occurs before reaching a terminal state: Test fails with an explicit timeout error.
-4. **Real Frontend-to-Express Contract Verification**: Verify request and response payloads, status codes, structured error preservation, and multipart archive uploads against the real Express backend.
+**Plan status:** Approved and implemented on 2026-10-20. This plan covers M6-B1 only.
 
-#### 4.4.2 Batch Breakdown for M6
+#### 4.4.1 Objective, scope, and verified baseline
 
-##### M6 — Batch 1: Vite Proxy & Frontend API Contract Alignment
-- **Scope**: Update frontend proxy to Express on port 5000 and verify payload and CORS compatibility.
-- **Files**:
-  - `frontend/vite.config.js`: Update proxy target from `http://localhost:8000` to `http://localhost:5000`.
-  - `express/src/app.js`: Verify CORS configuration supports local development while preserving security boundaries.
-- **Testing**:
-  - Run `cd frontend && npm test`: Executes `tests/authApi.test.js` and `tests/m6Flows.test.js` verifying token attachment, 401 refresh de-duplication, loop protection, and service contracts.
+Connect the existing React UI to the completed Express API without redesigning the UI or changing backend contracts. The runtime frontend already centralizes requests through `frontend/src/services/apiClient.js` and `frontend/src/services/authService.js`; it correctly attaches Bearer tokens, performs one retry after a shared refresh promise, clears credentials only for definitive refresh rejection, preserves Express error codes, and avoids setting JSON content type for `FormData`.
 
-##### M6 — Batch 2: Deterministic End-to-End Vertical Slice Verification & Production Build
-- **Scope**: Comprehensive verification of the complete Section 25.11.5 user journey against the real Express backend.
-- **Files**:
-  - `express/tests/integration/e2eVerticalSlice.test.js`: Automated end-to-end integration test:
-    1. Register user (`POST /api/v1/auth/register`) -> 201.
-    2. Authenticate user (`POST /api/v1/auth/login`) -> 200 with Bearer JWT (`sub` claim) and refresh token.
-    3. Create project (`POST /api/v1/projects`) with Bearer token -> 201.
-    4. Register repository (`POST /api/v1/projects/:projectId/repositories`) -> 201.
-    5. Trigger ingestion (`POST /api/v1/projects/:projectId/repositories/:repositoryId/ingestions`) -> 201.
-    6. **Deterministic Bounded Polling**: Poll ingestion endpoint until terminal status. Fail on `failed` status or timeout; succeed on `completed`.
-    7. Verify generated revision (`GET .../revisions`) and classified artifacts (`GET .../revisions/:id/artifacts`).
-    8. Rotate refresh token (`POST /api/v1/auth/refresh`) -> 200.
-    9. Verify user profile (`GET /api/v1/auth/me`) -> 200.
-    10. Logout and revoke session (`POST /api/v1/auth/logout`) -> 204.
-- **Testing & Quality Gates**:
-  - `cd express && npm test`: Full suite run (22+ suites).
-  - `cd frontend && npm test`: Frontend contract tests.
-  - `cd frontend && npm run build`: Verify clean production frontend build.
+Verified contract gaps:
+
+1. `frontend/vite.config.js` proxies `/api` to Python port 8000, while `express/src/server.js` defaults to port 5000.
+2. `frontend/src/services/ingestionService.js` sends GitHub inputs as `repository_url` and `ref`, plus a redundant body `repository_id`. Express `validateStartIngestion` and `ingestionController.triggerIngestion` require only path-scoped identity plus `source_type`, `source_reference`, and optional `revision_identifier`. The existing GitHub handler represents an optional ref as `https://github.com/owner/repo@ref` inside `source_reference`.
+3. `AuthContext.restoreSession()` clears stored credentials on every `/auth/me` error, undoing `apiClient`'s intended preservation for network and 5xx failures.
+4. Existing frontend tests pass but encode the incompatible GitHub payload and do not verify the Vite target, generic Express error details, or multipart field/header behavior.
+
+Verified as already compatible and therefore reused without application changes: auth endpoint paths and login/register/logout/me payloads; project and repository paths/payloads; ingestion/revision/artifact paths; raw array response consumption; 204 handling; Express structured errors; refresh rotation fields; multipart endpoint and `file`/`revision_identifier` field names; Bearer attachment; refresh deduplication; retry-loop prevention; and the existing Express CORS behavior. No Express source change is planned because the Vite proxy is same-origin in development and the inspected frontend contracts can conform to Express.
+
+#### 4.4.2 M6-B1 implementation batches
+
+##### M6-B1.1 — Development routing and ingestion request alignment
+
+- Modify `frontend/vite.config.js`: point only the existing `/api` proxy from `http://localhost:8000` to `http://localhost:5000`; retain `changeOrigin` and the current frontend port/host settings.
+- Modify `frontend/src/services/ingestionService.js`:
+  - keep every canonical nested endpoint unchanged;
+  - emit only `source_type`, `source_reference`, and optional `revision_identifier` for JSON ingestion requests;
+  - map GitHub URL plus optional ref into Express's canonical `source_reference` representation (`URL` or `URL@ref`);
+  - remove redundant `repository_id`, `repository_url`, and `ref` wire fields;
+  - keep multipart upload as `FormData` with `file` and optional `revision_identifier`, allowing the browser to set the boundary.
+
+##### M6-B1.2 — Session restoration consistency
+
+- Modify `frontend/src/auth/AuthContext.jsx`: during initial `/auth/me` restoration, clear the session only for definitive session failures: any 401 response, or the explicit 403 `user_inactive` contract. Preserve stored tokens for unrelated 403 authorization failures, status `0` network failures, and 5xx/transient failures; record the error and finish loading without dispatching a second expiry path. Do not change login, registration, logout, routing, or refresh ownership.
+- Modify `frontend/src/services/authService.js`: expose the small, testable definitive-session-failure policy consumed by `AuthContext`; leave endpoint behavior unchanged.
+- Reuse `frontend/src/services/apiClient.js` unchanged unless implementation proves a test-visible defect; current code already satisfies Bearer, refresh concurrency, retry, network preservation, and structured-error contracts.
+
+##### M6-B1.3 — Frontend contract regression coverage
+
+- Modify `frontend/tests/m6Flows.test.js` using its existing Node/assert harness:
+  - assert the Vite proxy targets port 5000;
+  - update GitHub ingestion expectations to the canonical `source_reference` body and verify optional ref composition;
+  - assert JSON ingestion omits redundant path identity fields;
+  - exercise remaining get/update/delete service paths where needed to cover the actual route table;
+  - assert multipart upload uses `/ingestions/upload`, includes `file` and optional `revision_identifier`, carries Bearer auth, and does not manually set `Content-Type`;
+  - assert generic Express `{ error: { code, message, details } }` becomes `ApiError` without losing details;
+  - add restoration-policy assertions proving 401 and `403 user_inactive` are definitive, while unrelated 403, network, and 5xx failures preserve credentials;
+  - retain the existing concurrent-401, one-refresh, one-retry, refresh-failure, and transient-failure tests.
+- Reuse `frontend/tests/authApi.test.js` as an unchanged regression suite. `frontend/src/api/authApi.js` has no runtime imports; deleting or consolidating this legacy client is not necessary for M6-B1 and is deferred rather than mixed into contract migration.
+
+#### 4.4.3 File-level specifications
+
+| Path | Action | Responsibility and rationale | Verification |
+| :--- | :--- | :--- | :--- |
+| `frontend/vite.config.js` | Modify | Route development `/api` traffic to the actual Express default port 5000. | Proxy-target assertion; development smoke check if practical. |
+| `frontend/src/services/ingestionService.js` | Modify | Translate existing UI inputs into the established Express ingestion DTO and retain canonical nested routes/multipart behavior. | JSON body/path assertions, GitHub ref cases, multipart assertions. |
+| `frontend/src/auth/AuthContext.jsx` | Modify | Make initial session restoration follow the same definitive-versus-transient failure policy as `apiClient`. | 401/403 clearing and network/5xx preservation assertions. |
+| `frontend/tests/m6Flows.test.js` | Modify | Extend the existing runtime-client/service contract suite; replace the currently incorrect GitHub expectation. | `npm test`. |
+| `frontend/src/services/apiClient.js` | Reuse | Existing centralized transport already implements required auth, retry, FormData, and error behavior. | Existing and extended `m6Flows` tests. |
+| `frontend/src/services/authService.js` | Modify | Keep the compatible M5 endpoint behavior and expose the definitive restoration-failure policy used by `AuthContext`. | Direct policy assertions in `m6Flows.test.js`. |
+| `frontend/src/services/projectService.js` | Reuse | Project paths and request bodies match Express. | Expanded path/payload assertions. |
+| `frontend/src/services/repositoryService.js` | Reuse | Repository paths and request bodies match Express. | Expanded path/payload assertions. |
+| `express/src/app.js` and Express route/controller files | Reuse | Backend contract is authoritative and already compatible after frontend translation; same-origin Vite proxy does not require a CORS change. | Existing Express suite; no source diff expected. |
+
+No files are created or deleted, and no dependency change is planned.
+
+#### 4.4.4 Testing and quality gates
+
+1. Baseline already executed during planning: `cd frontend && npm test` — passed both configured scripts; this proves only the current mocked expectations, not Express compatibility.
+2. After implementation: `cd frontend && npm test` — all existing and new contract assertions pass.
+3. After implementation: `cd frontend && npm run build` — Vite production build completes cleanly.
+4. After implementation: targeted Express contract regression, at minimum `authApi.test.js`, `projectApi.test.js`, `repositoryApi.test.js`, and `ingestionApi.test.js`; then `cd express && npm test` if practical.
+5. Optional manual development smoke check (not a substitute for M6-B2): run Express on 5000 and Vite on 3000, confirm `/api/v1/health` traverses the proxy and one login/current-user request reaches Express. Do not execute the complete vertical slice in M6-B1.
+
+#### 4.4.5 Acceptance criteria
+
+1. Vite development `/api` requests target Express on port 5000; no active frontend API configuration targets port 8000.
+2. Existing registration, login, logout, current-user, project, repository, ingestion, revision, and artifact screens continue using the existing UI and canonical `/api/v1` routes.
+3. Protected requests carry the access token; concurrent 401s cause exactly one refresh; each original request retries at most once.
+4. Refresh 401/403 clears tokens and emits `auth:expired`; refresh network/5xx failures preserve tokens and semantic Express errors remain available to callers.
+5. Initial session restoration preserves credentials on unrelated 403, network, and 5xx failures; it clears them only for 401 responses or explicit `403 user_inactive`.
+6. GitHub ingestion sends Express-compatible `source_reference`, including optional ref encoding; server-path ingestion remains compatible.
+7. Archive upload sends `file` and optional `revision_identifier` as multipart data without a manually supplied content type.
+8. Express structured errors retain status, code, message, and details in frontend `ApiError` objects.
+9. Frontend tests and production build pass; relevant Express contract tests remain green.
+10. No Express contract, Python file, React visual design, dependency, M6-B2 E2E workflow, or Phase 2 closeout work is changed.
+
+#### 4.4.6 Risks and unresolved items
+
+- `frontend/src/api/authApi.js` duplicates part of the runtime auth stack but is not imported by application code. Consolidation is a maintenance improvement, not required for M6-B1, and is explicitly deferred.
+- `ProjectCard` defaults absent `project.role` to `OWNER`, while both Python and Express `ProjectResponse` omit a role field. This can display inaccurate role badges/actions for non-owners, although Express still enforces M2 RBAC. Adding a role to the backend response is not authorized by the current contract; record this for a separate contract/product decision rather than silently changing Express during M6-B1.
+- The Node-based frontend harness mocks transport and does not prove a live browser-to-Express journey. That limitation is intentionally closed by M6-B2, not by expanding this batch.
+
+#### 4.4.7 M6-B1 execution record
+
+- **Status:** Complete (2026-10-20).
+- **Completed work:** Vite now proxies `/api` to Express port 5000. JSON ingestion requests match Express's validated DTO for all three canonical sources: GitHub uses `URL` or `URL@ref`; archive and server-path modes pass their server-side path as `source_reference`; path identity remains in the route. Multipart upload remains on `/ingestions/upload`. Session restoration now evicts credentials only for 401 or `403 user_inactive`, preserving them for unrelated authorization, network, and transient server failures.
+- **Files changed:** `frontend/vite.config.js`, `frontend/src/services/ingestionService.js`, `frontend/src/services/authService.js`, `frontend/src/auth/AuthContext.jsx`, and `frontend/tests/m6Flows.test.js`.
+- **Tests updated:** Added proxy, canonical ingestion DTO, all canonical source modes, multipart boundary/auth, structured-error detail, and session-failure policy assertions. Existing Bearer, refresh deduplication, one-retry, and transient-refresh tests remain intact.
+- **Verification:** `cd frontend && npm test` passed; `cd frontend && npm run build` passed (56 modules); targeted Express suites `authApi.test.js`, `projectApi.test.js`, `repositoryApi.test.js`, and `ingestionApi.test.js` passed (4 suites / 100 tests). The first sandboxed Express attempt could not bind the MongoMemoryServer port (`EPERM`); rerunning with local-port permission passed.
+- **Deviation:** The approved clarification required a minimal `authService.js` policy export so the distinction between `403 user_inactive` and unrelated 403 responses is directly testable. No endpoint behavior or `apiClient.js` behavior changed.
+- **Outstanding work:** None for M6-B1. M6-B2 and live end-to-end verification remain explicitly separate.
+
+### 4.5 M6-B2 End-to-End Product Flow Verification
+
+- **Status:** Complete (2026-10-21).
+- **Implementation:** Added `express/tests/integration/e2eVerticalSlice.test.js`, using the real Express app, MongoMemoryServer database, Bearer authentication middleware, project-scoped RBAC, archive acquisition/extraction, artifact classification, content-addressable storage, and canonical nested routes.
+- **Verified journey:** Register (201) → login (200) → authenticated project creation (201) → nested repository registration (201) → archive ingestion trigger (201) → bounded polling of the canonical ingestion status endpoint → terminal `completed` → revision listing → classified artifact listing → refresh-token rotation (200) → `/auth/me` with the rotated access token (200) → logout (204) → rejected replay of the revoked refresh token (401 `refresh_token_revoked`).
+- **Polling behavior:** Polls at a bounded interval with a finite timeout; returns only on `completed`, fails immediately with `error_code` and `error_message` on `failed`, and reports the ingestion ID plus last observed status on timeout.
+- **Fixture isolation:** Uses a unique temporary archive and temporary storage root, removed after the suite. External GitHub access is not required or mocked; the supported archive source exercises the complete ingestion pipeline deterministically.
+- **Verification:** Targeted E2E passed (1 suite / 1 test). Full Express regression passed (29 suites / 373 tests). Frontend tests passed. Frontend production build passed (56 modules).
+- **Limitations:** This is an HTTP-level end-to-end integration test through the real Express application, not browser automation. Existing frontend service-contract tests verify the React API boundary; no UI redesign or browser harness was introduced.
+- **Outstanding work:** None for M6-B2. Phase 2 closeout and architecture-compliance review remain separate and unstarted.
 
 ---
 
@@ -240,7 +303,10 @@ Implement a robust, cryptographically secure Identity & Authentication subsystem
 | `express/src/middleware/authenticate.js` | Modify | Validate Bearer JWTs, derive `req.user.id` from `payload.sub`, strictly reject `x-user-id` in production, allow only in test | `tokenService` | `authenticate.test.js` |
 | `express/src/middleware/errorHandler.js` | Modify | Map auth domain errors to appropriate HTTP status codes (401, 403, 409, 422) | Error classes | Integration tests |
 | `frontend/vite.config.js` | Modify | Update `/api` proxy target from port 8000 to port 5000 | Vite config | `npm test` & dev server |
-| `express/src/app.js` | Modify | Verify CORS configuration accommodates local dev without compromising security | `cors` | Integration tests |
+| `frontend/src/services/ingestionService.js` | Modify | Translate GitHub URL/ref inputs to canonical Express `source_reference`; keep nested paths and multipart contract | `apiClient`, Express ingestion DTO | `m6Flows.test.js` service/body assertions |
+| `frontend/src/auth/AuthContext.jsx` | Modify | Preserve stored credentials on transient restoration failures; clear only on definitive auth rejection | `authService`, `tokenStorage` | `m6Flows.test.js` restoration-policy assertions |
+| `frontend/tests/m6Flows.test.js` | Modify | Correct and extend proxy, service, error, session, and multipart contract coverage | Node assert/fetch/FormData harness | `npm test` |
+| `express/src/app.js` | Reuse | Current CORS does not require an M6-B1 change because Vite proxies same-origin `/api` traffic | `cors` | Existing Express integration suite |
 | `express/tests/integration/e2eVerticalSlice.test.js` | Create | End-to-end integration test with deterministic bounded polling for ingestion completion | Supertest, Jest | E2E test execution |
 
 ---
@@ -256,10 +322,10 @@ Implement a robust, cryptographically secure Identity & Authentication subsystem
 | **M3 (All)** | Repository model, service & routes | **Passed** | PR #22 verified |
 | **M4 (All)** | Ingestion, acquisition handlers, storage & validation | **Passed** | PR #22 verified (22 suites / 268 tests passed) |
 | **M5 Batch 1** | User & RefreshToken models, Password & Token services, AuthConfig | **Passed** | 5 suites / 56 tests passed (review follow-ups resolved) |
-| **M5 Batch 2** | AuthService, Auth Controller & Routes, Atomic Rotation | **Passed** | 34 integration tests passed (28 suites / 358 tests total) |
-| **M5 Batch 3** | Authenticate middleware upgrade, Production Guard & Regression | **Passed** | 15 unit tests passed, prod guard verified, 28 suites / 367 tests total |
-| **M6 Batch 1** | Vite proxy transition & API client alignment | Planned | Resolve canonical ingestion endpoint & test refresh |
-| **M6 Batch 2** | E2E vertical slice validation & production build | Planned | Deterministic bounded polling, full stack build |
+| **M5 Batch 2** | AuthService, Auth Controller & Routes, Atomic Rotation | **Passed** | 36 auth integration tests passed, including inactive/deleted-user rejection |
+| **M5 Batch 3** | Authenticate middleware upgrade, Production Guard & Regression | **Passed** | 18 middleware tests passed; active-user revalidation, prod guard, RBAC integration, and full Express regression verified (28 suites / 372 tests) |
+| **M6 Batch 1** | Frontend API integration & contract alignment | **Complete** | Frontend tests/build passed; targeted Express contract regression passed (4 suites / 100 tests) |
+| **M6 Batch 2** | E2E vertical slice validation & production build | **Complete** | Real Express vertical slice passed; full Express 29 suites / 373 tests; frontend tests/build passed |
 | **Phase 2 Closeout**| Evaluation 1 readiness, architectural compliance & freeze | Planned | Tracked until all acceptance criteria verified |
 
 ---
@@ -276,6 +342,14 @@ Implement a robust, cryptographically secure Identity & Authentication subsystem
 7. **Strict Production Authentication**: In production (`NODE_ENV === 'production'`), only `Authorization: Bearer <access_token>` is accepted. Any test seam (`x-user-id`) is strictly guarded and disallowed in production.
 8. **Canonical Ingestion Route**: The canonical endpoint is strictly `/api/v1/projects/:projectId/repositories/:repositoryId/ingestions` with explicit route parameter names. Shorthand un-nested routes are prohibited.
 9. **Deterministic Terminal Polling**: E2E tests poll ingestion status until either terminal status (`completed` or `failed`) is reached. `completed` succeeds; `failed` immediately reports the ingestion error.
+10. **Active-User Revalidation**: Every Bearer-authenticated request verifies the JWT first, then resolves `sub` to the authoritative User record. Missing users are rejected with `invalid_token`; inactive users are rejected with `user_inactive`. Request identity fields come from the validated User record, while M2 remains the authority for project-scoped permissions.
+
+### Approved M6-B1 Decisions
+
+1. Keep Express contracts unchanged and translate the existing GitHub UI inputs inside `ingestionService` to canonical `source_reference`.
+2. Preserve session credentials for unrelated 403, status `0`, and 5xx restoration failures; clear only for 401 or explicit `403 user_inactive`.
+3. Keep CORS unchanged for M6-B1 because the Vite development proxy maintains a same-origin browser contract.
+4. Retain the unused legacy `src/api/authApi.js` during this scoped migration; consolidation is separate cleanup.
 
 ### Risks & Mitigations
 - **Concurrent Duplicate Registrations**: Simultaneous requests with identical emails or usernames could pass application checks.  
@@ -283,13 +357,14 @@ Implement a robust, cryptographically secure Identity & Authentication subsystem
 - **Asynchronous Ingestion Timing Flakes**: Tests relying on arbitrary delays could flake or mask background failures.  
   *Mitigation*: Use deterministic bounded polling in E2E tests, asserting terminal status `completed` or failing immediately on `failed`.
 - **Port & Cross-Origin Ambiguity**: Dev proxy vs production direct access.  
-  *Mitigation*: In Vite dev, the proxy forwards through the frontend origin so cross-origin is not required. Express maintains safe CORS configuration for dev environments without unnecessary alterations.
+  *Mitigation*: Change the existing Vite proxy target to Express port 5000. Cross-origin configuration is not changed because browser API calls remain same-origin through `/api`.
 
 ---
 
 ## 8. Current Handoff
 
-- **Current Stage**: Phase 2 MERN Migration — M5 Completed & Verified; Ready for M6.
-- **Last Verified Milestone**: M5 Batch 3 (Authenticate middleware upgrade, production guard rejecting `x-user-id` outside test, `sub -> req.user.id` mapping, M2 RBAC capability enforcement, and full regression) passed with 15 unit tests in `authenticate.test.js` and zero regressions across M1–M5 (28 test suites / 367 tests passing total).
-- **Next Recommended Action**: Proceed with **M6 Batch 1** implementation (Vite Proxy Transition & Frontend API Contract Alignment).
-
+- **Current Stage**: Phase 2 MERN Migration — M1–M6 completed and verified; Phase 2 closeout remains unstarted.
+- **Last Verified Milestone**: M5 active-user authentication correction. Bearer requests now resolve `sub` to an existing active User, source request identity from that record, reject deleted users with 401 `invalid_token`, reject inactive users with 403 `user_inactive`, preserve the test-only header guard, and continue to delegate project permissions to M2 RBAC. Focused authentication/RBAC verification passed (4 suites / 97 tests), followed by the complete Express regression (28 suites / 372 tests).
+- **M6-B1 Evidence**: `cd frontend && npm test` and `cd frontend && npm run build` passed. Targeted Express auth/project/repository/ingestion integration regression passed (4 suites / 100 tests) after granting the local-port permission required by MongoMemoryServer.
+- **M6-B2 Evidence**: The real Express vertical slice completed ingestion and verified its revision and three classified artifacts. The targeted test passed (1/1), the full Express suite passed (29 suites / 373 tests), frontend tests passed, and the production build passed.
+- **Next Recommended Action**: Review and approve M6-B2. Begin Phase 2 closeout only under a separate explicit request.

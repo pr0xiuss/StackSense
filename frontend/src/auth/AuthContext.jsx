@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { authService } from '../services/authService.js';
+import { authService, isDefinitiveSessionFailure } from '../services/authService.js';
 import { tokenStorage } from '../services/apiClient.js';
 
 const AuthContext = createContext(null);
@@ -39,9 +39,12 @@ export function AuthProvider({ children }) {
           setIsAuthenticated(true);
         }
       } catch (err) {
-        // If getting current user fails even after refresh attempts, clear session
         if (isMounted) {
-          clearSession();
+          if (isDefinitiveSessionFailure(err)) {
+            clearSession();
+          } else {
+            setAuthError(err);
+          }
         }
       } finally {
         if (isMounted) {
