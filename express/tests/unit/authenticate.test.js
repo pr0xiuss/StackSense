@@ -1,7 +1,10 @@
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const authenticate = require('../../src/middleware/authenticate');
 const tokenService = require('../../src/services/auth/tokenService');
+const authConfig = require('../../src/config/authConfig');
 const projectAuthorization = require('../../src/services/projectAuthorization');
+const User = require('../../src/models/User');
 const Project = require('../../src/models/Project');
 const ProjectAccess = require('../../src/models/ProjectAccess');
 const { PROJECT_ROLES } = require('../../src/constants/projectRoles');
@@ -29,12 +32,17 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
   }
 
   describe('Bearer JWT Token Verification', () => {
-    it('authenticates valid Bearer token and sets req.user.id from payload.sub', () => {
-      const user = {
+    it('authenticates an active existing user and sources req.user from the user record', async () => {
+      await User.create({
+        _id: validUuid,
+        email: 'current@stacksense.local',
+        username: 'current_user',
+        password_hash: 'test-password-hash',
+      });
+      const token = tokenService.createAccessToken({
         id: validUuid,
-        email: 'jwtuser@stacksense.local',
-      };
-      const token = tokenService.createAccessToken(user);
+        email: 'stale-claim@stacksense.local',
+      });
 
       const req = createMockReq({
         authorization: `Bearer ${token}`,
@@ -42,16 +50,61 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       const res = createMockRes();
       const next = jest.fn();
 
-      authenticate(req, res, next);
+      await authenticate(req, res, next);
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(req.user).toBeDefined();
       expect(req.user.id).toBe(validUuid);
-      expect(req.user.email).toBe('jwtuser@stacksense.local');
+      expect(req.user.email).toBe('current@stacksense.local');
       expect(res.status).not.toHaveBeenCalled();
     });
 
-    it('returns 401 token_expired when Bearer token has expired', () => {
+    it('rejects a valid unexpired token when the user is inactive', async () => {
+      await User.create({
+        _id: validUuid,
+        email: 'inactive@stacksense.local',
+        username: 'inactive_user',
+        password_hash: 'test-password-hash',
+        is_active: false,
+      });
+      const token = tokenService.createAccessToken({ id: validUuid, email: 'inactive@stacksense.local' });
+      const req = createMockReq({ authorization: `Bearer ${token}` });
+      const res = createMockRes();
+      const next = jest.fn();
+
+      await authenticate(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({
+        error: {
+          code: 'user_inactive',
+          message: 'User account is inactive.',
+          details: {},
+        },
+      });
+    });
+
+    it('rejects a valid unexpired token when the user no longer exists', async () => {
+      const token = tokenService.createAccessToken({ id: validUuid, email: 'deleted@stacksense.local' });
+      const req = createMockReq({ authorization: `Bearer ${token}` });
+      const res = createMockRes();
+      const next = jest.fn();
+
+      await authenticate(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith({
+        error: {
+          code: 'invalid_token',
+          message: 'User associated with token does not exist.',
+          details: {},
+        },
+      });
+    });
+
+    it('returns 401 token_expired when Bearer token has expired', async () => {
       const { TokenService } = require('../../src/services/auth/tokenService');
       const expiredService = new TokenService({
         expirationMinutes: -10, // Creates pre-expired token
@@ -65,7 +118,7 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       const res = createMockRes();
       const next = jest.fn();
 
-      authenticate(req, res, next);
+      await authenticate(req, res, next);
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(401);
@@ -78,7 +131,7 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       );
     });
 
-    it('returns 401 invalid_token when Bearer token signature is tampered', () => {
+    it('returns 401 invalid_token when Bearer token signature is tampered', async () => {
       const user = { id: validUuid, email: 'tampered@stacksense.local' };
       const token = tokenService.createAccessToken(user);
       const parts = token.split('.');
@@ -91,7 +144,7 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       const res = createMockRes();
       const next = jest.fn();
 
-      authenticate(req, res, next);
+      await authenticate(req, res, next);
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(401);
@@ -104,14 +157,43 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       );
     });
 
-    it('returns 401 invalid_token when authorization header is malformed', () => {
+    it('returns 401 invalid_token when the signed token is not an access token', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const token = jwt.sign(
+        {
+          sub: validUuid,
+          email: 'refresh@stacksense.local',
+          iat: now,
+          exp: now + 3600,
+          jti: crypto.randomUUID(),
+          token_type: 'refresh',
+        },
+        authConfig.jwtSecret,
+        { algorithm: authConfig.jwtAlgorithm }
+      );
+      const req = createMockReq({ authorization: `Bearer ${token}` });
+      const res = createMockRes();
+      const next = jest.fn();
+
+      await authenticate(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ code: 'invalid_token' }),
+        })
+      );
+    });
+
+    it('returns 401 invalid_token when authorization header is malformed', async () => {
       const req = createMockReq({
         authorization: 'MalformedHeaderWithoutBearerPrefix',
       });
       const res = createMockRes();
       const next = jest.fn();
 
-      authenticate(req, res, next);
+      await authenticate(req, res, next);
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(401);
@@ -265,12 +347,21 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
     beforeEach(async () => {
       await Project.deleteMany({});
       await ProjectAccess.deleteMany({});
+      await User.deleteMany({});
 
       ownerId = crypto.randomUUID();
       adminId = crypto.randomUUID();
       developerId = crypto.randomUUID();
       viewerId = crypto.randomUUID();
       outsiderId = crypto.randomUUID();
+
+      await User.create([
+        { _id: ownerId, email: 'owner@test.local', username: 'owner', password_hash: 'test-hash' },
+        { _id: adminId, email: 'admin@test.local', username: 'admin', password_hash: 'test-hash' },
+        { _id: developerId, email: 'dev@test.local', username: 'developer', password_hash: 'test-hash' },
+        { _id: viewerId, email: 'viewer@test.local', username: 'viewer', password_hash: 'test-hash' },
+        { _id: outsiderId, email: 'outsider@test.local', username: 'outsider', password_hash: 'test-hash' },
+      ]);
 
       const project = await Project.create({
         name: 'RBAC Test Project',
@@ -292,7 +383,7 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       const res = createMockRes();
       const next = jest.fn();
 
-      authenticate(req, res, next);
+      await authenticate(req, res, next);
       expect(next).toHaveBeenCalled();
 
       // Flow into M2 projectAuthorization
@@ -309,7 +400,7 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       const res = createMockRes();
       const next = jest.fn();
 
-      authenticate(req, res, next);
+      await authenticate(req, res, next);
       expect(next).toHaveBeenCalled();
 
       // Developer can read, create, update
@@ -328,7 +419,7 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       const res = createMockRes();
       const next = jest.fn();
 
-      authenticate(req, res, next);
+      await authenticate(req, res, next);
       expect(next).toHaveBeenCalled();
 
       // Viewer can read
@@ -352,7 +443,7 @@ describe('Authenticate Middleware Unit Tests (M5 Batch 3)', () => {
       const res = createMockRes();
       const next = jest.fn();
 
-      authenticate(req, res, next);
+      await authenticate(req, res, next);
       expect(next).toHaveBeenCalled();
 
       await expect(projectAuthorization.requireAccess(projectId, req.user.id)).rejects.toThrow(

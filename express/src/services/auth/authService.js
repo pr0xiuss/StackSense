@@ -285,7 +285,13 @@ class AuthService {
       return null;
     }
     const user = await this.User.findById(userId);
-    return user ? user.toJSON() : null;
+    if (!user) {
+      return null;
+    }
+    if (!user.is_active) {
+      throw new UserInactiveError('User account is inactive.');
+    }
+    return user.toJSON();
   }
 }
 

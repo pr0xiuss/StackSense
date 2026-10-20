@@ -54,10 +54,19 @@ globalThis.HashChangeEvent = class HashChangeEvent {
 // Import apiClient and services
 const { apiClient, tokenStorage, ApiError, ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY } =
   await import('../src/services/apiClient.js');
-const { authService } = await import('../src/services/authService.js');
+const { authService, isDefinitiveSessionFailure } =
+  await import('../src/services/authService.js');
 const { projectService } = await import('../src/services/projectService.js');
 const { repositoryService } = await import('../src/services/repositoryService.js');
 const { ingestionService } = await import('../src/services/ingestionService.js');
+const { default: viteConfig } = await import('../vite.config.js');
+
+function testProxyConfiguration() {
+  console.log('Testing Vite API proxy configuration...');
+  assert.equal(viteConfig.server.proxy['/api'].target, 'http://localhost:5000');
+  assert.equal(viteConfig.server.proxy['/api'].changeOrigin, true);
+  console.log('✓ Vite proxy targets Express on port 5000');
+}
 
 async function testBearerAttachment() {
   console.log('Testing automatic Bearer token attachment...');
@@ -359,6 +368,33 @@ async function testRefreshPreservesBackendSemanticErrorCode() {
   console.log('✓ Backend semantic error code preservation verified');
 }
 
+async function testStructuredErrorPreservation() {
+  console.log('Testing structured Express error preservation...');
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({
+      error: {
+        code: 'validation_error',
+        message: 'Invalid ingestion request.',
+        details: { field: 'source_reference' },
+      },
+    }),
+    { status: 422, headers: { 'Content-Type': 'application/json' } }
+  );
+
+  await assert.rejects(
+    apiClient.post('/projects/p1/repositories/r1/ingestions', {}),
+    (error) => {
+      assert.ok(error instanceof ApiError);
+      assert.equal(error.status, 422);
+      assert.equal(error.code, 'validation_error');
+      assert.equal(error.message, 'Invalid ingestion request.');
+      assert.deepEqual(error.details, { field: 'source_reference' });
+      return true;
+    }
+  );
+  console.log('✓ Structured Express errors retain status, code, message, and details');
+}
+
 function testAuthContextSessionResilienceContracts() {
   console.log('Testing AuthContext session resilience & routing contracts...');
   const authCtxSrc = fs.readFileSync(path.join(srcDir, 'auth/AuthContext.jsx'), 'utf-8');
@@ -374,6 +410,15 @@ function testAuthContextSessionResilienceContracts() {
     authCtxSrc.includes("window.addEventListener('auth:expired', handleAuthExpired)"),
     'Must subscribe to auth:expired event'
   );
+  assert.ok(
+    authCtxSrc.includes('isDefinitiveSessionFailure(err)'),
+    'Session restoration must use the definitive-failure policy'
+  );
+  assert.equal(isDefinitiveSessionFailure(new ApiError('Expired', 401, 'token_expired')), true);
+  assert.equal(isDefinitiveSessionFailure(new ApiError('Inactive', 403, 'user_inactive')), true);
+  assert.equal(isDefinitiveSessionFailure(new ApiError('Forbidden', 403, 'forbidden')), false);
+  assert.equal(isDefinitiveSessionFailure(new ApiError('Offline', 0, 'network_error')), false);
+  assert.equal(isDefinitiveSessionFailure(new ApiError('Unavailable', 503, 'server_error')), false);
   console.log('✓ AuthContext session resilience contracts passed');
 }
 
@@ -384,11 +429,13 @@ async function testServicesContracts() {
   let lastUrl = '';
   let lastMethod = '';
   let lastBody = null;
+  let lastHeaders = null;
 
   globalThis.fetch = async (url, options) => {
     lastUrl = url;
     lastMethod = options.method;
     lastBody = options.body;
+    lastHeaders = options.headers;
 
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -433,11 +480,19 @@ async function testServicesContracts() {
   assert.equal(lastUrl, '/api/v1/projects/proj-123/repositories/repo-456/ingestions');
   assert.equal(lastMethod, 'POST');
   assert.deepEqual(JSON.parse(lastBody), {
-    repository_id: 'repo-456',
+    source_type: 'github',
+    source_reference: 'https://github.com/owner/repo@main',
+    revision_identifier: 'v1.0.0',
+  });
+
+  // GitHub mode without an optional ref keeps the canonical URL unchanged.
+  await ingestionService.triggerIngestion('proj-123', 'repo-456', {
     source_type: 'github',
     repository_url: 'https://github.com/owner/repo',
-    ref: 'main',
-    revision_identifier: 'v1.0.0',
+  });
+  assert.deepEqual(JSON.parse(lastBody), {
+    source_type: 'github',
+    source_reference: 'https://github.com/owner/repo',
   });
 
   // ingestionService - triggerIngestion with Server Path mode
@@ -449,11 +504,35 @@ async function testServicesContracts() {
   assert.equal(lastUrl, '/api/v1/projects/proj-123/repositories/repo-456/ingestions');
   assert.equal(lastMethod, 'POST');
   assert.deepEqual(JSON.parse(lastBody), {
-    repository_id: 'repo-456',
     source_type: 'server_path',
     source_reference: '/var/stacksense/staged/archive.tar.gz',
     revision_identifier: 'v1.2.0',
   });
+
+  // JSON archive mode uses a server-side archive path as source_reference.
+  await ingestionService.triggerIngestion('proj-123', 'repo-456', {
+    source_type: 'archive',
+    source_reference: '/var/stacksense/staged/repository.zip',
+  });
+  assert.deepEqual(JSON.parse(lastBody), {
+    source_type: 'archive',
+    source_reference: '/var/stacksense/staged/repository.zip',
+  });
+
+  // Browser archive upload uses the dedicated multipart route and boundary.
+  await ingestionService.uploadAndIngest(
+    'proj-123',
+    'repo-456',
+    new Blob(['archive-bytes'], { type: 'application/zip' }),
+    'release-1'
+  );
+  assert.equal(lastUrl, '/api/v1/projects/proj-123/repositories/repo-456/ingestions/upload');
+  assert.equal(lastMethod, 'POST');
+  assert.ok(lastBody instanceof FormData);
+  assert.ok(lastBody.get('file') instanceof Blob);
+  assert.equal(lastBody.get('revision_identifier'), 'release-1');
+  assert.equal(lastHeaders.get('Authorization'), 'Bearer test-token');
+  assert.equal(lastHeaders.has('Content-Type'), false);
 
   await ingestionService.listRevisions('proj-123', 'repo-456', 20, 0);
   assert.equal(lastUrl, '/api/v1/projects/proj-123/repositories/repo-456/revisions?limit=20&offset=0');
@@ -544,6 +623,7 @@ function testCssFidelity() {
 }
 
 async function runM6Tests() {
+  testProxyConfiguration();
   await testBearerAttachment();
   await testAutomaticRefreshAndRetry();
   await testConcurrent401Deduplication();
@@ -551,6 +631,7 @@ async function runM6Tests() {
   await testNetworkErrorDuringRefreshPreservesTokens();
   await testServer5xxErrorDuringRefreshPreservesTokens();
   await testRefreshPreservesBackendSemanticErrorCode();
+  await testStructuredErrorPreservation();
   await testServicesContracts();
   testDashboardPageContracts();
   testRepositoryPageContracts();

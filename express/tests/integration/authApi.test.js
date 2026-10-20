@@ -534,6 +534,36 @@ describe('Auth API Integration Tests (M5 Batch 2)', () => {
       expect(response.body.password_hash).toBeUndefined();
     });
 
+    it('rejects an access token after the user is deactivated', async () => {
+      await User.findByIdAndUpdate(testUser.id, { is_active: false });
+
+      const response = await request(app)
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(403);
+
+      expect(response.body.error).toEqual({
+        code: 'user_inactive',
+        message: 'User account is inactive.',
+        details: {},
+      });
+    });
+
+    it('rejects an access token after the user is deleted', async () => {
+      await User.findByIdAndDelete(testUser.id);
+
+      const response = await request(app)
+        .get('/api/v1/auth/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(401);
+
+      expect(response.body.error).toEqual({
+        code: 'invalid_token',
+        message: 'User associated with token does not exist.',
+        details: {},
+      });
+    });
+
     it('returns 401 authentication_required without token', async () => {
       const response = await request(app)
         .get('/api/v1/auth/me')

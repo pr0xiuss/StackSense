@@ -1,6 +1,7 @@
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const tokenService = require('../services/auth/tokenService');
-const { InvalidTokenError, TokenExpiredError } = require('../errors/authErrors');
+const authService = require('../services/auth/authService');
+const { InvalidTokenError, TokenExpiredError, UserInactiveError } = require('../errors/authErrors');
 
 /**
  * Authentication middleware.
@@ -8,7 +9,7 @@ const { InvalidTokenError, TokenExpiredError } = require('../errors/authErrors')
  * In production, only Bearer tokens are accepted. x-user-id header is strictly rejected.
  * In test environments, x-user-id header fallback is allowed for isolated unit/integration suites.
  */
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   // 1. Check for Authorization: Bearer <token>
   const authHeader = req.header('authorization');
   if (authHeader) {
@@ -17,10 +18,15 @@ function authenticate(req, res, next) {
       const token = parts[1];
       try {
         const payload = tokenService.verifyToken(token);
-        // payload contains: sub, userId, email, tokenId, tokenType, issuedAt, expiresAt
+        const currentUser = await authService.getCurrentUser(payload.sub);
+        if (!currentUser) {
+          throw new InvalidTokenError('User associated with token does not exist.');
+        }
+
+        // Identity fields come from the current authoritative user record, not JWT claims.
         req.user = {
-          id: payload.sub,
-          email: payload.email,
+          id: currentUser.id,
+          email: currentUser.email,
         };
         return next();
       } catch (err) {
@@ -37,6 +43,15 @@ function authenticate(req, res, next) {
           return res.status(401).json({
             error: {
               code: 'invalid_token',
+              message: err.message,
+              details: {},
+            },
+          });
+        }
+        if (err instanceof UserInactiveError) {
+          return res.status(403).json({
+            error: {
+              code: 'user_inactive',
               message: err.message,
               details: {},
             },
