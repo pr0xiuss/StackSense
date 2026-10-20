@@ -38,20 +38,26 @@ export const ingestionService = {
    * @param {{ source_type?: string, repository_url?: string, ref?: string, source_reference?: string, revision_identifier?: string }} payload
    */
   async triggerIngestion(projectId, repositoryId, payload) {
+    const sourceType = typeof payload.source_type === 'string'
+      ? payload.source_type.trim()
+      : payload.source_type;
+    let sourceReference = typeof payload.source_reference === 'string'
+      ? payload.source_reference.trim()
+      : payload.source_reference;
+
+    // Express's GitHub acquisition contract encodes an optional ref in
+    // source_reference as "https://github.com/owner/repo@ref".
+    if (sourceType === 'github' && typeof payload.repository_url === 'string') {
+      const repositoryUrl = payload.repository_url.trim();
+      const ref = typeof payload.ref === 'string' ? payload.ref.trim() : '';
+      sourceReference = ref ? `${repositoryUrl}@${ref}` : repositoryUrl;
+    }
+
     const body = {
-      repository_id: repositoryId,
-      source_type: payload.source_type || 'archive',
+      source_type: sourceType,
+      source_reference: sourceReference,
     };
 
-    if (payload.repository_url && typeof payload.repository_url === 'string') {
-      body.repository_url = payload.repository_url.trim();
-    }
-    if (payload.ref && typeof payload.ref === 'string') {
-      body.ref = payload.ref.trim();
-    }
-    if (payload.source_reference && typeof payload.source_reference === 'string') {
-      body.source_reference = payload.source_reference.trim();
-    }
     if (payload.revision_identifier && typeof payload.revision_identifier === 'string') {
       const cleanRev = payload.revision_identifier.trim();
       if (cleanRev) {

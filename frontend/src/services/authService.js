@@ -4,6 +4,15 @@
  */
 import { apiClient, tokenStorage } from './apiClient.js';
 
+/**
+ * Return whether a current-user failure proves the stored session is unusable.
+ * Project/resource authorization failures must not evict an otherwise valid session.
+ */
+export function isDefinitiveSessionFailure(error) {
+  if (error?.status === 401) return true;
+  return error?.status === 403 && error?.code === 'user_inactive';
+}
+
 export const authService = {
   /**
    * Authenticate user with identifier (username or email) and password.
