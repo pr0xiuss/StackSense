@@ -326,6 +326,7 @@ No files are created or deleted, and no dependency change is planned.
 | **M5 Batch 3** | Authenticate middleware upgrade, Production Guard & Regression | **Passed** | 18 middleware tests passed; active-user revalidation, prod guard, RBAC integration, and full Express regression verified (28 suites / 372 tests) |
 | **M6 Batch 1** | Frontend API integration & contract alignment | **Complete** | Frontend tests/build passed; targeted Express contract regression passed (4 suites / 100 tests) |
 | **M6 Batch 2** | E2E vertical slice validation & production build | **Complete** | Real Express vertical slice passed; full Express 29 suites / 373 tests; frontend tests/build passed |
+| **Dashboard & Artifacts** | Repo search, 5/page pagination, 3-dot deletion, ArtifactsTab revisions fix | **Complete** | Frontend tests passed (3 suites / 100%), build passed; Express 29 suites / 377 tests passed |
 | **Phase 2 Closeout**| Evaluation 1 readiness, architectural compliance & freeze | Planned | Tracked until all acceptance criteria verified |
 
 ---
@@ -343,6 +344,8 @@ No files are created or deleted, and no dependency change is planned.
 8. **Canonical Ingestion Route**: The canonical endpoint is strictly `/api/v1/projects/:projectId/repositories/:repositoryId/ingestions` with explicit route parameter names. Shorthand un-nested routes are prohibited.
 9. **Deterministic Terminal Polling**: E2E tests poll ingestion status until either terminal status (`completed` or `failed`) is reached. `completed` succeeds; `failed` immediately reports the ingestion error.
 10. **Active-User Revalidation**: Every Bearer-authenticated request verifies the JWT first, then resolves `sub` to the authoritative User record. Missing users are rejected with `invalid_token`; inactive users are rejected with `user_inactive`. Request identity fields come from the validated User record, while M2 remains the authority for project-scoped permissions.
+11. **Repository Deletion & Active Ingestion Safety**: Repository deletion endpoint (`DELETE /api/v1/projects/:projectId/repositories/:repositoryId`) verifies project boundary, blocks deletion if an ingestion is actively `PROCESSING` (409 conflict), and triggers defensive cascade cleanup of child ingestions, revisions, and artifacts through Mongoose hooks while preserving content-addressed physical storage objects.
+12. **ArtifactsTab Revisions Decoupling**: Revisions list fetching depends strictly on `[projectId, repositoryId]` identity via refs, avoiding re-fetching when `selectedRevision` changes. Artifacts loading depends on the primitive `selectedRevisionId` string.
 
 ### Approved M6-B1 Decisions
 
@@ -363,8 +366,9 @@ No files are created or deleted, and no dependency change is planned.
 
 ## 8. Current Handoff
 
-- **Current Stage**: Phase 2 MERN Migration — M1–M6 completed and verified; Phase 2 closeout remains unstarted.
-- **Last Verified Milestone**: M5 active-user authentication correction. Bearer requests now resolve `sub` to an existing active User, source request identity from that record, reject deleted users with 401 `invalid_token`, reject inactive users with 403 `user_inactive`, preserve the test-only header guard, and continue to delegate project permissions to M2 RBAC. Focused authentication/RBAC verification passed (4 suites / 97 tests), followed by the complete Express regression (28 suites / 372 tests).
-- **M6-B1 Evidence**: `cd frontend && npm test` and `cd frontend && npm run build` passed. Targeted Express auth/project/repository/ingestion integration regression passed (4 suites / 100 tests) after granting the local-port permission required by MongoMemoryServer.
-- **M6-B2 Evidence**: The real Express vertical slice completed ingestion and verified its revision and three classified artifacts. The targeted test passed (1/1), the full Express suite passed (29 suites / 373 tests), frontend tests passed, and the production build passed.
-- **Next Recommended Action**: Review and approve M6-B2. Begin Phase 2 closeout only under a separate explicit request.
+- **Current Stage**: Phase 2 MERN Migration — Dashboard Repository Management (Search, 5/page Pagination, 3-dot Deletion) & Artifacts Tab Optimization Complete.
+- **Verification Evidence**:
+  - `frontend`: `npm test` passed 100% across all 3 suites (`authApi.test.js`, `m6Flows.test.js`, `repositoryManagementAndArtifacts.test.js`).
+  - `frontend`: `npm run build` completed cleanly without errors.
+  - `express`: `npm test` (`jest --runInBand`) passed 100% across all 29 suites (377 tests).
+- **Next Recommended Action**: Proceed with Phase 2 closeout or next milestone per roadmap.
