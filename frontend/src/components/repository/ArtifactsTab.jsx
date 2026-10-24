@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ingestionService } from '../../services/ingestionService.js';
 
 function formatBytes(bytes) {
@@ -23,36 +23,52 @@ export default function ArtifactsTab({
   const [loadingArtifacts, setLoadingArtifacts] = useState(false);
   const [error, setError] = useState(null);
 
-  // Load revisions on mount to populate revision selector dropdown
+  const selectedRevisionRef = useRef(selectedRevision);
+  const onSelectRevisionRef = useRef(onSelectRevision);
+
+  // Keep refs up-to-date with latest props without triggering effect re-execution
+  useEffect(() => {
+    selectedRevisionRef.current = selectedRevision;
+    onSelectRevisionRef.current = onSelectRevision;
+  });
+
+  // Load revisions when project/repository identity changes
   useEffect(() => {
     let isMounted = true;
     setLoadingRevisions(true);
+    setRevisions([]);
+
     ingestionService
       .listRevisions(projectId, repositoryId, 50, 0)
       .then((data) => {
         if (isMounted) {
           const list = Array.isArray(data) ? data : [];
           setRevisions(list);
-          if (!selectedRevision && list.length > 0) {
-            onSelectRevision(list[0]);
+          if (!selectedRevisionRef.current && list.length > 0) {
+            onSelectRevisionRef.current?.(list[0]);
           }
         }
       })
       .catch(() => {})
       .finally(() => {
-        if (isMounted) setLoadingRevisions(false);
+        if (isMounted) {
+          setLoadingRevisions(false);
+        }
       });
 
     return () => {
       isMounted = false;
     };
-  }, [projectId, repositoryId, selectedRevision, onSelectRevision]);
+  }, [projectId, repositoryId]);
 
-  // Load artifacts whenever selectedRevision changes
+  // Load artifacts whenever selected revision identifier changes
+  const selectedRevisionId = selectedRevision?.id;
+
   useEffect(() => {
     let isMounted = true;
-    if (!selectedRevision?.id) {
+    if (!selectedRevisionId) {
       setArtifacts([]);
+      setLoadingArtifacts(false);
       return;
     }
 
@@ -60,7 +76,7 @@ export default function ArtifactsTab({
     setError(null);
 
     ingestionService
-      .listArtifacts(projectId, repositoryId, selectedRevision.id, 50, 0)
+      .listArtifacts(projectId, repositoryId, selectedRevisionId, 50, 0)
       .then((data) => {
         if (isMounted) {
           setArtifacts(Array.isArray(data) ? data : []);
@@ -72,13 +88,15 @@ export default function ArtifactsTab({
         }
       })
       .finally(() => {
-        if (isMounted) setLoadingArtifacts(false);
+        if (isMounted) {
+          setLoadingArtifacts(false);
+        }
       });
 
     return () => {
       isMounted = false;
     };
-  }, [projectId, repositoryId, selectedRevision]);
+  }, [projectId, repositoryId, selectedRevisionId]);
 
   const handleRevisionChange = (e) => {
     const revId = e.target.value;

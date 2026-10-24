@@ -1,5 +1,11 @@
 const Repository = require('../models/Repository');
+const Ingestion = require('../models/Ingestion');
 const projectAuthorization = require('./projectAuthorization');
+const {
+  INGESTION_STATUS,
+  DEFAULT_STALE_INGESTION_TIMEOUT_MS,
+} = require('../constants/ingestionConstants');
+const { ActiveIngestionExistsError } = require('../errors/ingestionErrors');
 const {
   RepositoryNotFoundError,
   RepositoryAlreadyExistsError,
@@ -150,6 +156,27 @@ const repositoryService = {
    */
   async deleteRepository(projectId, repositoryId, userId) {
     await projectAuthorization.requireDeleteAccess(projectId, userId);
+
+    const existing = await Repository.findById(repositoryId);
+    if (!existing || existing.project_id !== projectId) {
+      throw new RepositoryNotFoundError();
+    }
+
+    const activeIngestion = await Ingestion.findOne({
+      repository_id: repositoryId,
+      status: INGESTION_STATUS.PROCESSING,
+    });
+    if (activeIngestion) {
+      const startedAt = activeIngestion.started_at
+        ? new Date(activeIngestion.started_at).getTime()
+        : 0;
+      const isStale = Date.now() - startedAt > DEFAULT_STALE_INGESTION_TIMEOUT_MS;
+      if (!isStale) {
+        throw new ActiveIngestionExistsError(
+          'Cannot delete repository while an ingestion is actively processing.'
+        );
+      }
+    }
 
     const repository = await Repository.findOneAndDelete({
       _id: repositoryId,

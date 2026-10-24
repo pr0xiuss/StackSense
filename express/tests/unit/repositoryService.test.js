@@ -8,6 +8,9 @@ const {
   RepositoryAlreadyExistsError,
 } = require('../../src/errors/repositoryErrors');
 const { ProjectAccessDeniedError } = require('../../src/errors/accessErrors');
+const { ActiveIngestionExistsError } = require('../../src/errors/ingestionErrors');
+const Ingestion = require('../../src/models/Ingestion');
+const { INGESTION_STATUS } = require('../../src/constants/ingestionConstants');
 
 describe('Repository Service Unit Tests (M3 Batch 1)', () => {
   let ownerId;
@@ -306,6 +309,46 @@ describe('Repository Service Unit Tests (M3 Batch 1)', () => {
       await expect(
         repositoryService.deleteRepository(project._id, repo._id, devId)
       ).rejects.toThrow(ProjectAccessDeniedError);
+    });
+
+    it('rejects deletion when repository belongs to a different project', async () => {
+      const otherProject = await projectService.createProject({
+        name: 'Other-Project',
+        ownerId,
+      });
+
+      const repo = await repositoryService.registerRepository({
+        projectId: otherProject._id,
+        name: 'other-repo',
+        userId: ownerId,
+      });
+
+      // Try deleting from project._id instead of otherProject._id
+      await expect(
+        repositoryService.deleteRepository(project._id, repo._id, ownerId)
+      ).rejects.toThrow(RepositoryNotFoundError);
+    });
+
+    it('rejects deletion when an ingestion is actively processing', async () => {
+      const repo = await repositoryService.registerRepository({
+        projectId: project._id,
+        name: 'active-ingest-repo',
+        userId: ownerId,
+      });
+
+      // Create an active ingestion
+      await Ingestion.create({
+        project_id: project._id,
+        repository_id: repo._id,
+        source_type: 'github',
+        source_reference: 'https://github.com/example/repo',
+        status: INGESTION_STATUS.PROCESSING,
+        started_at: new Date(),
+      });
+
+      await expect(
+        repositoryService.deleteRepository(project._id, repo._id, ownerId)
+      ).rejects.toThrow(ActiveIngestionExistsError);
     });
   });
 });

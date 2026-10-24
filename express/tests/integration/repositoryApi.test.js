@@ -267,6 +267,43 @@ describe('Repository API Integration Tests (M3 Batch 1)', () => {
 
       expect(getRes.status).toBe(404);
     });
+
+    it('rejects cross-project repository deletion with 404', async () => {
+      const project2 = await projectService.createProject({
+        name: 'Project-Two',
+        ownerId,
+      });
+
+      const repoRes = await request(app)
+        .post(`/api/v1/projects/${project2._id}/repositories`)
+        .set('x-user-id', ownerId)
+        .send({ name: 'isolated-repo' });
+
+      const repoId = repoRes.body.id;
+
+      // Attempt to delete through project 1 URL
+      const deleteRes = await request(app)
+        .delete(`/api/v1/projects/${project._id}/repositories/${repoId}`)
+        .set('x-user-id', ownerId);
+
+      expect(deleteRes.status).toBe(404);
+      expect(deleteRes.body.error.code).toBe('repository_not_found');
+    });
+
+    it('rejects unauthenticated deletion with 401', async () => {
+      const repoRes = await request(app)
+        .post(`/api/v1/projects/${project._id}/repositories`)
+        .set('x-user-id', ownerId)
+        .send({ name: 'auth-check-repo' });
+
+      const repoId = repoRes.body.id;
+
+      const deleteRes = await request(app)
+        .delete(`/api/v1/projects/${project._id}/repositories/${repoId}`);
+
+      expect(deleteRes.status).toBe(401);
+      expect(deleteRes.body.error.code).toBe('authentication_required');
+    });
   });
 
   describe('Role-Based Access Control (RBAC)', () => {

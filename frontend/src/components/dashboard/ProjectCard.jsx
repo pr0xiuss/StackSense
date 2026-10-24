@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { repositoryService } from '../../services/repositoryService.js';
+import DeleteRepositoryModal from './DeleteRepositoryModal.jsx';
 
 const BADGE_COLORS = ['blue', 'red', 'green', 'purple', 'cyan'];
+const REPOS_PER_PAGE = 5;
 
 /**
  * Helper to compute friendly relative time string
@@ -38,7 +40,17 @@ export default function ProjectCard({
   const [reposError, setReposError] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+  const repoMenuRef = useRef(null);
   const isMountedRef = useRef(true);
+
+  // Feature A & B: Search and Pagination state
+  const [repoSearchQuery, setRepoSearchQuery] = useState('');
+  const [repoCurrentPage, setRepoCurrentPage] = useState(1);
+
+  // Feature C: Three-dot row menu & deletion state
+  const [openRepoMenuId, setOpenRepoMenuId] = useState(null);
+  const [deleteTargetRepo, setDeleteTargetRepo] = useState(null);
+  const [feedbackMessage, setFeedbackMessage] = useState(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -89,15 +101,24 @@ export default function ProjectCard({
         if (prev.some((r) => r.id === lastCreatedRepo.id)) return prev;
         return [lastCreatedRepo, ...prev];
       });
+      setRepoCurrentPage(1);
       fetchRepositories();
     }
   }, [lastCreatedRepo, project.id, fetchRepositories]);
 
-  // Close three-dot menu on outside click
+  // Reset pagination to page 1 whenever the search query changes
+  useEffect(() => {
+    setRepoCurrentPage(1);
+  }, [repoSearchQuery]);
+
+  // Close menus on outside click
   useEffect(() => {
     const handleOutside = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target)) {
         setMenuOpen(false);
+      }
+      if (repoMenuRef.current && !repoMenuRef.current.contains(e.target)) {
+        setOpenRepoMenuId(null);
       }
     };
     document.addEventListener('mousedown', handleOutside);
@@ -123,6 +144,55 @@ export default function ProjectCard({
     if (window.confirm(`Are you sure you want to delete "${project.name}"? This action cannot be undone.`)) {
       onDeleteProject(project.id);
     }
+  };
+
+  // Feature C: Repository deleted callback
+  const handleRepositoryDeleted = (deletedRepoId) => {
+    const deleted = (repositories || []).find((r) => r.id === deletedRepoId);
+    setRepositories((prev) => {
+      const updated = (prev || []).filter((r) => r.id !== deletedRepoId);
+      return updated;
+    });
+
+    // Ensure pagination stays valid (navigate to nearest valid page if last on page was deleted)
+    setRepoCurrentPage((prev) => {
+      const remainingCount = Math.max(0, (repositories || []).length - 1);
+      const newTotalPages = Math.max(1, Math.ceil(remainingCount / REPOS_PER_PAGE));
+      return Math.min(prev, newTotalPages);
+    });
+
+    if (deleted?.name) {
+      setFeedbackMessage({
+        type: 'success',
+        text: `Repository "${deleted.name}" deleted successfully.`,
+      });
+      setTimeout(() => {
+        if (isMountedRef.current) setFeedbackMessage(null);
+      }, 4000);
+    }
+  };
+
+  // Feature A: Filter repositories by name case-insensitively
+  const filteredRepositories = useMemo(() => {
+    if (!repositories) return [];
+    if (!repoSearchQuery.trim()) return repositories;
+    const query = repoSearchQuery.toLowerCase().trim();
+    return repositories.filter((repo) => {
+      const name = (repo.name || '').toLowerCase();
+      return name.includes(query);
+    });
+  }, [repositories, repoSearchQuery]);
+
+  // Feature B: 5 repositories per page client-side pagination
+  const totalRepoPages = Math.max(1, Math.ceil(filteredRepositories.length / REPOS_PER_PAGE));
+  const safeRepoPage = Math.min(Math.max(1, repoCurrentPage), totalRepoPages);
+  const startRepoIndex = (safeRepoPage - 1) * REPOS_PER_PAGE;
+  const endRepoIndex = Math.min(startRepoIndex + REPOS_PER_PAGE, filteredRepositories.length);
+  const paginatedRepositories = filteredRepositories.slice(startRepoIndex, endRepoIndex);
+
+  const handleRepoPageChange = (newPage) => {
+    if (newPage < 1 || newPage > totalRepoPages) return;
+    setRepoCurrentPage(newPage);
   };
 
   return (
@@ -235,17 +305,71 @@ export default function ProjectCard({
       <div className="repositories-accordion">
         {expanded ? (
           <div className="accordion-expanded">
-            <button
-              type="button"
-              className="accordion-toggle-btn expanded"
-              onClick={toggleExpand}
-              aria-expanded="true"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="18 15 12 9 6 15" />
-              </svg>
-              <span>Repositories</span>
-            </button>
+            {/* Header row with Repositories heading and compact search input (Feature A) */}
+            <div className="accordion-header-row">
+              <button
+                type="button"
+                className="accordion-toggle-btn expanded"
+                onClick={toggleExpand}
+                aria-expanded="true"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="18 15 12 9 6 15" />
+                </svg>
+                <span>Repositories</span>
+              </button>
+
+              {/* Compact Search input to the right of Repositories heading */}
+              <div className="repo-search-wrap">
+                <svg className="repo-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  className="repo-search-input"
+                  placeholder="Search repositories..."
+                  value={repoSearchQuery}
+                  onChange={(e) => setRepoSearchQuery(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label={`Search repositories in ${project.name}`}
+                />
+                {repoSearchQuery && (
+                  <button
+                    type="button"
+                    className="repo-search-clear-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRepoSearchQuery('');
+                    }}
+                    aria-label="Clear repository search"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Deletion feedback toast */}
+            {feedbackMessage && (
+              <div className={`repo-feedback-banner ${feedbackMessage.type}`} role="status">
+                <span>{feedbackMessage.text}</span>
+                <button
+                  type="button"
+                  className="repo-search-clear-btn"
+                  onClick={() => setFeedbackMessage(null)}
+                  aria-label="Dismiss feedback message"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            )}
 
             {loadingRepos && (
               <div className="accordion-loading">
@@ -273,63 +397,180 @@ export default function ProjectCard({
               </div>
             )}
 
-            {!loadingRepos && repositories && repositories.length > 0 && (
-              <div className="repo-table-wrapper">
-                <table className="repo-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Repository</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Last ingestion</th>
-                      <th scope="col">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {repositories.map((repo) => {
-                      const repoStatus = (repo.status || 'Active').toLowerCase();
-                      const statusClass =
-                        repoStatus === 'completed'
-                          ? 'status-completed'
-                          : repoStatus === 'processing'
-                            ? 'status-processing'
-                            : repoStatus === 'failed'
-                              ? 'status-failed'
-                              : 'status-active';
-
-                      const statusText =
-                        repoStatus.charAt(0).toUpperCase() + repoStatus.slice(1);
-
-                      return (
-                        <tr key={repo.id} className="repo-row">
-                          <td className="repo-name-cell">
-                            <span className="repo-name">{repo.name}</span>
-                          </td>
-                          <td className="repo-status-cell">
-                            <div className="status-indicator">
-                              <span className={`status-dot ${statusClass}`} aria-hidden="true" />
-                              <span className="status-text">{statusText}</span>
-                            </div>
-                          </td>
-                          <td className="repo-time-cell">
-                            <span className="time-text">
-                              {formatRelativeTime(repo.updated_at || repo.created_at)}
-                            </span>
-                          </td>
-                          <td className="repo-action-cell">
-                            <button
-                              type="button"
-                              className="btn-view-repo"
-                              onClick={() => handleRepositoryClick(repo.id)}
-                            >
-                              View
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+            {/* Empty Search State (Repositories exist but none match search) */}
+            {!loadingRepos && !reposError && repositories && repositories.length > 0 && filteredRepositories.length === 0 && (
+              <div className="repo-search-empty">
+                <p>No repositories match &ldquo;<strong>{repoSearchQuery}</strong>&rdquo;.</p>
+                <button
+                  type="button"
+                  className="btn-link-action"
+                  onClick={() => setRepoSearchQuery('')}
+                >
+                  Clear search
+                </button>
               </div>
+            )}
+
+            {/* Repositories Table & Pagination (Features B & C) */}
+            {!loadingRepos && filteredRepositories.length > 0 && (
+              <>
+                <div className="repo-table-wrapper">
+                  <table className="repo-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Repository</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Last ingestion</th>
+                        <th scope="col">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedRepositories.map((repo) => {
+                        const repoStatus = (repo.status || 'Active').toLowerCase();
+                        const statusClass =
+                          repoStatus === 'completed'
+                            ? 'status-completed'
+                            : repoStatus === 'processing'
+                              ? 'status-processing'
+                              : repoStatus === 'failed'
+                                ? 'status-failed'
+                                : 'status-active';
+
+                        const statusText =
+                          repoStatus.charAt(0).toUpperCase() + repoStatus.slice(1);
+
+                        const isMenuOpen = openRepoMenuId === repo.id;
+
+                        return (
+                          <tr key={repo.id} className="repo-row">
+                            <td className="repo-name-cell">
+                              <span className="repo-name">{repo.name}</span>
+                            </td>
+                            <td className="repo-status-cell">
+                              <div className="status-indicator">
+                                <span className={`status-dot ${statusClass}`} aria-hidden="true" />
+                                <span className="status-text">{statusText}</span>
+                              </div>
+                            </td>
+                            <td className="repo-time-cell">
+                              <span className="time-text">
+                                {formatRelativeTime(repo.updated_at || repo.created_at)}
+                              </span>
+                            </td>
+                            <td className="repo-action-cell">
+                              <div className="repo-actions-group">
+                                <button
+                                  type="button"
+                                  className="btn-view-repo"
+                                  onClick={() => handleRepositoryClick(repo.id)}
+                                >
+                                  View
+                                </button>
+
+                                {/* Feature C: Vertical three-dot row menu */}
+                                <div
+                                  className="repo-menu-anchor"
+                                  ref={isMenuOpen ? repoMenuRef : null}
+                                >
+                                  <button
+                                    type="button"
+                                    className="project-menu-btn repo-menu-btn"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOpenRepoMenuId((prev) => (prev === repo.id ? null : repo.id));
+                                    }}
+                                    aria-label={`Repository actions for ${repo.name}`}
+                                    aria-expanded={isMenuOpen}
+                                  >
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                      <circle cx="12" cy="5" r="2" />
+                                      <circle cx="12" cy="12" r="2" />
+                                      <circle cx="12" cy="19" r="2" />
+                                    </svg>
+                                  </button>
+
+                                  {isMenuOpen && (
+                                    <div className="project-dropdown-menu repo-dropdown-menu" role="menu">
+                                      <button
+                                        type="button"
+                                        className="dropdown-item danger"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setOpenRepoMenuId(null);
+                                          setDeleteTargetRepo(repo);
+                                        }}
+                                        role="menuitem"
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <polyline points="3 6 5 6 21 6" />
+                                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                        </svg>
+                                        <span>Delete Repository</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Feature B: Pagination Bar below table (hidden if result fits on one page) */}
+                {filteredRepositories.length > REPOS_PER_PAGE && (
+                  <div className="repo-pagination-bar" role="navigation" aria-label={`Repositories pagination for ${project.name}`}>
+                    <div className="repo-pagination-info">
+                      Showing <strong>{startRepoIndex + 1}</strong>&ndash;<strong>{endRepoIndex}</strong> of <strong>{filteredRepositories.length}</strong>
+                    </div>
+
+                    <div className="repo-pagination-controls">
+                      <button
+                        type="button"
+                        className="repo-pagination-btn"
+                        onClick={() => handleRepoPageChange(safeRepoPage - 1)}
+                        disabled={safeRepoPage === 1}
+                        aria-label="Previous page"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="15 18 9 12 15 6" />
+                        </svg>
+                        <span>Prev</span>
+                      </button>
+
+                      <div className="repo-pagination-pages">
+                        {Array.from({ length: totalRepoPages }, (_, i) => i + 1).map((pageNum) => (
+                          <button
+                            key={pageNum}
+                            type="button"
+                            className={`repo-pagination-page-btn ${pageNum === safeRepoPage ? 'active' : ''}`}
+                            onClick={() => handleRepoPageChange(pageNum)}
+                            aria-label={`Page ${pageNum}`}
+                            aria-current={pageNum === safeRepoPage ? 'page' : undefined}
+                          >
+                            {pageNum}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        className="repo-pagination-btn"
+                        onClick={() => handleRepoPageChange(safeRepoPage + 1)}
+                        disabled={safeRepoPage === totalRepoPages}
+                        aria-label="Next page"
+                      >
+                        <span>Next</span>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="9 18 15 12 9 6" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         ) : (
@@ -351,6 +592,18 @@ export default function ProjectCard({
           </button>
         )}
       </div>
+
+      {/* Feature C: Delete Confirmation Modal */}
+      {deleteTargetRepo && (
+        <DeleteRepositoryModal
+          isOpen={true}
+          projectId={project.id}
+          repository={deleteTargetRepo}
+          onClose={() => setDeleteTargetRepo(null)}
+          onDeleted={handleRepositoryDeleted}
+        />
+      )}
     </div>
   );
 }
+
