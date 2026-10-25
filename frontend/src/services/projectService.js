@@ -23,6 +23,10 @@ export const projectService = {
     return apiClient.get(`/projects/${projectId}`);
   },
 
+  async updateProject(projectId, payload) {
+    return apiClient.patch(`/projects/${projectId}`, payload);
+  },
+
   /**
    * Create a new project.
    * @param {{ name: string, description?: string }} payload

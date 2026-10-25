@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { repositoryService } from '../../services/repositoryService.js';
 
 export default function DeleteRepositoryModal({
@@ -10,6 +10,15 @@ export default function DeleteRepositoryModal({
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleKey = (event) => {
+      if (event.key === 'Escape' && !loading) onClose();
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [isOpen, loading, onClose]);
 
   if (!isOpen || !repository) return null;
 

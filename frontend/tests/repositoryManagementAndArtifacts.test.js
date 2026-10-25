@@ -184,13 +184,13 @@ function testFeatureC_RepositoryDeletionContracts() {
   // Three-dot menu in Actions column
   assert.ok(cardSrc.includes('repo-actions-group'), 'Must define repo-actions-group');
   assert.ok(cardSrc.includes('btn-view-repo'), 'Must preserve View button');
-  assert.ok(cardSrc.includes('repo-menu-btn'), 'Must define repo-menu-btn');
+  assert.ok(cardSrc.includes('<ActionMenu'), 'Must use the shared ActionMenu');
   assert.ok(cardSrc.includes('Delete Repository'), 'Must have Delete Repository menu item');
-  assert.ok(cardSrc.includes('dropdown-item danger'), 'Delete Repository must use destructive styling');
+  assert.ok(cardSrc.includes("danger: true"), 'Delete Repository must use destructive styling');
 
   // Three-dot button immediately to the right of View button
   const viewIndex = cardSrc.indexOf('btn-view-repo');
-  const menuBtnIndex = cardSrc.indexOf('repo-menu-btn');
+  const menuBtnIndex = cardSrc.indexOf('<ActionMenu', viewIndex);
   assert.ok(menuBtnIndex > viewIndex, 'Three-dot menu button must follow View button in markup');
 
   // Modal file existence and contract
@@ -319,8 +319,8 @@ function testFeatureD_ArtifactsTabDuplicateRequestFix() {
 
   // Initial selection logic must still function when no revision is selected
   assert.ok(
-    artTabSrc.includes('if (!selectedRevisionRef.current && list.length > 0)'),
-    'Must auto-select first revision when none is selected'
+    artTabSrc.includes('!list.some((revision) => revision.id === selectedRevisionRef.current?.id)'),
+    'Must auto-select the first available revision when the current selection is not on the loaded page'
   );
 
   console.log('✓ Feature D ArtifactsTab duplicate request fix verified');

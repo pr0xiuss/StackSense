@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tests/authApi.test.js && node tests/m6Flows.test.js && node tests/repositoryManagementAndArtifacts.test.js"
+    "test": "node tests/authApi.test.js && node tests/m6Flows.test.js && node tests/repositoryManagementAndArtifacts.test.js && node tests/coverageCompletion.test.js"
   },
   "dependencies": {
     "react": "^18.3.1",

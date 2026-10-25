@@ -18,10 +18,16 @@ export default function ArtifactsTab({
 }) {
   const [revisions, setRevisions] = useState([]);
   const [loadingRevisions, setLoadingRevisions] = useState(true);
+  const [revisionError, setRevisionError] = useState(null);
+  const [revisionOffset, setRevisionOffset] = useState(0);
+  const [revisionsHasMore, setRevisionsHasMore] = useState(false);
 
   const [artifacts, setArtifacts] = useState([]);
   const [loadingArtifacts, setLoadingArtifacts] = useState(false);
   const [error, setError] = useState(null);
+  const [artifactOffset, setArtifactOffset] = useState(0);
+  const [artifactsHasMore, setArtifactsHasMore] = useState(false);
+  const pageSize = 50;
 
   const selectedRevisionRef = useRef(selectedRevision);
   const onSelectRevisionRef = useRef(onSelectRevision);
@@ -32,54 +38,62 @@ export default function ArtifactsTab({
     onSelectRevisionRef.current = onSelectRevision;
   });
 
-  // Load revisions when project/repository identity changes
-  useEffect(() => {
+  const loadRevisions = (nextOffset = 0) => {
     let isMounted = true;
     setLoadingRevisions(true);
-    setRevisions([]);
+    setRevisionError(null);
 
     ingestionService
-      .listRevisions(projectId, repositoryId, 50, 0)
+      .listRevisions(projectId, repositoryId, pageSize, nextOffset)
       .then((data) => {
         if (isMounted) {
           const list = Array.isArray(data) ? data : [];
           setRevisions(list);
-          if (!selectedRevisionRef.current && list.length > 0) {
+          setRevisionOffset(nextOffset);
+          setRevisionsHasMore(list.length === pageSize);
+          if (list.length > 0 && !list.some((revision) => revision.id === selectedRevisionRef.current?.id)) {
             onSelectRevisionRef.current?.(list[0]);
           }
         }
       })
-      .catch(() => {})
+      .catch((err) => isMounted && setRevisionError(err.message || 'Failed to load revisions.'))
       .finally(() => {
         if (isMounted) {
           setLoadingRevisions(false);
         }
       });
 
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
+  };
+
+  // Load revisions when project/repository identity changes
+  useEffect(() => {
+    setRevisions([]);
+    return loadRevisions(0);
   }, [projectId, repositoryId]);
 
   // Load artifacts whenever selected revision identifier changes
   const selectedRevisionId = selectedRevision?.id;
 
-  useEffect(() => {
+  const loadArtifacts = (nextOffset = 0) => {
     let isMounted = true;
     if (!selectedRevisionId) {
       setArtifacts([]);
       setLoadingArtifacts(false);
-      return;
+      return () => {};
     }
 
     setLoadingArtifacts(true);
     setError(null);
 
     ingestionService
-      .listArtifacts(projectId, repositoryId, selectedRevisionId, 50, 0)
+      .listArtifacts(projectId, repositoryId, selectedRevisionId, pageSize, nextOffset)
       .then((data) => {
         if (isMounted) {
-          setArtifacts(Array.isArray(data) ? data : []);
+          const list = Array.isArray(data) ? data : [];
+          setArtifacts(list);
+          setArtifactOffset(nextOffset);
+          setArtifactsHasMore(list.length === pageSize);
         }
       })
       .catch((err) => {
@@ -93,9 +107,12 @@ export default function ArtifactsTab({
         }
       });
 
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
+  };
+
+  useEffect(() => {
+    setArtifactOffset(0);
+    return loadArtifacts(0);
   }, [projectId, repositoryId, selectedRevisionId]);
 
   const handleRevisionChange = (e) => {
@@ -138,6 +155,13 @@ export default function ArtifactsTab({
             ) : (
               <span className="no-revisions-inline">No revisions available yet</span>
             )}
+            {!loadingRevisions && revisionError && <button type="button" className="btn-table-view" onClick={() => loadRevisions(revisionOffset)}>Retry revisions</button>}
+            {!loadingRevisions && !revisionError && revisions.length > 0 && (
+              <div className="repo-pagination-controls" aria-label="Revision selector pagination">
+                <button type="button" className="repo-pagination-btn" onClick={() => loadRevisions(Math.max(0, revisionOffset - pageSize))} disabled={revisionOffset === 0}>Prev revisions</button>
+                <button type="button" className="repo-pagination-btn" onClick={() => loadRevisions(revisionOffset + pageSize)} disabled={!revisionsHasMore}>Next revisions</button>
+              </div>
+            )}
           </div>
 
           {selectedRevision && (
@@ -161,6 +185,7 @@ export default function ArtifactsTab({
         {error && (
           <div className="table-error-wrap">
             <p>{error}</p>
+            <button type="button" className="btn-table-view" onClick={() => loadArtifacts(artifactOffset)}>Retry</button>
           </div>
         )}
 
@@ -218,11 +243,15 @@ export default function ArtifactsTab({
           </div>
         )}
 
-        {artifacts.length > 0 && (
+        {!loadingArtifacts && !error && (artifacts.length > 0 || artifactOffset > 0) && (
           <div className="history-footer">
             <span className="footer-count">
-              Showing {artifacts.length} {artifacts.length === 1 ? 'artifact' : 'artifacts'}
+              {artifacts.length === 0 ? `No artifacts on this page (offset ${artifactOffset})` : <>Showing {artifactOffset + 1}&ndash;{artifactOffset + artifacts.length} {artifacts.length === 1 ? 'artifact' : 'artifacts'}</>}
             </span>
+            <div className="repo-pagination-controls" aria-label="Artifact pagination">
+              <button type="button" className="repo-pagination-btn" onClick={() => loadArtifacts(Math.max(0, artifactOffset - pageSize))} disabled={artifactOffset === 0}>Previous</button>
+              <button type="button" className="repo-pagination-btn" onClick={() => loadArtifacts(artifactOffset + pageSize)} disabled={!artifactsHasMore}>Next</button>
+            </div>
           </div>
         )}
       </div>

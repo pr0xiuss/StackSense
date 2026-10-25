@@ -15,6 +15,7 @@ export default function ProjectsDashboardPage() {
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [feedback, setFeedback] = useState(null);
 
   // Search & Pagination state
   const [searchQuery, setSearchQuery] = useState('');
@@ -72,12 +73,17 @@ export default function ProjectsDashboardPage() {
     setCurrentPage(1);
   };
 
+  const handleProjectUpdated = (updatedProject) => {
+    setProjects((current) => current.map((project) => project.id === updatedProject.id ? updatedProject : project));
+  };
+
   const handleDeleteProject = async (projectId) => {
     try {
       await projectService.deleteProject(projectId);
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      setFeedback({ type: 'success', text: 'Project deleted successfully.' });
     } catch (err) {
-      alert(err.message || 'Failed to delete project.');
+      setFeedback({ type: 'error', text: err.message || 'Failed to delete project.' });
     }
   };
 
@@ -140,6 +146,13 @@ export default function ProjectsDashboardPage() {
             <span>Create Project</span>
           </button>
         </section>
+
+        {feedback && (
+          <div className={`repo-feedback-banner ${feedback.type}`} role={feedback.type === 'error' ? 'alert' : 'status'}>
+            <span>{feedback.text}</span>
+            <button type="button" className="repo-search-clear-btn" onClick={() => setFeedback(null)} aria-label="Dismiss feedback">×</button>
+          </div>
+        )}
 
         {/* Search & Filter Toolbar */}
         {!loading && !error && projects.length > 0 && (
@@ -285,6 +298,7 @@ export default function ProjectsDashboardPage() {
                   index={startIndex + index}
                   onOpenCreateRepo={handleOpenCreateRepo}
                   onDeleteProject={handleDeleteProject}
+                  onProjectUpdated={handleProjectUpdated}
                   lastCreatedRepo={lastCreatedRepo}
                 />
               ))}

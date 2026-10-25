@@ -45,6 +45,11 @@ export default function IngestionTab({
   onOpenTrigger,
   onSelectIngestion,
   selectedIngestion,
+  canCreate = false,
+  offset = 0,
+  hasMore = false,
+  onPreviousPage,
+  onNextPage,
 }) {
   const handleOpenNewIngestion = onOpenNewIngestion || onOpenUpload;
   const [filterActive, setFilterActive] = useState(false);
@@ -58,11 +63,12 @@ export default function IngestionTab({
   const currentStatus = (latestIngestion?.status || 'IDLE').toUpperCase();
   const isCompleted = currentStatus === 'COMPLETED';
   const isProcessing = currentStatus === 'PROCESSING';
+  const isPending = currentStatus === 'PENDING';
   const isFailed = currentStatus === 'FAILED';
 
   const statusClass = isCompleted
     ? 'status-completed'
-    : isProcessing
+    : isProcessing || isPending
       ? 'status-processing'
       : isFailed
         ? 'status-failed'
@@ -72,6 +78,8 @@ export default function IngestionTab({
     ? 'Completed'
     : isProcessing
       ? 'Processing'
+      : isPending
+        ? 'Pending'
       : isFailed
         ? 'Failed'
         : 'Idle / Ready';
@@ -80,6 +88,8 @@ export default function IngestionTab({
     ? 'Ingestion finished successfully.'
     : isProcessing
       ? 'Ingestion pipeline in progress...'
+      : isPending
+        ? 'Ingestion is queued to begin.'
       : isFailed
         ? (latestIngestion?.error_message || 'Ingestion encountered an error.')
         : 'No ingestion job run yet.';
@@ -109,7 +119,7 @@ export default function IngestionTab({
                 </svg>
               </div>
             )}
-            {isProcessing && (
+            {(isProcessing || isPending) && (
               <div className="status-large-icon processing" aria-label="Processing">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="spin-icon">
                   <line x1="12" y1="2" x2="12" y2="6" />
@@ -131,7 +141,7 @@ export default function IngestionTab({
                 </svg>
               </div>
             )}
-            {!isCompleted && !isProcessing && !isFailed && (
+            {!isCompleted && !isProcessing && !isPending && !isFailed && (
               <div className="status-large-icon idle" aria-label="Idle">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10" />
@@ -202,17 +212,13 @@ export default function IngestionTab({
 
         {/* Action Trigger Button */}
         <div className="status-actions-col">
-          <button
-            type="button"
-            className="btn-trigger-primary"
-            onClick={handleOpenNewIngestion}
-          >
+          {canCreate && <button type="button" className="btn-trigger-primary" onClick={handleOpenNewIngestion}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
             <span>New Ingestion</span>
-          </button>
+          </button>}
           {onRefreshIngestions && (
             <button
               type="button"
@@ -268,6 +274,7 @@ export default function IngestionTab({
                 <option value="ALL">All Statuses</option>
                 <option value="COMPLETED">Completed</option>
                 <option value="PROCESSING">Processing</option>
+                <option value="PENDING">Pending</option>
                 <option value="FAILED">Failed</option>
               </select>
             )}
@@ -293,7 +300,7 @@ export default function IngestionTab({
             <p className="empty-subtext">
               Start your first ingestion by connecting a GitHub repository or uploading an archive.
             </p>
-            <button
+            {canCreate && <button
               type="button"
               className="btn-trigger-primary"
               onClick={handleOpenNewIngestion}
@@ -304,7 +311,7 @@ export default function IngestionTab({
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
               <span>+ New Ingestion</span>
-            </button>
+            </button>}
           </div>
         )}
 
@@ -328,7 +335,7 @@ export default function IngestionTab({
                   const rowStatusClass =
                     itemStatus === 'completed'
                       ? 'status-completed'
-                      : itemStatus === 'processing'
+                      : itemStatus === 'processing' || itemStatus === 'pending'
                         ? 'status-processing'
                         : itemStatus === 'failed'
                           ? 'status-failed'
@@ -383,8 +390,14 @@ export default function IngestionTab({
 
         <div className="history-footer">
           <span className="footer-count">
-            Showing {filteredIngestions.length} {filteredIngestions.length === 1 ? 'ingestion' : 'ingestions'}
+            {filteredIngestions.length === 0
+              ? `No ingestions on this page (offset ${offset})`
+              : <>Showing {offset + 1}&ndash;{offset + filteredIngestions.length} {filteredIngestions.length === 1 ? 'ingestion' : 'ingestions'}</>}
           </span>
+          <div className="repo-pagination-controls" aria-label="Ingestion history pagination">
+            <button type="button" className="repo-pagination-btn" onClick={onPreviousPage} disabled={offset === 0 || loading}>Previous</button>
+            <button type="button" className="repo-pagination-btn" onClick={onNextPage} disabled={!hasMore || loading}>Next</button>
+          </div>
         </div>
       </div>
 
