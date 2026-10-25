@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { repositoryService } from '../../services/repositoryService.js';
+import { projectService } from '../../services/projectService.js';
+import { useProjectRole } from '../../hooks/useProjectRole.js';
 import DeleteRepositoryModal from './DeleteRepositoryModal.jsx';
+import ProjectMembersModal from './ProjectMembersModal.jsx';
+import ActionMenu from '../common/ActionMenu.jsx';
+import MetadataEditModal from '../common/MetadataEditModal.jsx';
 
 const BADGE_COLORS = ['blue', 'red', 'green', 'purple', 'cyan'];
 const REPOS_PER_PAGE = 5;
@@ -32,23 +37,25 @@ export default function ProjectCard({
   index = 0,
   onOpenCreateRepo,
   onDeleteProject,
+  onProjectUpdated,
   lastCreatedRepo = null,
 }) {
   const [expanded, setExpanded] = useState(index === 0);
   const [repositories, setRepositories] = useState(null);
   const [loadingRepos, setLoadingRepos] = useState(false);
   const [reposError, setReposError] = useState(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef(null);
-  const repoMenuRef = useRef(null);
   const isMountedRef = useRef(true);
+  const [editProjectOpen, setEditProjectOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [editTargetRepo, setEditTargetRepo] = useState(null);
+  const [reposHasMore, setReposHasMore] = useState(false);
+  const [loadingMoreRepos, setLoadingMoreRepos] = useState(false);
 
   // Feature A & B: Search and Pagination state
   const [repoSearchQuery, setRepoSearchQuery] = useState('');
   const [repoCurrentPage, setRepoCurrentPage] = useState(1);
 
   // Feature C: Three-dot row menu & deletion state
-  const [openRepoMenuId, setOpenRepoMenuId] = useState(null);
   const [deleteTargetRepo, setDeleteTargetRepo] = useState(null);
   const [feedbackMessage, setFeedbackMessage] = useState(null);
 
@@ -60,19 +67,28 @@ export default function ProjectCard({
   }, []);
 
   const colorScheme = BADGE_COLORS[index % BADGE_COLORS.length];
-  // Role matches ProjectRole contract: OWNER | ADMIN | DEVELOPER | VIEWER
-  const rawRole = (project.role || 'OWNER').toUpperCase();
-  const role = PROJECT_ROLES.includes(rawRole) ? rawRole : 'VIEWER';
-  const canDelete = role === 'OWNER' || role === 'ADMIN';
+  const {
+    role,
+    loading: roleLoading,
+    error: roleError,
+    userId,
+    refresh: resolveRole,
+    canCreateOrUpdate,
+    canDelete,
+    canManageAccess,
+  } = useProjectRole(project.id);
 
-  const fetchRepositories = useCallback(async () => {
+  const fetchRepositories = useCallback(async (offset = 0, append = false) => {
     if (!project?.id) return;
-    setLoadingRepos(true);
+    if (append) setLoadingMoreRepos(true);
+    else setLoadingRepos(true);
     setReposError(null);
     try {
-      const data = await repositoryService.listRepositories(project.id, 50, 0);
+      const data = await repositoryService.listRepositories(project.id, 50, offset);
       if (isMountedRef.current) {
-        setRepositories(Array.isArray(data) ? data : []);
+        const list = Array.isArray(data) ? data : [];
+        setRepositories((previous) => append ? [...(previous || []), ...list] : list);
+        setReposHasMore(list.length === 50);
       }
     } catch (err) {
       if (isMountedRef.current) {
@@ -81,6 +97,7 @@ export default function ProjectCard({
     } finally {
       if (isMountedRef.current) {
         setLoadingRepos(false);
+        setLoadingMoreRepos(false);
       }
     }
   }, [project?.id]);
@@ -111,20 +128,6 @@ export default function ProjectCard({
     setRepoCurrentPage(1);
   }, [repoSearchQuery]);
 
-  // Close menus on outside click
-  useEffect(() => {
-    const handleOutside = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        setMenuOpen(false);
-      }
-      if (repoMenuRef.current && !repoMenuRef.current.contains(e.target)) {
-        setOpenRepoMenuId(null);
-      }
-    };
-    document.addEventListener('mousedown', handleOutside);
-    return () => document.removeEventListener('mousedown', handleOutside);
-  }, []);
-
   const repoCount = repositories ? repositories.length : null;
 
   const toggleExpand = () => {
@@ -140,10 +143,21 @@ export default function ProjectCard({
   };
 
   const handleDelete = () => {
-    setMenuOpen(false);
     if (window.confirm(`Are you sure you want to delete "${project.name}"? This action cannot be undone.`)) {
       onDeleteProject(project.id);
     }
+  };
+
+  const handleProjectSave = async (payload) => {
+    const updated = await projectService.updateProject(project.id, payload);
+    onProjectUpdated(updated);
+    setFeedbackMessage({ type: 'success', text: `Project "${updated.name}" updated successfully.` });
+  };
+
+  const handleRepositorySave = async (payload) => {
+    const updated = await repositoryService.updateRepository(project.id, editTargetRepo.id, payload);
+    setRepositories((items) => (items || []).map((item) => item.id === updated.id ? updated : item));
+    setFeedbackMessage({ type: 'success', text: `Repository "${updated.name}" updated successfully.` });
   };
 
   // Feature C: Repository deleted callback
@@ -210,7 +224,13 @@ export default function ProjectCard({
           <div className="project-titles">
             <div className="project-title-row">
               <h3 className="project-name">{project.name}</h3>
-              <span className={`role-badge role-${role.toLowerCase()}`}>{role}</span>
+              {roleLoading ? (
+                <span className="role-badge role-pending">Resolving role…</span>
+              ) : role ? (
+                <span className={`role-badge role-${role.toLowerCase()}`}>{role}</span>
+              ) : (
+                <button type="button" className="role-badge role-pending role-retry" title={roleError || undefined} onClick={resolveRole}>Retry role</button>
+              )}
             </div>
             <p className="project-description">
               {project.description || 'No project description provided.'}
@@ -218,59 +238,15 @@ export default function ProjectCard({
           </div>
         </div>
 
-        {/* Three-dot project actions menu */}
-        <div className="project-menu-anchor" ref={menuRef}>
-          <button
-            type="button"
-            className="project-menu-btn"
-            onClick={() => setMenuOpen(!menuOpen)}
-            aria-label="Project actions"
-            aria-expanded={menuOpen}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="12" cy="5" r="2" />
-              <circle cx="12" cy="12" r="2" />
-              <circle cx="12" cy="19" r="2" />
-            </svg>
-          </button>
-
-          {menuOpen && (
-            <div className="project-dropdown-menu" role="menu">
-              <button
-                type="button"
-                className="dropdown-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onOpenCreateRepo(project);
-                }}
-                role="menuitem"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                <span>Add Repository</span>
-              </button>
-              {canDelete && (
-                <>
-                  <div className="dropdown-divider" />
-                  <button
-                    type="button"
-                    className="dropdown-item danger"
-                    onClick={handleDelete}
-                    role="menuitem"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                    <span>Delete Project</span>
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+        <ActionMenu
+          label={`Project actions for ${project.name}`}
+          items={[
+            { label: 'Edit Project', hidden: !canCreateOrUpdate, onSelect: () => setEditProjectOpen(true) },
+            { label: 'Collaborators', hidden: !role, onSelect: () => setMembersOpen(true) },
+            { label: 'Add Repository', hidden: !canCreateOrUpdate, onSelect: () => onOpenCreateRepo(project) },
+            { label: 'Delete Project', hidden: !canDelete, dividerBefore: true, danger: true, onSelect: handleDelete },
+          ]}
+        />
       </div>
 
       {/* Card Action Strip */}
@@ -288,18 +264,20 @@ export default function ProjectCard({
           </span>
         </div>
 
-        <button
-          type="button"
-          className="btn-create-repo"
-          onClick={() => onOpenCreateRepo(project)}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          <span>Create Repository</span>
-        </button>
+        {canCreateOrUpdate && (
+          <button type="button" className="btn-create-repo" onClick={() => onOpenCreateRepo(project)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+            <span>Create Repository</span>
+          </button>
+        )}
       </div>
+
+      {feedbackMessage && (
+        <div className={`repo-feedback-banner ${feedbackMessage.type}`} role="status">
+          <span>{feedbackMessage.text}</span>
+          <button type="button" className="repo-search-clear-btn" onClick={() => setFeedbackMessage(null)} aria-label="Dismiss feedback message">×</button>
+        </div>
+      )}
 
       {/* Repositories Accordion Area */}
       <div className="repositories-accordion">
@@ -353,24 +331,6 @@ export default function ProjectCard({
               </div>
             </div>
 
-            {/* Deletion feedback toast */}
-            {feedbackMessage && (
-              <div className={`repo-feedback-banner ${feedbackMessage.type}`} role="status">
-                <span>{feedbackMessage.text}</span>
-                <button
-                  type="button"
-                  className="repo-search-clear-btn"
-                  onClick={() => setFeedbackMessage(null)}
-                  aria-label="Dismiss feedback message"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
-            )}
-
             {loadingRepos && (
               <div className="accordion-loading">
                 <span className="btn-spinner" aria-hidden="true" />
@@ -387,13 +347,7 @@ export default function ProjectCard({
             {!loadingRepos && !reposError && repositories && repositories.length === 0 && (
               <div className="accordion-empty">
                 <p>No repositories registered yet.</p>
-                <button
-                  type="button"
-                  className="btn-link-action"
-                  onClick={() => onOpenCreateRepo(project)}
-                >
-                  + Add first repository
-                </button>
+                {canCreateOrUpdate && <button type="button" className="btn-link-action" onClick={() => onOpenCreateRepo(project)}>+ Add first repository</button>}
               </div>
             )}
 
@@ -439,8 +393,6 @@ export default function ProjectCard({
                         const statusText =
                           repoStatus.charAt(0).toUpperCase() + repoStatus.slice(1);
 
-                        const isMenuOpen = openRepoMenuId === repo.id;
-
                         return (
                           <tr key={repo.id} className="repo-row">
                             <td className="repo-name-cell">
@@ -467,49 +419,14 @@ export default function ProjectCard({
                                   View
                                 </button>
 
-                                {/* Feature C: Vertical three-dot row menu */}
-                                <div
-                                  className="repo-menu-anchor"
-                                  ref={isMenuOpen ? repoMenuRef : null}
-                                >
-                                  <button
-                                    type="button"
-                                    className="project-menu-btn repo-menu-btn"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setOpenRepoMenuId((prev) => (prev === repo.id ? null : repo.id));
-                                    }}
-                                    aria-label={`Repository actions for ${repo.name}`}
-                                    aria-expanded={isMenuOpen}
-                                  >
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                      <circle cx="12" cy="5" r="2" />
-                                      <circle cx="12" cy="12" r="2" />
-                                      <circle cx="12" cy="19" r="2" />
-                                    </svg>
-                                  </button>
-
-                                  {isMenuOpen && (
-                                    <div className="project-dropdown-menu repo-dropdown-menu" role="menu">
-                                      <button
-                                        type="button"
-                                        className="dropdown-item danger"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setOpenRepoMenuId(null);
-                                          setDeleteTargetRepo(repo);
-                                        }}
-                                        role="menuitem"
-                                      >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <polyline points="3 6 5 6 21 6" />
-                                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                        </svg>
-                                        <span>Delete Repository</span>
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
+                                <ActionMenu
+                                  label={`Repository actions for ${repo.name}`}
+                                  size="compact"
+                                  items={[
+                                    { label: 'Edit Repository', hidden: !canCreateOrUpdate, onSelect: () => setEditTargetRepo(repo) },
+                                    { label: 'Delete Repository', hidden: !canDelete, dividerBefore: true, danger: true, onSelect: () => setDeleteTargetRepo(repo) },
+                                  ]}
+                                />
                               </div>
                             </td>
                           </tr>
@@ -570,6 +487,18 @@ export default function ProjectCard({
                     </div>
                   </div>
                 )}
+                {reposHasMore && !repoSearchQuery && (
+                  <div className="repo-load-more-row">
+                    <button
+                      type="button"
+                      className="btn-link-action"
+                      disabled={loadingMoreRepos}
+                      onClick={() => fetchRepositories(repositories.length, true)}
+                    >
+                      {loadingMoreRepos ? 'Loading more…' : 'Load more repositories'}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -603,6 +532,28 @@ export default function ProjectCard({
           onDeleted={handleRepositoryDeleted}
         />
       )}
+      <MetadataEditModal
+        isOpen={editProjectOpen}
+        entity={project}
+        entityLabel="Project"
+        onClose={() => setEditProjectOpen(false)}
+        onSave={handleProjectSave}
+      />
+      <MetadataEditModal
+        isOpen={Boolean(editTargetRepo)}
+        entity={editTargetRepo}
+        entityLabel="Repository"
+        onClose={() => setEditTargetRepo(null)}
+        onSave={handleRepositorySave}
+      />
+      <ProjectMembersModal
+        isOpen={membersOpen}
+        project={project}
+        canManage={canManageAccess}
+        currentUserId={userId}
+        onClose={() => setMembersOpen(false)}
+        onAccessChanged={resolveRole}
+      />
     </div>
   );
 }

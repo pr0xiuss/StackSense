@@ -1,5 +1,6 @@
 const projectAccessService = require('../services/projectAccessService');
 const projectAuthorization = require('../services/projectAuthorization');
+const userDirectoryService = require('../services/userDirectoryService');
 
 /**
  * Controller handling ProjectAccess HTTP requests.
@@ -43,7 +44,14 @@ const projectAccessController = {
       await projectAuthorization.requireAccess(projectId, currentUserId);
 
       const accessList = await projectAccessService.listProjectAccess(projectId);
-      return res.status(200).json(accessList);
+      const serialized = accessList.map((access) => access.toJSON());
+      const usernames = await userDirectoryService.findUsernamesByIds(
+        serialized.map((access) => access.user_id)
+      );
+      return res.status(200).json(serialized.map((access) => ({
+        ...access,
+        username: usernames.get(access.user_id) || null,
+      })));
     } catch (err) {
       next(err);
     }
@@ -51,7 +59,7 @@ const projectAccessController = {
 
   /**
    * Change a project member's role.
-   * Requires: Manage access (owner or admin).
+   * Requires: Manage access (owner or admin) and a target other than self.
    * Status: 200 OK.
    */
   async changeRole(req, res, next) {
@@ -60,7 +68,7 @@ const projectAccessController = {
       const { projectId, userId } = req.params;
       const { role } = req.body;
 
-      await projectAuthorization.requireManageAccess(projectId, currentUserId);
+      await projectAuthorization.requireManageOtherUserAccess(projectId, currentUserId, userId);
 
       const updated = await projectAccessService.changeRole({
         projectId,
@@ -76,7 +84,7 @@ const projectAccessController = {
 
   /**
    * Revoke a user's access to a project.
-   * Requires: Manage access (owner or admin).
+   * Requires: Manage access (owner or admin) and a target other than self.
    * Status: 204 No Content.
    */
   async revokeAccess(req, res, next) {
@@ -84,7 +92,7 @@ const projectAccessController = {
       const currentUserId = req.user.id;
       const { projectId, userId } = req.params;
 
-      await projectAuthorization.requireManageAccess(projectId, currentUserId);
+      await projectAuthorization.requireManageOtherUserAccess(projectId, currentUserId, userId);
 
       await projectAccessService.revokeAccess({
         projectId,

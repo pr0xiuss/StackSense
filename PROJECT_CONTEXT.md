@@ -2,7 +2,7 @@
 
 > **Authoritative Handoff Document**  
 > *Maintained under `.agents/skills/planning/SKILL.md` and `.agents/skills/implementing/SKILL.md`*  
-> *Last Updated: 2026-10-21*
+> *Last Updated: 2026-10-25*
 
 ---
 
@@ -55,7 +55,7 @@ The reference implementation of Phase 2 was initially constructed and verified i
 | :--- | :--- | :--- | :--- |
 | **Phase 1** | Engineering Foundation & Architecture Invariants | Completed | `master.txt` §25.10 |
 | **Phase 2** | Project & Repository Platform (Python Reference) | Completed | `backend/` |
-| **Phase 2 (MERN)** | Project & Repository Platform (Express/Mongo Migration) | **Active / In Progress** | `express/`, `frontend/` |
+| **Phase 2 (MERN)** | Project & Repository Platform (Express/Mongo Migration) | **Core migration complete; frontend capability completion planned** | `express/`, `frontend/` |
 | **Phase 3** | Source Understanding & AST Parsing Pipeline | Planned | `master.txt` §25.12+ |
 
 ---
@@ -89,6 +89,71 @@ graph TD
 - **M4: Repository Ingestion, Validation & Storage** — **STATUS: COMPLETED & VERIFIED** (PR #22 reviewed, 22 suites / 268 tests passing)
 - **M5: Main Identity & Authentication** — **STATUS: COMPLETED & VERIFIED** (active-user correction verified; 28 suites / 372 tests passing)
 - **M6: Frontend API Transition & Verification** — **STATUS: COMPLETED & VERIFIED** (M6-B1 and M6-B2 complete; Phase 2 closeout remains separate)
+
+### 4.2.1 Current planning focus — frontend API coverage completion
+
+On 2026-10-25, a route-to-UI audit verified that the Express Phase 2 API is broader than the currently exposed React product surface. Authentication, project creation/listing/deletion, repository registration/listing/detail/deletion, ingestion creation/history, revision listing, and artifact listing are wired. The remaining planned frontend work is:
+
+1. Project metadata editing and truthful unsupported-auth affordances.
+2. Project collaborator listing/grant/role-change/revocation and correct role-derived action visibility.
+3. Repository metadata editing plus permission-aware create/update/delete actions.
+4. Single-ingestion status use, correct pending/processing polling, and complete pagination.
+5. Single-revision detail use and complete revision/artifact pagination.
+6. Consistent inline errors, success feedback, accessibility, and behavioral regression coverage.
+
+Important verified constraints:
+
+- Project responses contain no caller role. `ProjectCard.jsx` currently defaults a missing role to `OWNER`; the frontend must instead resolve the caller's role from `GET /projects/:projectId/access` using the authenticated user's UUID before exposing privileged actions.
+- Project-access responses now include the minimal related `username` alongside `project_id`, `user_id`, and `role`. The authenticated `GET /api/v1/users/lookup` endpoint supports validated active-user prefix search and returns only `id` and `username`; access mutations continue to use the established `user_id` contract.
+- Repository, ingestion, revision, and artifact collection endpoints are offset-paginated, while several current screens request only the first 50 records.
+- `GET .../ingestions/:ingestionId` and `GET .../revisions/:revisionId` have service methods but no runtime UI caller.
+- `/api/v1/health` is intentionally infrastructure-facing and does not require a product UI.
+
+Focused verification for this audit:
+
+- `cd frontend && npm test` — passed all configured frontend suites.
+- `cd express && npx jest --runInBand --detectOpenHandles tests/integration/projectAccessApi.test.js tests/integration/repositoryApi.test.js tests/integration/ingestionApi.test.js tests/integration/e2eVerticalSlice.test.js` — 4 suites and 66 tests passed. The first sandboxed attempt could not bind MongoMemoryServer (`listen EPERM`); the identical command passed with local-port permission.
+
+### 4.2.2 Execution ledger — frontend API coverage completion
+
+- **Module:** Frontend API Coverage Completion
+- **Status:** Verified (implementation and automated checks complete; seeded browser visual smoke remains recommended)
+- **Completed work:** Added authoritative caller-role resolution from project access records; permission-aware project/repository/ingestion actions; project and repository metadata editing; UUID-based collaborator listing/grant/role-change/revocation; a shared portal-based keyboard action menu; repository batch loading; single-ingestion pending/processing polling; ingestion, revision, and artifact offset pagination; single-revision detail loading; retry/error/success states.
+- **Files created:** `frontend/src/services/projectAccessService.js`, `frontend/src/hooks/useProjectRole.js`, `frontend/src/components/common/ActionMenu.jsx`, `frontend/src/components/common/MetadataEditModal.jsx`, `frontend/src/components/dashboard/ProjectMembersModal.jsx`, and `frontend/tests/coverageCompletion.test.js`.
+- **Files modified:** Project/repository dashboard and detail components, ingestion/revision/artifact tabs, project service, dashboard/repository styles, frontend test script, and repository-management regression assertions. No Express or Python source changed.
+- **Tests added or updated:** Project-access and project-update service contracts; unresolved-role safety and role-gated actions; collaborator mutations; shared menu portal/keyboard/dismissal contracts; serialized active-ingestion polling; revision-detail integration; offset pagination and retry-state contracts; existing repository menu regression updated for the shared component.
+- **Verification:** `cd frontend && npm test` passed all four configured suites; `cd frontend && npm run build` passed; focused Express project-access/repository/ingestion/E2E command passed 4 suites and 66 tests; `git diff --check` passed. No lint, formatter, or type-check scripts are defined in `frontend/package.json`.
+- **Deviations:** Collaborators remain UUID-only because the backend exposes no user directory or identity-enriched access representation. Pagination infers `hasMore` from a full page because collection responses contain no total/count field. The shared action menu uses a body portal with viewport-aware fixed positioning to avoid table/card clipping.
+- **Outstanding work:** Run a seeded browser smoke test for visual placement and responsive behavior when a suitable authenticated local dataset is available. Human-readable collaborator lookup requires a separately approved backend contract and is not part of this module.
+- **Blockers:** None for the implemented frontend contract.
+- **Next action:** Perform the seeded browser smoke test, then proceed to Phase 2 closeout if accepted.
+
+### 4.2.3 Execution ledger — username-based collaborator resolution
+
+- **Module:** Username-Based Project Collaborator Resolution
+- **Status:** Verified (implementation and automated checks complete; seeded browser visual smoke remains recommended)
+- **Completed work:** Added an authenticated active-user username-prefix lookup with structured query validation and minimal `id`/`username` representations; enriched project access listings with usernames without changing grant, role-change, revoke, or RBAC behavior; replaced UUID entry/display in the collaborator modal with debounced username autocomplete, stale-response protection, explicit result selection, duplicate-member indication, and username-based rows while retaining resolved UUIDs internally for access mutations.
+- **Files created:** `express/src/services/userDirectoryService.js`, `express/src/middleware/userDirectoryValidate.js`, `express/src/controllers/userDirectoryController.js`, `express/src/routes/userDirectoryRoutes.js`, `express/tests/integration/userDirectoryApi.test.js`, and `frontend/src/services/userDirectoryService.js`.
+- **Files modified:** `express/src/routes/index.js`, `express/src/controllers/projectAccessController.js`, `express/tests/integration/projectAccessApi.test.js`, `frontend/src/components/dashboard/ProjectMembersModal.jsx`, `frontend/src/styles/dashboard.css`, and `frontend/tests/coverageCompletion.test.js`.
+- **Tests added or updated:** Authentication enforcement; active, case-insensitive prefix matching; minimal-field serialization; username and limit validation; username enrichment without email exposure; frontend lookup route encoding; selected-user UUID submission; and removal of UUID input/display contracts.
+- **Verification:** `cd frontend && npm test` passed all four configured suites; `cd frontend && npm run build` passed (63 modules); focused Express user-directory/project-access tests passed 2 suites and 40 tests; full Express regression passed 30 suites and 385 tests; `git diff --check` passed. The first sandboxed Express attempt could not bind MongoMemoryServer (`listen EPERM`); rerunning with local-port permission passed.
+- **Deviations:** The access-list representation was backward-compatibly enriched with nullable `username` because autocomplete alone cannot display existing collaborators by username. Existing access mutation request and response contracts remain unchanged.
+- **Outstanding work:** Seeded browser visual smoke for autocomplete placement and responsive behavior remains recommended.
+- **Blockers:** None.
+- **Next action:** Run the seeded browser smoke test when an authenticated local dataset is available, then proceed to Phase 2 closeout if accepted.
+
+### 4.2.4 Execution ledger — collaborator self-management prevention
+
+- **Module:** Project Collaborator Self-Management Prevention
+- **Status:** Verified
+- **Completed work:** Added a target-aware project authorization guard that preserves owner/admin management of other collaborators while rejecting self role changes and self revocation with the existing `403 project_access_denied` contract. The collaborator modal now renders the authenticated user's role as a read-only badge and omits both the role selector and Revoke action from the row marked `You`.
+- **Files modified:** `express/src/services/projectAuthorization.js`, `express/src/controllers/projectAccessController.js`, `express/tests/unit/projectAuthorization.test.js`, `express/tests/integration/projectAccessApi.test.js`, `frontend/src/components/dashboard/ProjectMembersModal.jsx`, and `frontend/tests/coverageCompletion.test.js`.
+- **Tests added or updated:** Target-aware authorization permits managing other members and rejects owner/admin self-management; API tests verify self role change and self revocation return 403 without mutating access; frontend contract coverage verifies self-management controls are not rendered.
+- **Verification:** `cd frontend && npm test` passed all four configured scripts; `cd frontend && npm run build` passed (63 modules); targeted Express authorization/project-access tests passed 2 suites and 48 tests; `git diff --check` passed.
+- **Deviations:** None.
+- **Outstanding work:** None for this safeguard.
+- **Blockers:** None.
+- **Next action:** Proceed with the existing seeded browser smoke recommendation or Phase 2 closeout.
 
 ---
 
@@ -366,9 +431,9 @@ No files are created or deleted, and no dependency change is planned.
 
 ## 8. Current Handoff
 
-- **Current Stage**: Phase 2 MERN Migration — Dashboard Repository Management (Search, 5/page Pagination, 3-dot Deletion) & Artifacts Tab Optimization Complete.
+- **Current Stage**: Phase 2 MERN Migration — Frontend API coverage, username-based collaborator resolution, and collaborator self-management protections implemented and verified.
 - **Verification Evidence**:
-  - `frontend`: `npm test` passed 100% across all 3 suites (`authApi.test.js`, `m6Flows.test.js`, `repositoryManagementAndArtifacts.test.js`).
+  - `frontend`: `npm test` passed all four configured scripts (`authApi.test.js`, `m6Flows.test.js`, `repositoryManagementAndArtifacts.test.js`, `coverageCompletion.test.js`).
   - `frontend`: `npm run build` completed cleanly without errors.
-  - `express`: `npm test` (`jest --runInBand`) passed 100% across all 29 suites (377 tests).
+  - `express`: `npx jest --runInBand --detectOpenHandles` passed 100% across all 30 suites (385 tests).
 - **Next Recommended Action**: Proceed with Phase 2 closeout or next milestone per roadmap.

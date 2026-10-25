@@ -7,11 +7,15 @@ import ArtifactsTab from '../components/repository/ArtifactsTab.jsx';
 import NewIngestionModal from '../components/repository/NewIngestionModal.jsx';
 import UploadArchiveModal from '../components/repository/UploadArchiveModal.jsx';
 import TriggerIngestionModal from '../components/repository/TriggerIngestionModal.jsx';
+import MetadataEditModal from '../components/common/MetadataEditModal.jsx';
+import DeleteRepositoryModal from '../components/dashboard/DeleteRepositoryModal.jsx';
 import { projectService } from '../services/projectService.js';
 import { repositoryService } from '../services/repositoryService.js';
 import { ingestionService } from '../services/ingestionService.js';
+import { useProjectRole } from '../hooks/useProjectRole.js';
 
 export default function RepositoryDetailPage({ projectId, repositoryId }) {
+  const { canCreateOrUpdate, canDelete } = useProjectRole(projectId);
   const [project, setProject] = useState(null);
   const [repository, setRepository] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -26,6 +30,8 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
   const [loadingIngestions, setLoadingIngestions] = useState(false);
   const [ingestionError, setIngestionError] = useState(null);
   const [selectedIngestion, setSelectedIngestion] = useState(null);
+  const [ingestionOffset, setIngestionOffset] = useState(0);
+  const [ingestionsHasMore, setIngestionsHasMore] = useState(false);
 
   // Artifacts tab revision selection state
   const [selectedRevisionForArtifacts, setSelectedRevisionForArtifacts] = useState(null);
@@ -34,6 +40,9 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
   const [newIngestionModalOpen, setNewIngestionModalOpen] = useState(false);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [triggerModalOpen, setTriggerModalOpen] = useState(false);
+  const [editRepositoryOpen, setEditRepositoryOpen] = useState(false);
+  const [deleteRepositoryOpen, setDeleteRepositoryOpen] = useState(false);
+  const [mutationFeedback, setMutationFeedback] = useState(null);
 
   // Load project & repository metadata
   const loadMetadata = useCallback(async () => {
@@ -63,9 +72,10 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
     setRefreshingIngestions(true);
     setIngestionError(null);
     try {
-      const data = await ingestionService.listIngestions(projectId, repositoryId, 50, 0);
+      const data = await ingestionService.listIngestions(projectId, repositoryId, 50, ingestionOffset);
       const list = Array.isArray(data) ? data : [];
       setIngestions(list);
+      setIngestionsHasMore(list.length === 50);
       if (list.length > 0) {
         setSelectedIngestion((prev) => {
           if (!prev) return list[0];
@@ -78,16 +88,18 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
     } finally {
       setRefreshingIngestions(false);
     }
-  }, [projectId, repositoryId]);
+  }, [projectId, repositoryId, ingestionOffset]);
 
   // Load ingestion history
-  const loadIngestions = useCallback(async () => {
+  const loadIngestions = useCallback(async (nextOffset = 0) => {
     setLoadingIngestions(true);
     setIngestionError(null);
     try {
-      const data = await ingestionService.listIngestions(projectId, repositoryId, 50, 0);
+      const data = await ingestionService.listIngestions(projectId, repositoryId, 50, nextOffset);
       const list = Array.isArray(data) ? data : [];
       setIngestions(list);
+      setIngestionOffset(nextOffset);
+      setIngestionsHasMore(list.length === 50);
       if (list.length > 0) {
         setSelectedIngestion(list[0]);
       }
@@ -103,43 +115,41 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
     loadIngestions();
   }, [loadMetadata, loadIngestions]);
 
-  // Bounded polling when latest ingestion is in PROCESSING state
+  const activeIngestionId = ingestions[0]?.id;
+  const activeIngestionStatus = ingestions[0]?.status?.toLowerCase();
+
+  // Poll only the active ingestion record, without overlapping requests.
   useEffect(() => {
-    const latest = ingestions && ingestions.length > 0 ? ingestions[0] : null;
-    const isProcessing = latest?.status?.toLowerCase() === 'processing';
-
-    if (!isProcessing) return;
-
+    if (!activeIngestionId || !['pending', 'processing'].includes(activeIngestionStatus)) return undefined;
+    let cancelled = false;
     let pollCount = 0;
-    const maxPolls = 15; // Max 45 seconds bounded polling
-    const intervalId = setInterval(async () => {
+    let timeoutId;
+    const poll = async () => {
       pollCount++;
       try {
-        const data = await ingestionService.listIngestions(projectId, repositoryId, 50, 0);
-        const list = Array.isArray(data) ? data : [];
-        if (list.length > 0) {
-          setIngestions(list);
-          setSelectedIngestion((prev) => {
-            if (!prev) return list[0];
-            const updated = list.find((item) => item.id === prev.id);
-            return updated || list[0];
-          });
-          const currentLatest = list[0];
-          if (currentLatest.status?.toLowerCase() !== 'processing' || pollCount >= maxPolls) {
-            clearInterval(intervalId);
-          }
+        const current = await ingestionService.getIngestion(projectId, repositoryId, activeIngestionId);
+        if (cancelled) return;
+        setIngestions((items) => items.map((item) => item.id === current.id ? current : item));
+        setSelectedIngestion((item) => item?.id === current.id ? current : item);
+        if (['pending', 'processing'].includes(current.status?.toLowerCase()) && pollCount < 15) {
+          timeoutId = window.setTimeout(poll, 3000);
         }
-      } catch {
-        clearInterval(intervalId);
+      } catch (err) {
+        if (!cancelled) setIngestionError(err.message || 'Failed to refresh ingestion status.');
       }
-    }, 3000);
+    };
+    timeoutId = window.setTimeout(poll, 3000);
 
-    return () => clearInterval(intervalId);
-  }, [ingestions, projectId, repositoryId]);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeIngestionId, activeIngestionStatus, projectId, repositoryId]);
 
   const handleIngestionTriggered = (newIngestion) => {
     if (!newIngestion) return;
-    setIngestions((prev) => [newIngestion, ...prev.filter((i) => i.id !== newIngestion.id)]);
+    setIngestionOffset(0);
+    setIngestions((prev) => [newIngestion, ...(ingestionOffset === 0 ? prev : []).filter((i) => i.id !== newIngestion.id)].slice(0, 50));
     setSelectedIngestion(newIngestion);
   };
 
@@ -149,6 +159,16 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
   };
 
   const latestStatus = ingestions && ingestions.length > 0 ? ingestions[0].status : repository?.status;
+
+  const handleRepositorySave = async (payload) => {
+    const updated = await repositoryService.updateRepository(projectId, repositoryId, payload);
+    setRepository(updated);
+    setMutationFeedback(`Repository "${updated.name}" updated successfully.`);
+  };
+
+  const handleRepositoryDeleted = () => {
+    window.location.hash = '#/projects';
+  };
 
   return (
     <div className="repository-page-wrapper">
@@ -192,7 +212,17 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
               project={project}
               repository={repository}
               latestIngestionStatus={latestStatus}
+              canUpdate={canCreateOrUpdate}
+              canDelete={canDelete}
+              onEdit={() => setEditRepositoryOpen(true)}
+              onDelete={() => setDeleteRepositoryOpen(true)}
             />
+            {mutationFeedback && (
+              <div className="repo-feedback-banner success" role="status">
+                <span>{mutationFeedback}</span>
+                <button type="button" className="repo-search-clear-btn" onClick={() => setMutationFeedback(null)} aria-label="Dismiss feedback">×</button>
+              </div>
+            )}
 
             {/* Horizontal Navigation Tabs */}
             <nav className="repo-tabs-nav" aria-label="Repository Sections">
@@ -257,6 +287,11 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
                   onOpenTrigger={() => setNewIngestionModalOpen(true)}
                   onSelectIngestion={setSelectedIngestion}
                   selectedIngestion={selectedIngestion}
+                  canCreate={canCreateOrUpdate}
+                  offset={ingestionOffset}
+                  hasMore={ingestionsHasMore}
+                  onPreviousPage={() => loadIngestions(Math.max(0, ingestionOffset - 50))}
+                  onNextPage={() => loadIngestions(ingestionOffset + 50)}
                 />
               )}
 
@@ -283,7 +318,7 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
 
       {/* Primary Unified Ingestion Modal (GitHub, Archive Upload, Server Path) */}
       <NewIngestionModal
-        isOpen={newIngestionModalOpen}
+        isOpen={newIngestionModalOpen && canCreateOrUpdate}
         projectId={projectId}
         repositoryId={repositoryId}
         onClose={() => setNewIngestionModalOpen(false)}
@@ -305,6 +340,20 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
         repositoryId={repositoryId}
         onClose={() => setTriggerModalOpen(false)}
         onIngestionTriggered={handleIngestionTriggered}
+      />
+      <MetadataEditModal
+        isOpen={editRepositoryOpen}
+        entity={repository}
+        entityLabel="Repository"
+        onClose={() => setEditRepositoryOpen(false)}
+        onSave={handleRepositorySave}
+      />
+      <DeleteRepositoryModal
+        isOpen={deleteRepositoryOpen}
+        projectId={projectId}
+        repository={repository}
+        onClose={() => setDeleteRepositoryOpen(false)}
+        onDeleted={handleRepositoryDeleted}
       />
     </div>
   );

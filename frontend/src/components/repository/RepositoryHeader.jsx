@@ -1,9 +1,14 @@
 import React from 'react';
+import ActionMenu from '../common/ActionMenu.jsx';
 
 export default function RepositoryHeader({
   project,
   repository,
   latestIngestionStatus,
+  canUpdate = false,
+  canDelete = false,
+  onEdit,
+  onDelete,
 }) {
   const status = (latestIngestionStatus || repository?.status || 'Active').toLowerCase();
 
@@ -66,6 +71,13 @@ export default function RepositoryHeader({
 
         {/* Back to Project Button */}
         <div className="repo-banner-actions">
+          <ActionMenu
+            label={`Repository actions for ${repository?.name || 'repository'}`}
+            items={[
+              { label: 'Edit Repository', hidden: !canUpdate, onSelect: onEdit },
+              { label: 'Delete Repository', hidden: !canDelete, dividerBefore: true, danger: true, onSelect: onDelete },
+            ]}
+          />
           <a href="#/projects" className="btn-back-project">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <line x1="19" y1="12" x2="5" y2="12" />

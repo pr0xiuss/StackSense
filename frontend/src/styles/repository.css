@@ -84,6 +84,12 @@
   flex: 1;
 }
 
+.repo-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .repo-cube-badge {
   width: 52px;
   height: 52px;
@@ -594,6 +600,19 @@
 .footer-count {
   font-size: 0.8rem;
   color: #64748B;
+}
+
+.revision-detail-panel {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  background: rgba(56, 189, 248, 0.06);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  color: #cbd5e1;
 }
 
 /* --------------------------------------------------------------------------

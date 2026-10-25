@@ -101,6 +101,26 @@ const projectAuthorization = {
     }
     return access;
   },
+
+  /**
+   * Require permission to manage another user's project access.
+   * Self role changes and self revocation are intentionally forbidden so a
+   * manager cannot accidentally remove or downgrade their own access.
+   * @param {string} projectId
+   * @param {string} currentUserId
+   * @param {string} targetUserId
+   * @returns {Promise<import('mongoose').Document>}
+   */
+  async requireManageOtherUserAccess(projectId, currentUserId, targetUserId) {
+    const access = await this.requireManageAccess(projectId, currentUserId);
+    if (currentUserId === targetUserId) {
+      throw new ProjectAccessDeniedError(
+        'Users cannot change or revoke their own project access.',
+        { projectId, userId: currentUserId }
+      );
+    }
+    return access;
+  },
 };
 
 module.exports = projectAuthorization;

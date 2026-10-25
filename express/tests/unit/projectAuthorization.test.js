@@ -116,6 +116,26 @@ describe('ProjectAuthorization Unit Tests (Batch 1)', () => {
     });
   });
 
+  describe('requireManageOtherUserAccess (Target-aware membership management)', () => {
+    it('allows OWNER and ADMIN to manage another member', async () => {
+      await expect(
+        projectAuthorization.requireManageOtherUserAccess(projectId, ownerId, viewerId)
+      ).resolves.toBeDefined();
+      await expect(
+        projectAuthorization.requireManageOtherUserAccess(projectId, adminId, developerId)
+      ).resolves.toBeDefined();
+    });
+
+    it('denies OWNER and ADMIN from changing their own access', async () => {
+      await expect(
+        projectAuthorization.requireManageOtherUserAccess(projectId, ownerId, ownerId)
+      ).rejects.toMatchObject({ code: 'project_access_denied', status: 403 });
+      await expect(
+        projectAuthorization.requireManageOtherUserAccess(projectId, adminId, adminId)
+      ).rejects.toMatchObject({ code: 'project_access_denied', status: 403 });
+    });
+  });
+
   describe('Cross-Project Isolation', () => {
     it('does not grant access to project B if user only has access to project A', async () => {
       const projectB = crypto.randomUUID();

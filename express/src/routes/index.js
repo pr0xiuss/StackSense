@@ -1,6 +1,7 @@
 const express = require('express');
 const projectRoutes = require('./projectRoutes');
 const authRoutes = require('./authRoutes');
+const userDirectoryRoutes = require('./userDirectoryRoutes');
 
 const router = express.Router();
 
@@ -18,6 +19,7 @@ router.get('/health', (req, res) => {
  * Authentication endpoints.
  */
 router.use('/auth', authRoutes);
+router.use('/users', userDirectoryRoutes);
 
 /**
  * Project resource endpoints.

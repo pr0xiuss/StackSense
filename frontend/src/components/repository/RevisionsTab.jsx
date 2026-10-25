@@ -18,34 +18,48 @@ export default function RevisionsTab({
   const [revisions, setRevisions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [selectedDetail, setSelectedDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
-  useEffect(() => {
-    let isMounted = true;
+  const pageSize = 50;
+
+  const loadRevisions = (nextOffset = 0) => {
+    let active = true;
     setLoading(true);
     setError(null);
-
     ingestionService
-      .listRevisions(projectId, repositoryId, 50, 0)
+      .listRevisions(projectId, repositoryId, pageSize, nextOffset)
       .then((data) => {
-        if (isMounted) {
-          setRevisions(Array.isArray(data) ? data : []);
+        if (active) {
+          const list = Array.isArray(data) ? data : [];
+          setRevisions(list);
+          setOffset(nextOffset);
+          setHasMore(list.length === pageSize);
         }
       })
-      .catch((err) => {
-        if (isMounted) {
-          setError(err.message || 'Failed to load repository revisions.');
-        }
-      })
-      .finally(() => {
-        if (isMounted) {
-          setLoading(false);
-        }
-      });
+      .catch((err) => active && setError(err.message || 'Failed to load repository revisions.'))
+      .finally(() => active && setLoading(false));
+    return () => { active = false; };
+  };
 
-    return () => {
-      isMounted = false;
-    };
+  useEffect(() => {
+    setSelectedDetail(null);
+    return loadRevisions(0);
   }, [projectId, repositoryId]);
+
+  const showDetails = async (revisionId) => {
+    setDetailLoading(true);
+    setError(null);
+    try {
+      setSelectedDetail(await ingestionService.getRevision(projectId, repositoryId, revisionId));
+    } catch (err) {
+      setError(err.message || 'Failed to load revision details.');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   return (
     <div className="revisions-tab-content">
@@ -69,6 +83,7 @@ export default function RevisionsTab({
         {error && (
           <div className="table-error-wrap">
             <p>{error}</p>
+            <button type="button" className="btn-table-view" onClick={() => loadRevisions(offset)}>Retry</button>
           </div>
         )}
 
@@ -81,7 +96,7 @@ export default function RevisionsTab({
           </div>
         )}
 
-        {!loading && !error && revisions.length > 0 && (
+        {!loading && !error && (revisions.length > 0 || offset > 0) && (
           <div className="history-table-wrapper">
             <table className="history-table">
               <thead>
@@ -91,7 +106,7 @@ export default function RevisionsTab({
                   <th scope="col">Total Size</th>
                   <th scope="col">Source Hash</th>
                   <th scope="col">Created At</th>
-                  <th scope="col">Artifacts</th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -128,11 +143,33 @@ export default function RevisionsTab({
                       >
                         View Artifacts &rarr;
                       </button>
+                      <button type="button" className="btn-table-view" onClick={() => showDetails(rev.id)}>Details</button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {!loading && !error && revisions.length > 0 && (
+          <div className="history-footer">
+            <span className="footer-count">{revisions.length === 0 ? `No revisions on this page (offset ${offset})` : <>Showing {offset + 1}&ndash;{offset + revisions.length} revisions</>}</span>
+            <div className="repo-pagination-controls" aria-label="Revision pagination">
+              <button type="button" className="repo-pagination-btn" onClick={() => loadRevisions(Math.max(0, offset - pageSize))} disabled={offset === 0}>Previous</button>
+              <button type="button" className="repo-pagination-btn" onClick={() => loadRevisions(offset + pageSize)} disabled={!hasMore}>Next</button>
+            </div>
+          </div>
+        )}
+        {(detailLoading || selectedDetail) && (
+          <div className="revision-detail-panel" aria-live="polite">
+            {detailLoading ? <span>Loading revision details…</span> : (
+              <>
+                <strong>{selectedDetail.revision_identifier}</strong>
+                <span>{selectedDetail.total_files.toLocaleString()} files · {formatBytes(selectedDetail.total_bytes)}</span>
+                <span className="mono-text">{selectedDetail.source_hash}</span>
+                <button type="button" className="btn-table-view" onClick={() => setSelectedDetail(null)}>Close details</button>
+              </>
+            )}
           </div>
         )}
       </div>
