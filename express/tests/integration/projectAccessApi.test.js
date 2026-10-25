@@ -4,6 +4,7 @@ const app = require('../../src/app');
 const projectService = require('../../src/services/projectService');
 const projectAccessService = require('../../src/services/projectAccessService');
 const { PROJECT_ROLES } = require('../../src/constants/projectRoles');
+const User = require('../../src/models/User');
 
 const NON_EXISTENT_UUID_V4 = '00000000-0000-4000-8000-000000000000';
 const INVALID_UUID = 'not-a-valid-uuid';
@@ -255,6 +256,24 @@ describe('Project Access API Integration Tests (Batch 2)', () => {
       );
     });
 
+    it('includes the minimal username for persisted users without exposing email', async () => {
+      await User.create({
+        _id: ownerUser,
+        email: 'owner@example.com',
+        username: 'project_owner',
+        password_hash: 'hash',
+      });
+
+      const res = await request(app)
+        .get(`/api/v1/projects/${projectA._id}/access`)
+        .set('x-user-id', ownerUser)
+        .expect(200);
+
+      const owner = res.body.find((member) => member.user_id === ownerUser);
+      expect(owner.username).toBe('project_owner');
+      expect(owner.email).toBeUndefined();
+    });
+
     it('allows ADMIN, DEVELOPER, and VIEWER to list project access records', async () => {
       for (const user of [adminUser, developerUser, viewerUser]) {
         const res = await request(app)
@@ -310,6 +329,19 @@ describe('Project Access API Integration Tests (Batch 2)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.role).toBe('viewer');
+    });
+
+    it('denies changing your own role and preserves the access record', async () => {
+      const res = await request(app)
+        .patch(`/api/v1/projects/${projectA._id}/access/${ownerUser}`)
+        .set('x-user-id', ownerUser)
+        .send({ role: 'viewer' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('project_access_denied');
+
+      const unchanged = await projectAccessService.getAccess(projectA._id, ownerUser);
+      expect(unchanged.role).toBe(PROJECT_ROLES.OWNER);
     });
 
     it('denies DEVELOPER from changing role with 403', async () => {
@@ -388,6 +420,19 @@ describe('Project Access API Integration Tests (Batch 2)', () => {
 
       const check = await projectAccessService.getAccess(projectA._id, developerUser);
       expect(check).toBeNull();
+    });
+
+    it('denies revoking your own access and preserves the access record', async () => {
+      const res = await request(app)
+        .delete(`/api/v1/projects/${projectA._id}/access/${adminUser}`)
+        .set('x-user-id', adminUser);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('project_access_denied');
+
+      const unchanged = await projectAccessService.getAccess(projectA._id, adminUser);
+      expect(unchanged).not.toBeNull();
+      expect(unchanged.role).toBe(PROJECT_ROLES.ADMIN);
     });
 
     it('denies DEVELOPER from revoking access with 403', async () => {
