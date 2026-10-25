@@ -1,9 +1,5 @@
 import React from 'react';
 
-/**
- * Auth Layout Component
- * Houses the top branding bar, background lighting orbs, and centered grid container.
- */
 export default function AuthLayout({ children, onNavigateHome }) {
   return (
     <div className="auth-page">

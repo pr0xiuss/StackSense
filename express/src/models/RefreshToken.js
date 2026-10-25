@@ -59,11 +59,9 @@ const refreshTokenSchema = new mongoose.Schema(
   }
 );
 
-// Indexes
 refreshTokenSchema.index({ token_hash: 1 }, { unique: true });
 refreshTokenSchema.index({ user_id: 1 });
 
-// Helper functions and virtuals (matching Python domain @property)
 function checkIsActive(doc) {
   return !doc.revoked_at && doc.expires_at > new Date();
 }
@@ -88,7 +86,6 @@ refreshTokenSchema.virtual('isRevoked').get(function () {
   return checkIsRevoked(this);
 });
 
-// Also support snake_case getters
 refreshTokenSchema.virtual('is_active').get(function () {
   return checkIsActive(this);
 });

@@ -1,15 +1,3 @@
-/**
- * StackSense Centralized API Client
- *
- * Enforces:
- * - Single source of truth for backend communication
- * - Automatic Authorization: Bearer <access_token> attachment
- * - Automatic 401 interceptor with token refresh
- * - Shared refresh promise to prevent concurrent refresh storms
- * - Single-retry loop protection
- * - Event dispatching on unrecoverable auth failure
- */
-
 export const ACCESS_TOKEN_KEY = 'stacksense_access_token';
 export const REFRESH_TOKEN_KEY = 'stacksense_refresh_token';
 export const LEGACY_TOKEN_KEY = 'stacksense_auth_token';
@@ -59,15 +47,11 @@ export const tokenStorage = {
       localStorage.removeItem(REFRESH_TOKEN_KEY);
       localStorage.removeItem(LEGACY_TOKEN_KEY);
     } catch {
-      // Storage unavailable
     }
   },
 };
 
-/**
- * Perform token rotation with concurrency and loop protection.
- * Returns the fresh access token, or throws an ApiError if refresh fails.
- */
+
 async function refreshAccessToken() {
   if (isRefreshing && refreshPromise) {
     return refreshPromise;
@@ -92,8 +76,6 @@ async function refreshAccessToken() {
         body: JSON.stringify({ refresh_token: currentRefreshToken.trim() }),
       });
     } catch (networkErr) {
-      // Network failure (offline, timeout, connection drop):
-      // Do NOT clear tokens or dispatch auth:expired!
       throw new ApiError(
         'Network error while refreshing session. Please check your connection.',
         0,
@@ -108,7 +90,6 @@ async function refreshAccessToken() {
       data = null;
     }
 
-    // Definitive authentication failure: invalid, expired, or revoked refresh token
     if (response.status === 401 || response.status === 403) {
       tokenStorage.clearTokens();
       window.dispatchEvent(new CustomEvent('auth:expired'));
@@ -121,7 +102,6 @@ async function refreshAccessToken() {
     }
 
     if (!response.ok) {
-      // Transient server/gateway error (5xx, etc.): do NOT clear tokens
       const errorCode = data?.error?.code || 'server_error';
       const errorMessage =
         data?.error?.message ||
@@ -135,7 +115,6 @@ async function refreshAccessToken() {
       return data.access_token;
     }
 
-    // Response succeeded but had unexpected structure: do not evict user session
     throw new ApiError('Invalid refresh response from server.', 500, 'invalid_response');
   })().finally(() => {
     isRefreshing = false;
@@ -145,12 +124,6 @@ async function refreshAccessToken() {
   return refreshPromise;
 }
 
-/**
- * Centralized fetch wrapper
- *
- * @param {string} endpoint - API path, e.g. '/api/v1/projects' or 'projects'
- * @param {RequestInit & { _retry?: boolean, skipAuth?: boolean }} options
- */
 export async function apiRequest(endpoint, options = {}) {
   const url = endpoint.startsWith('http')
     ? endpoint
@@ -167,7 +140,6 @@ export async function apiRequest(endpoint, options = {}) {
 
   const headers = new Headers(options.headers || {});
 
-  // Automatically attach access token if not an unauthenticated/auth endpoint
   if (!options.skipAuth && !isAuthEndpoint) {
     const token = tokenStorage.getAccessToken();
     if (token && !headers.has('Authorization')) {
@@ -175,7 +147,6 @@ export async function apiRequest(endpoint, options = {}) {
     }
   }
 
-  // Set Content-Type: application/json if sending an object payload that is not FormData
   if (
     options.body &&
     !(options.body instanceof FormData) &&
@@ -200,7 +171,6 @@ export async function apiRequest(endpoint, options = {}) {
     );
   }
 
-  // Handle 401 Unauthorized for authenticated requests (with single retry and loop protection)
   if (response.status === 401 && !options._retry && !isAuthEndpoint && !options.skipAuth) {
     try {
       const newAccessToken = await refreshAccessToken();
@@ -217,7 +187,6 @@ export async function apiRequest(endpoint, options = {}) {
     }
   }
 
-  // 204 No Content
   if (response.status === 204) {
     return null;
   }

@@ -1,11 +1,3 @@
-/**
- * Authentication and Cryptographic Configuration.
- * 
- * Enforces strict secret length and separation in production environments.
- * Provides token lifetimes (access: 60m, refresh: 30d) and bcrypt rounds
- * with exact parity to Python reference platform config.
- */
-
 const DEFAULT_DEV_JWT_SECRET = 'stacksense-dev-jwt-secret-key-at-least-32-chars-long';
 const DEFAULT_DEV_REFRESH_HMAC_KEY = 'stacksense-dev-refresh-hmac-key-at-least-32-chars-long';
 

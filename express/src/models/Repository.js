@@ -56,29 +56,9 @@ const repositorySchema = new mongoose.Schema(
   }
 );
 
-// Compound unique index enforces that repository name is unique within owning project
 repositorySchema.index({ project_id: 1, name: 1 }, { unique: true });
 
-// Index for performant querying and pagination
 repositorySchema.index({ project_id: 1, created_at: 1 });
-
-// Defensively cascade-delete associated child resources if Repository is deleted via query
-repositorySchema.post('findOneAndDelete', async function (doc) {
-  if (doc) {
-    const Ingestion = mongoose.models.Ingestion;
-    if (Ingestion) {
-      await Ingestion.deleteMany({ repository_id: doc._id });
-    }
-    const RepositoryRevision = mongoose.models.RepositoryRevision;
-    if (RepositoryRevision) {
-      await RepositoryRevision.deleteMany({ repository_id: doc._id });
-    }
-    const RepositoryArtifact = mongoose.models.RepositoryArtifact;
-    if (RepositoryArtifact) {
-      await RepositoryArtifact.deleteMany({ repository_id: doc._id });
-    }
-  }
-});
 
 const Repository = mongoose.model('Repository', repositorySchema);
 

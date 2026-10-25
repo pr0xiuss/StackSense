@@ -4,11 +4,7 @@ import AuthBranding from '../components/auth/AuthBranding.jsx';
 import AuthPanel from '../components/auth/AuthPanel.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
 
-/**
- * Authentication Page Component
- * Manages mode switching (Login <-> Signup), backend auth submission,
- * error handling, and post-auth navigation.
- */
+
 export default function AuthPage({
   initialMode = 'login',
   onNavigateHome,
@@ -19,13 +15,11 @@ export default function AuthPage({
   const [error, setError] = useState(null);
   const [authSuccessMessage, setAuthSuccessMessage] = useState('');
 
-  // Synchronize initialMode changes or URL hash
   useEffect(() => {
     setAuthMode(initialMode === 'signup' ? 'signup' : 'login');
     setError(null);
   }, [initialMode]);
 
-  // Redirect to projects dashboard if user is already authenticated
   useEffect(() => {
     if (authenticatedUser) {
       window.location.hash = '#/projects';
@@ -38,7 +32,6 @@ export default function AuthPage({
     if (clearMessage) {
       setAuthSuccessMessage('');
     }
-    // Update hash gracefully without triggering full page reload
     if (window.history.pushState) {
       window.history.pushState(null, '', `#/${mode}`);
     } else {
@@ -53,7 +46,6 @@ export default function AuthPage({
 
     try {
       await login(identifier, password);
-      // Immediately open projects dashboard
       window.location.hash = '#/projects';
     } catch (err) {
       setError(err.message || 'Login failed. Please check your credentials.');
@@ -68,7 +60,6 @@ export default function AuthPage({
 
     try {
       await register(email, username, password);
-      // Inform user and redirect to sign-in page
       setAuthSuccessMessage('Account created successfully! Please sign in with your credentials.');
       handleSwitchMode('login', false);
     } catch (err) {

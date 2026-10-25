@@ -6,7 +6,6 @@ export default function DashboardHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
-  // Compute initials from username or email
   const getInitials = () => {
     if (!user) return 'SS';
     if (user.username) {
@@ -21,7 +20,6 @@ export default function DashboardHeader() {
   const displayName = user?.username || (user?.email ? user.email.split('@')[0] : 'User');
   const displayEmail = user?.email || '';
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleOutsideClick = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target)) {

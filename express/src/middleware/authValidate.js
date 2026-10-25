@@ -2,9 +2,7 @@ const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/**
- * Validate payload for user registration.
- */
+
 function validateRegister(req, res, next) {
   const body = req.body;
 
@@ -20,7 +18,6 @@ function validateRegister(req, res, next) {
 
   const { email, username, password } = body;
 
-  // Email validation
   if (typeof email !== 'string' || !email.trim()) {
     return res.status(422).json({
       error: {
@@ -52,7 +49,7 @@ function validateRegister(req, res, next) {
     });
   }
 
-  // Username validation
+
   if (typeof username !== 'string' || !username.trim()) {
     return res.status(422).json({
       error: {
@@ -74,7 +71,7 @@ function validateRegister(req, res, next) {
     });
   }
 
-  // Password validation (basic structural checks; full policy enforced in service)
+
   if (typeof password !== 'string') {
     return res.status(422).json({
       error: {
@@ -105,16 +102,13 @@ function validateRegister(req, res, next) {
     });
   }
 
-  // Normalize for downstream use
   req.body.email = trimmedEmail;
   req.body.username = trimmedUsername;
 
   next();
 }
 
-/**
- * Validate payload for user login.
- */
+
 function validateLogin(req, res, next) {
   const body = req.body;
 
@@ -150,15 +144,12 @@ function validateLogin(req, res, next) {
     });
   }
 
-  // Normalize for downstream use
   req.body.identifier = identifier.trim().toLowerCase();
 
   next();
 }
 
-/**
- * Validate payload for token refresh.
- */
+
 function validateRefresh(req, res, next) {
   const body = req.body;
 
@@ -187,13 +178,10 @@ function validateRefresh(req, res, next) {
   next();
 }
 
-/**
- * Validate payload for logout (optional refresh token).
- */
+
 function validateLogout(req, res, next) {
   const body = req.body;
 
-  // Logout body is optional - if provided, validate refresh_token
   if (body && typeof body === 'object' && body.refresh_token !== undefined) {
     const { refresh_token } = body;
     if (typeof refresh_token !== 'string') {

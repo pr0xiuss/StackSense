@@ -10,9 +10,6 @@ import MetadataEditModal from '../common/MetadataEditModal.jsx';
 const BADGE_COLORS = ['blue', 'red', 'green', 'purple', 'cyan'];
 const REPOS_PER_PAGE = 5;
 
-/**
- * Helper to compute friendly relative time string
- */
 function formatRelativeTime(dateString) {
   if (!dateString) return 'Never';
   const date = new Date(dateString);
@@ -51,11 +48,9 @@ export default function ProjectCard({
   const [reposHasMore, setReposHasMore] = useState(false);
   const [loadingMoreRepos, setLoadingMoreRepos] = useState(false);
 
-  // Feature A & B: Search and Pagination state
   const [repoSearchQuery, setRepoSearchQuery] = useState('');
   const [repoCurrentPage, setRepoCurrentPage] = useState(1);
 
-  // Feature C: Three-dot row menu & deletion state
   const [deleteTargetRepo, setDeleteTargetRepo] = useState(null);
   const [feedbackMessage, setFeedbackMessage] = useState(null);
 
@@ -102,14 +97,12 @@ export default function ProjectCard({
     }
   }, [project?.id]);
 
-  // Fetch repositories on demand when expanded
   useEffect(() => {
     if (expanded && repositories === null && !loadingRepos) {
       fetchRepositories();
     }
   }, [expanded, repositories, loadingRepos, fetchRepositories]);
 
-  // If a repository was created for this project, expand and reload
   useEffect(() => {
     if (lastCreatedRepo && lastCreatedRepo.project_id === project.id) {
       setExpanded(true);
@@ -123,7 +116,6 @@ export default function ProjectCard({
     }
   }, [lastCreatedRepo, project.id, fetchRepositories]);
 
-  // Reset pagination to page 1 whenever the search query changes
   useEffect(() => {
     setRepoCurrentPage(1);
   }, [repoSearchQuery]);
@@ -136,10 +128,6 @@ export default function ProjectCard({
     if (nextState && repositories === null && !loadingRepos) {
       fetchRepositories();
     }
-  };
-
-  const handleRepositoryClick = (repoId) => {
-    window.location.hash = `#/projects/${project.id}/repositories/${repoId}`;
   };
 
   const handleDelete = () => {
@@ -160,7 +148,6 @@ export default function ProjectCard({
     setFeedbackMessage({ type: 'success', text: `Repository "${updated.name}" updated successfully.` });
   };
 
-  // Feature C: Repository deleted callback
   const handleRepositoryDeleted = (deletedRepoId) => {
     const deleted = (repositories || []).find((r) => r.id === deletedRepoId);
     setRepositories((prev) => {
@@ -168,7 +155,6 @@ export default function ProjectCard({
       return updated;
     });
 
-    // Ensure pagination stays valid (navigate to nearest valid page if last on page was deleted)
     setRepoCurrentPage((prev) => {
       const remainingCount = Math.max(0, (repositories || []).length - 1);
       const newTotalPages = Math.max(1, Math.ceil(remainingCount / REPOS_PER_PAGE));
@@ -186,7 +172,6 @@ export default function ProjectCard({
     }
   };
 
-  // Feature A: Filter repositories by name case-insensitively
   const filteredRepositories = useMemo(() => {
     if (!repositories) return [];
     if (!repoSearchQuery.trim()) return repositories;
@@ -197,7 +182,6 @@ export default function ProjectCard({
     });
   }, [repositories, repoSearchQuery]);
 
-  // Feature B: 5 repositories per page client-side pagination
   const totalRepoPages = Math.max(1, Math.ceil(filteredRepositories.length / REPOS_PER_PAGE));
   const safeRepoPage = Math.min(Math.max(1, repoCurrentPage), totalRepoPages);
   const startRepoIndex = (safeRepoPage - 1) * REPOS_PER_PAGE;
@@ -374,7 +358,7 @@ export default function ProjectCard({
                       <tr>
                         <th scope="col">Repository</th>
                         <th scope="col">Status</th>
-                        <th scope="col">Last ingestion</th>
+                        <th scope="col">Last updated</th>
                         <th scope="col">Actions</th>
                       </tr>
                     </thead>
@@ -411,14 +395,6 @@ export default function ProjectCard({
                             </td>
                             <td className="repo-action-cell">
                               <div className="repo-actions-group">
-                                <button
-                                  type="button"
-                                  className="btn-view-repo"
-                                  onClick={() => handleRepositoryClick(repo.id)}
-                                >
-                                  View
-                                </button>
-
                                 <ActionMenu
                                   label={`Repository actions for ${repo.name}`}
                                   size="compact"

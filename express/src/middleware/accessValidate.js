@@ -2,9 +2,6 @@ const { VALID_PROJECT_ROLES } = require('../constants/projectRoles');
 
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/**
- * Validate that req.params.userId is a valid UUID v4.
- */
 function validateUserIdParam(req, res, next) {
   const { userId } = req.params;
 
@@ -21,10 +18,7 @@ function validateUserIdParam(req, res, next) {
   next();
 }
 
-/**
- * Validate request body for granting project access.
- * Requires: user_id (valid UUID v4) and role (valid ProjectRole).
- */
+
 function validateGrantAccessBody(req, res, next) {
   const body = req.body;
 
@@ -81,17 +75,13 @@ function validateGrantAccessBody(req, res, next) {
     });
   }
 
-  // Normalize trimmed values on req.body
   req.body.user_id = user_id.trim();
   req.body.role = normalizedRole;
 
   next();
 }
 
-/**
- * Validate request body for updating project access role.
- * Requires: role (valid ProjectRole).
- */
+
 function validateChangeRoleBody(req, res, next) {
   const body = req.body;
 

@@ -8,15 +8,9 @@ const {
 } = require('../middleware/accessValidate');
 
 const router = express.Router({ mergeParams: true });
-
-// All project access endpoints require authentication
 router.use(authenticate);
-
-// Collection routes
 router.post('/', validateGrantAccessBody, projectAccessController.grantAccess);
 router.get('/', projectAccessController.listProjectAccess);
-
-// Member individual routes
 router.patch('/:userId', validateUserIdParam, validateChangeRoleBody, projectAccessController.changeRole);
 router.delete('/:userId', validateUserIdParam, projectAccessController.revokeAccess);
 

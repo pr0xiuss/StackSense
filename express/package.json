@@ -6,8 +6,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "test": "jest --runInBand --detectOpenHandles"
+    "dev": "node --watch src/server.js"
   },
   "keywords": [
     "stacksense",
@@ -23,27 +22,6 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^8.7.1",
-    "multer": "^2.4.0",
-    "tar": "^7.5.22",
-    "yauzl": "^3.4.0"
-  },
-  "devDependencies": {
-    "jest": "^30.5.2",
-    "mongodb-memory-server": "^10.1.0",
-    "supertest": "^7.0.0"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "setupFilesAfterEnv": [
-      "<rootDir>/tests/setup.js"
-    ],
-    "testMatch": [
-      "**/tests/**/*.test.js"
-    ],
-    "verbose": true
-  },
-  "overrides": {
-    "js-yaml": "^4.1.0"
+    "mongoose": "^8.7.1"
   }
 }

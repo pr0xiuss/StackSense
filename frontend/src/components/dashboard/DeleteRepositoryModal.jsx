@@ -74,7 +74,7 @@ export default function DeleteRepositoryModal({
           </div>
           <div>
             <h2 className="modal-title" id="delete-repo-modal-title">Delete Repository</h2>
-            <p className="modal-subtitle">Permanently delete repository and associated records.</p>
+            <p className="modal-subtitle">Permanently delete this repository registration.</p>
           </div>
           <button
             type="button"
@@ -106,7 +106,7 @@ export default function DeleteRepositoryModal({
             Are you sure you want to delete <strong className="delete-repo-target-name">{repository.name}</strong>?
           </p>
           <p className="delete-detail-text">
-            This action is destructive and cannot be undone. All repository history, revisions, and metadata will be permanently deleted.
+            This action is destructive and cannot be undone. The repository registration and its metadata will be permanently deleted.
           </p>
         </div>
 

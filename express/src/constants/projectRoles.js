@@ -1,9 +1,3 @@
-/**
- * Project-scoped access roles.
- * Authoritative values matching Python P2 and master.txt:
- * OWNER, ADMIN, DEVELOPER, VIEWER.
- */
-
 const PROJECT_ROLES = Object.freeze({
   OWNER: 'owner',
   ADMIN: 'admin',

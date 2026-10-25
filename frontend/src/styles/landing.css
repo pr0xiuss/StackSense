@@ -1,11 +1,4 @@
-/* ==========================================================================
-   StackSense Landing Page Styles
-   Focus: Spacious, Minimal, Technically Credible, Clear Hierarchy, Polished
-   ========================================================================== */
-
-/* --------------------------------------------------------------------------
-   1. Navigation
-   -------------------------------------------------------------------------- */
+/*Navigation*/
 .navbar {
   position: sticky;
   top: 0;
@@ -143,9 +136,7 @@
   display: none;
 }
 
-/* --------------------------------------------------------------------------
-   2. Hero Section
-   -------------------------------------------------------------------------- */
+/*Hero Section*/
 .hero-section {
   padding: 5.5rem 0 4.5rem 0;
   position: relative;
@@ -198,6 +189,7 @@
 .text-gradient {
   background: var(--gradient-text);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   display: inline-block;
 }
@@ -217,9 +209,7 @@
   flex-wrap: wrap;
 }
 
-/* --------------------------------------------------------------------------
-   3. Architecture Preview Component (Hero Right)
-   -------------------------------------------------------------------------- */
+/*Architecture Preview Component (Hero Right)*/
 .arch-preview-wrapper {
   position: relative;
 }
@@ -414,9 +404,7 @@
   fill: none;
 }
 
-/* --------------------------------------------------------------------------
-   4. Core Value Strip (Below Hero)
-   -------------------------------------------------------------------------- */
+/*Core Value Strip (Below Hero)*/
 .value-strip-section {
   padding: 1.5rem 0 4.5rem 0;
 }
@@ -447,9 +435,7 @@
   flex-shrink: 0;
 }
 
-/* --------------------------------------------------------------------------
-   5. How StackSense Works
-   -------------------------------------------------------------------------- */
+/*How StackSense Works*/
 .workflow-section {
   padding: 6rem 0;
   border-top: 1px solid var(--border-subtle);
@@ -535,9 +521,7 @@
   line-height: 1.55;
 }
 
-/* --------------------------------------------------------------------------
-   6. Why StackSense / Built for Engineers
-   -------------------------------------------------------------------------- */
+/*Why StackSense / Built for Engineers*/
 .why-section {
   padding: 6rem 0;
   background: var(--bg-secondary);
@@ -606,9 +590,7 @@
   line-height: 1.6;
 }
 
-/* --------------------------------------------------------------------------
-   7. Architecture Preview Section (Deep System Map)
-   -------------------------------------------------------------------------- */
+/*Architecture Preview Section (Deep System Map)*/
 .arch-section {
   padding: 6rem 0;
 }
@@ -679,9 +661,7 @@
   color: var(--text-muted);
 }
 
-/* --------------------------------------------------------------------------
-   8. Final CTA Banner
-   -------------------------------------------------------------------------- */
+/*Final CTA Banner*/
 .cta-section {
   padding: 5rem 0 6.5rem 0;
 }
@@ -734,9 +714,7 @@
   margin: 0 auto;
 }
 
-/* --------------------------------------------------------------------------
-   9. Footer
-   -------------------------------------------------------------------------- */
+/*Footer*/
 .footer {
   padding: 3.5rem 0 2.5rem 0;
   border-top: 1px solid var(--border-subtle);
@@ -781,9 +759,7 @@
   gap: 1rem;
 }
 
-/* --------------------------------------------------------------------------
-   10. Responsive Breakpoints
-   -------------------------------------------------------------------------- */
+/*Responsive Breakpoints*/
 @media (max-width: 1024px) {
   .hero-grid {
     grid-template-columns: 1fr;

@@ -1,22 +1,11 @@
-/**
- * Authentication Service
- * Interacts with /api/v1/auth endpoints via centralized apiClient.
- */
 import { apiClient, tokenStorage } from './apiClient.js';
 
-/**
- * Return whether a current-user failure proves the stored session is unusable.
- * Project/resource authorization failures must not evict an otherwise valid session.
- */
 export function isDefinitiveSessionFailure(error) {
   if (error?.status === 401) return true;
   return error?.status === 403 && error?.code === 'user_inactive';
 }
 
 export const authService = {
-  /**
-   * Authenticate user with identifier (username or email) and password.
-   */
   async login(identifier, password) {
     const payload = {
       identifier: identifier.trim().toLowerCase(),
@@ -30,9 +19,6 @@ export const authService = {
     return data;
   },
 
-  /**
-   * Register a new user account with email, username, and password.
-   */
   async register(email, username, password) {
     const payload = {
       email: email.trim().toLowerCase(),
@@ -47,9 +33,6 @@ export const authService = {
     return data;
   },
 
-  /**
-   * Explicitly rotate refresh token.
-   */
   async refreshToken(refreshToken) {
     const token = refreshToken || tokenStorage.getRefreshToken();
     if (!token) {
@@ -67,9 +50,6 @@ export const authService = {
     return data;
   },
 
-  /**
-   * Log out current user and revoke session.
-   */
   async logout(refreshToken) {
     const token = refreshToken || tokenStorage.getRefreshToken();
     try {
@@ -85,9 +65,6 @@ export const authService = {
     }
   },
 
-  /**
-   * Retrieve profile of currently authenticated user.
-   */
   async getCurrentUser() {
     return apiClient.get('/auth/me');
   },

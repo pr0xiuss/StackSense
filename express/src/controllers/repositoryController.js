@@ -1,13 +1,7 @@
 const repositoryService = require('../services/repositoryService');
 
-/**
- * Controller handling HTTP requests for Repository endpoints.
- */
 const repositoryController = {
-  /**
-   * POST /api/v1/projects/:projectId/repositories
-   * Register a new repository within a project.
-   */
+   //POST /api/v1/projects/:projectId/repositories
   async registerRepository(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -27,10 +21,7 @@ const repositoryController = {
     }
   },
 
-  /**
-   * GET /api/v1/projects/:projectId/repositories
-   * List repositories belonging to a project with pagination.
-   */
+  //GET /api/v1/projects/:projectId/repositories
   async listRepositories(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -49,10 +40,7 @@ const repositoryController = {
     }
   },
 
-  /**
-   * GET /api/v1/projects/:projectId/repositories/:repositoryId
-   * Retrieve a specific repository within a project.
-   */
+  //GET /api/v1/projects/:projectId/repositories/:repositoryId
   async getRepository(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -70,10 +58,7 @@ const repositoryController = {
     }
   },
 
-  /**
-   * PATCH /api/v1/projects/:projectId/repositories/:repositoryId
-   * Update repository metadata.
-   */
+  //PATCH /api/v1/projects/:projectId/repositories/:repositoryId
   async updateRepository(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -93,10 +78,7 @@ const repositoryController = {
     }
   },
 
-  /**
-   * DELETE /api/v1/projects/:projectId/repositories/:repositoryId
-   * Delete a repository from a project.
-   */
+  //DELETE /api/v1/projects/:projectId/repositories/:repositoryId
   async deleteRepository(req, res, next) {
     try {
       const currentUserId = req.user.id;

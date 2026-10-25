@@ -17,11 +17,9 @@ export default function ProjectsDashboardPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [feedback, setFeedback] = useState(null);
 
-  // Search & Pagination state
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Modals & Repositories state
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [createRepoTarget, setCreateRepoTarget] = useState(null); // project object
   const [lastCreatedRepo, setLastCreatedRepo] = useState(null); // reactive new repo
@@ -58,7 +56,6 @@ export default function ProjectsDashboardPage() {
     fetchProjects(0);
   }, [fetchProjects]);
 
-  // Reset to page 1 whenever the user searches
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery]);
@@ -96,7 +93,6 @@ export default function ProjectsDashboardPage() {
     setCreateRepoTarget(null);
   };
 
-  // Filter projects by name or description
   const filteredProjects = useMemo(() => {
     if (!searchQuery.trim()) return projects;
     const query = searchQuery.toLowerCase().trim();
@@ -107,7 +103,6 @@ export default function ProjectsDashboardPage() {
     });
   }, [projects, searchQuery]);
 
-  // Client-side pagination (8 per page)
   const totalPages = Math.max(1, Math.ceil(filteredProjects.length / PROJECTS_PER_PAGE));
   const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
   const startIndex = (safeCurrentPage - 1) * PROJECTS_PER_PAGE;
@@ -247,7 +242,7 @@ export default function ProjectsDashboardPage() {
             </div>
             <h2 className="empty-title">No projects yet</h2>
             <p className="empty-subtitle">
-              Get started by creating your first project to register repositories and run architecture ingestion.
+              Get started by creating your first project and registering its repositories.
             </p>
             <button
               type="button"

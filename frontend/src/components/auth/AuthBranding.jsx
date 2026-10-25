@@ -1,9 +1,5 @@
 import React from 'react';
 
-/**
- * Left branding column displaying the technical tagline, context badge,
- * and developer-focused isometric architecture illustration.
- */
 export default function AuthBranding({ authMode = 'login' }) {
   const isLogin = authMode === 'login';
 
@@ -37,7 +33,6 @@ export default function AuthBranding({ authMode = 'login' }) {
         </p>
       </div>
 
-      {/* Decorative Technical Architecture Illustration matching the reference */}
       <div className="auth-illustration-wrapper" aria-hidden="true">
         <div className="auth-ambient-glow" />
 

@@ -1,8 +1,5 @@
 import React, { useState } from 'react';
 
-/**
- * Accessible Input Field with icon slot, password reveal toggle, and error states.
- */
 export default function AuthInput({
   id,
   name,

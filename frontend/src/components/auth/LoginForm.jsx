@@ -1,9 +1,6 @@
 import React, { useState } from 'react';
 import AuthInput from './AuthInput.jsx';
 
-/**
- * Login Form Component
- */
 export default function LoginForm({
   onSwitchToSignup,
   onSubmit,

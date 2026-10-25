@@ -1,14 +1,8 @@
 const projectService = require('../services/projectService');
 const projectAuthorization = require('../services/projectAuthorization');
 
-/**
- * Controller handling HTTP requests for Project endpoints.
- */
 const projectController = {
-  /**
-   * POST /api/v1/projects
-   * Create a new project and grant creator OWNER access.
-   */
+  //POST /api/v1/projects
   async createProject(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -25,10 +19,7 @@ const projectController = {
     }
   },
 
-  /**
-   * GET /api/v1/projects/:projectId
-   * Retrieve a project by UUID v4 accessible to the current user.
-   */
+  //GET /api/v1/projects/:projectId
   async getProject(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -45,7 +36,7 @@ const projectController = {
         });
       }
 
-      // Enforce project isolation: outsider access returns 404 to avoid enumeration
+      // Enforce project isolation
       try {
         await projectAuthorization.requireAccess(projectId, currentUserId);
       } catch (err) {
@@ -64,10 +55,7 @@ const projectController = {
     }
   },
 
-  /**
-   * GET /api/v1/projects
-   * List projects accessible to the current user with pagination.
-   */
+  //GET /api/v1/projects
   async listProjects(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -80,10 +68,7 @@ const projectController = {
     }
   },
 
-  /**
-   * PATCH /api/v1/projects/:projectId
-   * Update project name and/or description when authorized.
-   */
+  //PATCH /api/v1/projects/:projectId
   async updateProject(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -100,7 +85,7 @@ const projectController = {
         });
       }
 
-      // Authorize update: requires OWNER, ADMIN, or DEVELOPER
+      // Authorize update requires OWNER, ADMIN, DEVELOPER
       await projectAuthorization.requireUpdateAccess(projectId, currentUserId);
 
       const updateData = {};
@@ -118,10 +103,7 @@ const projectController = {
     }
   },
 
-  /**
-   * DELETE /api/v1/projects/:projectId
-   * Hard delete a project when authorized.
-   */
+  //DELETE /api/v1/projects/:projectId
   async deleteProject(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -138,7 +120,7 @@ const projectController = {
         });
       }
 
-      // Authorize deletion: requires OWNER or ADMIN
+      // Authorize deletion requires OWNER, ADMIN
       await projectAuthorization.requireDeleteAccess(projectId, currentUserId);
 
       await projectService.deleteProject(projectId);

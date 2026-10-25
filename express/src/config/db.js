@@ -1,12 +1,7 @@
 const mongoose = require('mongoose');
 
-/**
- * Connect to MongoDB using Mongoose.
- * @param {string} [uri] - Optional MongoDB connection URI override.
- * @returns {Promise<typeof mongoose>}
- */
 async function connectDB(uri) {
-  const mongoUri = uri || process.env.MONGODB_URI || 'mongodb://localhost:27017/stacksense';
+  const mongoUri =  process.env.MONGODB_URI || 'mongodb://localhost:27017/stacksense';
 
   try {
     const connection = await mongoose.connect(mongoUri, {
@@ -21,10 +16,6 @@ async function connectDB(uri) {
   }
 }
 
-/**
- * Disconnect from MongoDB gracefully.
- * @returns {Promise<void>}
- */
 async function disconnectDB() {
   if (mongoose.connection.readyState !== 0) {
     await mongoose.disconnect();

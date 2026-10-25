@@ -1,14 +1,6 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '../auth/AuthContext.jsx';
 
-/**
- * ProtectedRoute component
- *
- * Ensures:
- * 1. Shows a sleek loading skeleton while auth state is resolving on startup
- * 2. If unauthenticated, immediately redirects to /#/login using history replacement
- * 3. Enforces fresh auth check whenever navigated or restored via browser Back/Forward
- */
 export default function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
 

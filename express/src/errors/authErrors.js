@@ -1,15 +1,3 @@
-/**
- * Custom error classes for Identity & Authentication domain operations.
- * Adheres to the StackSense error contract:
- * {
- *   "error": {
- *     "code": "...",
- *     "message": "...",
- *     "details": {}
- *   }
- * }
- */
-
 class AuthError extends Error {
   constructor(message, code, status = 400, details = {}) {
     super(message);

@@ -54,14 +54,11 @@ const projectAccessSchema = new mongoose.Schema(
   }
 );
 
-// Compound unique index enforces that a user holds at most one access record per project
 projectAccessSchema.index({ project_id: 1, user_id: 1 }, { unique: true });
 
-// Individual indexes for performant querying
 projectAccessSchema.index({ user_id: 1 });
 projectAccessSchema.index({ project_id: 1 });
 
-// Domain capability methods on the Mongoose document
 projectAccessSchema.methods.canRead = function () {
   return true;
 };

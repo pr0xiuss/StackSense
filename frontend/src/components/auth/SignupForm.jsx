@@ -3,9 +3,6 @@ import AuthInput from './AuthInput.jsx';
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
 
-/**
- * Signup Form Component
- */
 export default function SignupForm({
   onSwitchToLogin,
   onSubmit,

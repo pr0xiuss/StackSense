@@ -1,34 +1,10 @@
-/**
- * Centralized API error handling middleware.
- * Ensures all responses strictly adhere to the StackSense error contract:
- * {
- *   "error": {
- *     "code": "...",
- *     "message": "...",
- *     "details": {}
- *   }
- * }
- */
 function errorHandler(err, req, res, next) {
   let status = err.status || err.statusCode;
   let code = err.code;
   let message = err.message || 'An internal server error occurred.';
   let details = err.details || {};
 
-  // Multer error mapping (IR-M4-019)
-  if (err.name === 'MulterError') {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      status = 413;
-      code = 'max_repository_size_exceeded';
-      message = 'Uploaded file exceeds the maximum permitted repository size limit of 500 MB.';
-      details = { limit_bytes: 524288000 };
-    } else {
-      status = 422;
-      code = 'upload_error';
-      message = err.message || 'File upload failed.';
-    }
-  } else if (err.name === 'ValidationError') {
-    // Mongoose schema validation mapping (IR-M4-013)
+  if (err.name === 'ValidationError') {
     status = 422;
     code = 'validation_error';
     message = 'Validation failed.';

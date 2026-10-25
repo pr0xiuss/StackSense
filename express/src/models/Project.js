@@ -43,7 +43,6 @@ const projectSchema = new mongoose.Schema(
 
 projectSchema.index({ created_at: -1 });
  
-// Defensively cascade-delete associated project_access records if Project is deleted via query
 projectSchema.post('findOneAndDelete', async function (doc) {
   if (doc) {
     const ProjectAccess = mongoose.models.ProjectAccess;

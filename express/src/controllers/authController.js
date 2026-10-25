@@ -1,14 +1,8 @@
 const authService = require('../services/auth/authService');
 const { InvalidCredentialsError, UserInactiveError } = require('../errors/authErrors');
 
-/**
- * Controller handling HTTP requests for Authentication endpoints.
- */
 const authController = {
-  /**
-   * POST /api/v1/auth/register
-   * Register a new user account.
-   */
+  //POST /api/v1/auth/register
   async register(req, res, next) {
     try {
       const { email, username, password } = req.body;
@@ -24,10 +18,7 @@ const authController = {
     }
   },
 
-  /**
-   * POST /api/v1/auth/login
-   * Authenticate user and return access + refresh tokens.
-   */
+  //POST /api/v1/auth/login
   async login(req, res, next) {
     try {
       const { identifier, password } = req.body;
@@ -44,10 +35,7 @@ const authController = {
     }
   },
 
-  /**
-   * POST /api/v1/auth/refresh
-   * Refresh access token using a valid refresh token.
-   */
+  //POST /api/v1/auth/refresh
   async refresh(req, res, next) {
     try {
       const { refresh_token } = req.body;
@@ -59,10 +47,7 @@ const authController = {
     }
   },
 
-  /**
-   * POST /api/v1/auth/logout
-   * Revoke refresh token and end session.
-   */
+  //POST /api/v1/auth/logout
   async logout(req, res, next) {
     try {
       const { refresh_token } = req.body;
@@ -74,10 +59,7 @@ const authController = {
     }
   },
 
-  /**
-   * GET /api/v1/auth/me
-   * Get current authenticated user profile.
-   */
+  //GET /api/v1/auth/me
   async me(req, res, next) {
     try {
       const userId = req.user.id;

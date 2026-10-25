@@ -61,7 +61,6 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Unique indexes on email and username
 userSchema.index({ email: 1 }, { unique: true });
 userSchema.index({ username: 1 }, { unique: true });
 

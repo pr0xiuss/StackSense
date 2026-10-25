@@ -2,15 +2,7 @@ const projectAccessService = require('../services/projectAccessService');
 const projectAuthorization = require('../services/projectAuthorization');
 const userDirectoryService = require('../services/userDirectoryService');
 
-/**
- * Controller handling ProjectAccess HTTP requests.
- */
 const projectAccessController = {
-  /**
-   * Grant a user access to a project.
-   * Requires: Manage access (owner or admin).
-   * Status: 201 Created.
-   */
   async grantAccess(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -31,11 +23,6 @@ const projectAccessController = {
     }
   },
 
-  /**
-   * List all access records for a project.
-   * Requires: Read access (owner, admin, developer, or viewer).
-   * Status: 200 OK.
-   */
   async listProjectAccess(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -57,11 +44,6 @@ const projectAccessController = {
     }
   },
 
-  /**
-   * Change a project member's role.
-   * Requires: Manage access (owner or admin) and a target other than self.
-   * Status: 200 OK.
-   */
   async changeRole(req, res, next) {
     try {
       const currentUserId = req.user.id;
@@ -82,11 +64,6 @@ const projectAccessController = {
     }
   },
 
-  /**
-   * Revoke a user's access to a project.
-   * Requires: Manage access (owner or admin) and a target other than self.
-   * Status: 204 No Content.
-   */
   async revokeAccess(req, res, next) {
     try {
       const currentUserId = req.user.id;

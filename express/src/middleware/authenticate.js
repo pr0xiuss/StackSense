@@ -3,14 +3,8 @@ const tokenService = require('../services/auth/tokenService');
 const authService = require('../services/auth/authService');
 const { InvalidTokenError, TokenExpiredError, UserInactiveError } = require('../errors/authErrors');
 
-/**
- * Authentication middleware.
- * Extracts and validates Bearer JWT access tokens.
- * In production, only Bearer tokens are accepted. x-user-id header is strictly rejected.
- * In test environments, x-user-id header fallback is allowed for isolated unit/integration suites.
- */
+
 async function authenticate(req, res, next) {
-  // 1. Check for Authorization: Bearer <token>
   const authHeader = req.header('authorization');
   if (authHeader) {
     const parts = authHeader.split(' ');
@@ -23,7 +17,6 @@ async function authenticate(req, res, next) {
           throw new InvalidTokenError('User associated with token does not exist.');
         }
 
-        // Identity fields come from the current authoritative user record, not JWT claims.
         req.user = {
           id: currentUser.id,
           email: currentUser.email,
@@ -57,7 +50,7 @@ async function authenticate(req, res, next) {
             },
           });
         }
-        // Unexpected error
+
         return res.status(401).json({
           error: {
             code: 'invalid_token',
@@ -77,7 +70,6 @@ async function authenticate(req, res, next) {
     }
   }
 
-  // 2. If req.user is already set by upstream/mock (e.g., from other middleware)
   if (req.user) {
     const rawUserId = req.user.id || req.user._id;
     if (rawUserId) {
@@ -91,16 +83,13 @@ async function authenticate(req, res, next) {
           },
         });
       }
-      // Ensure req.user.id is canonically set to string UUID
       req.user.id = userId;
       return next();
     }
   }
 
-  // 3. Check for x-user-id header seam (TEST ENVIRONMENTS ONLY)
   const headerUserId = req.header('x-user-id');
   if (headerUserId) {
-    // Security Guard: In production and non-test environments, strictly reject x-user-id header
     if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV !== 'test') {
       return res.status(401).json({
         error: {
@@ -111,7 +100,6 @@ async function authenticate(req, res, next) {
       });
     }
 
-    // Test environment: allow x-user-id header
     if (!UUID_V4_REGEX.test(headerUserId)) {
       return res.status(422).json({
         error: {
@@ -126,7 +114,6 @@ async function authenticate(req, res, next) {
     return next();
   }
 
-  // 4. No authenticated credentials provided
   return res.status(401).json({
     error: {
       code: 'authentication_required',

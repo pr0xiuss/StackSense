@@ -1,15 +1,3 @@
-/**
- * Custom error classes for ProjectAccess domain and application operations.
- * Adheres to the StackSense error contract:
- * {
- *   "error": {
- *     "code": "...",
- *     "message": "...",
- *     "details": {}
- *   }
- * }
- */
-
 class ProjectAccessError extends Error {
   constructor(message, code, status = 400, details = {}) {
     super(message);

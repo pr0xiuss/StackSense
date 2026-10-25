@@ -1,8 +1,6 @@
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/**
- * Validate that req.params.projectId is a valid UUID v4.
- */
+
 function validateProjectId(req, res, next) {
   const { projectId } = req.params;
 
@@ -19,9 +17,7 @@ function validateProjectId(req, res, next) {
   next();
 }
 
-/**
- * Validate payload for project creation.
- */
+
 function validateCreateProject(req, res, next) {
   const body = req.body;
 
@@ -83,9 +79,7 @@ function validateCreateProject(req, res, next) {
   next();
 }
 
-/**
- * Validate payload for project updates.
- */
+
 function validateUpdateProject(req, res, next) {
   const body = req.body;
 
@@ -158,9 +152,7 @@ function validateUpdateProject(req, res, next) {
   next();
 }
 
-/**
- * Validate query parameters for pagination.
- */
+
 function validatePagination(req, res, next) {
   const limitRaw = req.query.limit;
   const offsetRaw = req.query.offset;

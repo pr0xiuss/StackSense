@@ -1,12 +1,4 @@
-/* ==========================================================================
-   StackSense Authentication Page Styles
-   Focus: Dark, Technical, Sophisticated, Restrained Gradients,
-   Isometric Illustration, Smooth Zero-Overflow Horizontal Slide Transition.
-   ========================================================================== */
-
-/* --------------------------------------------------------------------------
-   1. Page Shell & Ambient Lighting
-   -------------------------------------------------------------------------- */
+/*Page Shell & Ambient Lighting*/
 .auth-page {
   min-height: 100vh;
   display: flex;
@@ -48,9 +40,7 @@
   filter: blur(70px);
 }
 
-/* --------------------------------------------------------------------------
-   2. Header
-   -------------------------------------------------------------------------- */
+/*Header*/
 .auth-header {
   position: relative;
   z-index: 10;
@@ -94,9 +84,7 @@
   border-color: var(--border-subtle);
 }
 
-/* --------------------------------------------------------------------------
-   3. Main Content & Grid Layout
-   -------------------------------------------------------------------------- */
+/*Main Content & Grid Layout*/
 .auth-main-wrapper {
   position: relative;
   z-index: 1;
@@ -117,9 +105,7 @@
   gap: 4.5rem;
 }
 
-/* --------------------------------------------------------------------------
-   4. Left Branding Column
-   -------------------------------------------------------------------------- */
+/*Left Branding Column*/
 .auth-branding {
   display: flex;
   flex-direction: column;
@@ -188,9 +174,7 @@
   }
 }
 
-/* --------------------------------------------------------------------------
-   5. Technical Architecture Illustration
-   -------------------------------------------------------------------------- */
+/*Technical Architecture Illustration*/
 .auth-illustration-wrapper {
   position: relative;
   width: 100%;
@@ -345,9 +329,7 @@
   color: var(--accent-secondary);
 }
 
-/* --------------------------------------------------------------------------
-   6. Auth Card & Sliding Viewport
-   -------------------------------------------------------------------------- */
+/*Auth Card & Sliding Viewport*/
 .auth-card {
   background: #0E1524;
   border: 1px solid var(--border-medium);
@@ -385,9 +367,7 @@
   padding: 2.5rem 2.5rem 2.25rem 2.5rem;
 }
 
-/* --------------------------------------------------------------------------
-   7. Form Header & Elements
-   -------------------------------------------------------------------------- */
+/*Form Header & Elements*/
 .auth-card-header {
   margin-bottom: 1.75rem;
 }
@@ -532,9 +512,7 @@
   line-height: 1.35;
 }
 
-/* --------------------------------------------------------------------------
-   8. Checkbox & Legal
-   -------------------------------------------------------------------------- */
+/*Checkbox & Legal*/
 .terms-checkbox-group {
   display: flex;
   flex-direction: column;
@@ -613,9 +591,7 @@
   padding-left: 1.85rem;
 }
 
-/* --------------------------------------------------------------------------
-   9. Buttons & Divider
-   -------------------------------------------------------------------------- */
+/*Buttons & Divider*/
 .btn-auth-submit {
   display: inline-flex;
   align-items: center;
@@ -735,9 +711,7 @@
   text-decoration: underline;
 }
 
-/* --------------------------------------------------------------------------
-   10. Alerts & Feedback Messages
-   -------------------------------------------------------------------------- */
+/*Alerts & Feedback Messages*/
 .auth-alert {
   display: flex;
   align-items: center;
@@ -767,9 +741,7 @@
   color: #6EE7B7;
 }
 
-/* --------------------------------------------------------------------------
-   11. Authenticated User View
-   -------------------------------------------------------------------------- */
+/*Authenticated User View*/
 .auth-authenticated-card {
   background: #0E1524;
   border: 1px solid rgba(99, 102, 241, 0.3);
@@ -854,9 +826,7 @@
   background: var(--surface-card);
 }
 
-/* --------------------------------------------------------------------------
-   12. Responsive Breakpoints
-   -------------------------------------------------------------------------- */
+/*Responsive Breakpoints*/
 @media (max-width: 1024px) {
   .auth-grid {
     grid-template-columns: 1fr;
@@ -906,9 +876,7 @@
   }
 }
 
-/* --------------------------------------------------------------------------
-   13. Accessibility: Reduced Motion
-   -------------------------------------------------------------------------- */
+/*Accessibility: Reduced Motion*/
 @media (prefers-reduced-motion: reduce) {
   .auth-slider-track {
     transition: none !important;

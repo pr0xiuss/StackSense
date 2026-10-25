@@ -1,14 +1,3 @@
-/**
- * Authentication Application Service.
- *
- * Coordinates auth flows:
- * - register: Validates policy, checks duplicates, catches MongoDB duplicate-key errors (11000), saves user with hashed password.
- * - login: Selects +password_hash, executes dummy bcrypt compare on nonexistent user, returns tokens.
- * - refreshToken: Atomic conditional update with findOneAndUpdate for single-use consumption.
- * - logout: Revokes token session cleanly.
- * - getCurrentUser: Resolves active user profile.
- */
-
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const User = require('../../models/User');
@@ -36,27 +25,15 @@ class AuthService {
     this.RefreshToken = options.RefreshToken || RefreshToken;
   }
 
-  /**
-   * Register a new user.
-   *
-   * @param {object} params
-   * @param {string} params.email Email address (will be normalized to lowercase)
-   * @param {string} params.username Username (will be normalized to lowercase)
-   * @param {string} params.password Plaintext password
-   * @returns {Promise<object>} Created user document (without password_hash)
-   */
+
   async register({ email, username, password }) {
-    // Validate password policy
     this.passwordService.validate(password);
 
-    // Normalize inputs
     const normalizedEmail = String(email || '').trim().toLowerCase();
     const normalizedUsername = String(username || '').trim().toLowerCase();
 
-    // Hash password
     const passwordHash = await this.passwordService.hash(password);
 
-    // Create user document
     const user = new this.User({
       email: normalizedEmail,
       username: normalizedUsername,
@@ -66,7 +43,6 @@ class AuthService {
     try {
       await user.save();
     } catch (err) {
-      // Handle MongoDB duplicate key errors (code 11000)
       if (err.code === 11000) {
         const keyPattern = err.keyPattern || {};
         const keyValue = err.keyValue || {};
@@ -83,7 +59,6 @@ class AuthService {
             { field: 'username', value: keyValue.username }
           );
         }
-        // Fallback for other duplicate keys
         throw new UserAlreadyExistsError('A user with these credentials already exists.');
       }
       throw err;
@@ -92,21 +67,9 @@ class AuthService {
     return user.toJSON();
   }
 
-  /**
-   * Authenticate a user with email/username and password.
-   *
-   * Uses constant-time dummy verification on nonexistent users to prevent
-   * timing-based user enumeration.
-   *
-   * @param {object} params
-   * @param {string} params.identifier Email or username
-   * @param {string} params.password Plaintext password
-   * @returns {Promise<object>} Tokens and user info
-   */
   async login({ identifier, password }) {
     const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
 
-    // Find user by email or username, selecting password_hash explicitly
     const user = await this.User.findOne({
       $or: [
         { email: normalizedIdentifier },
@@ -115,28 +78,23 @@ class AuthService {
     }).select('+password_hash');
 
     if (!user) {
-      // Constant-time dummy verification to mitigate user enumeration
       await this.passwordService.dummyVerify(password);
       throw new InvalidCredentialsError('Invalid email or password.');
     }
 
-    // Verify password
     const isValid = await this.passwordService.verify(password, user.password_hash);
     if (!isValid) {
       throw new InvalidCredentialsError('Invalid email or password.');
     }
 
-    // Check if user is active
     if (!user.is_active) {
       throw new UserInactiveError('User account is inactive.');
     }
 
-    // Generate tokens
     const accessToken = this.tokenService.createAccessToken(user);
     const { rawToken: refreshToken, tokenHash: refreshTokenHash, expiresAt: refreshExpiresAt } =
       this.tokenService.createRefreshToken(user);
 
-    // Save refresh token
     const refreshTokenDoc = new this.RefreshToken({
       user_id: user.id,
       token_hash: refreshTokenHash,

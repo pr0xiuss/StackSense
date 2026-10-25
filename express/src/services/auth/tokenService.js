@@ -1,13 +1,3 @@
-/**
- * JWT and Refresh Token Infrastructure Service.
- *
- * Implements:
- * - Access token generation (HS256 JWT, claims: sub, email, iat, exp, jti, token_type: "access")
- * - Access token verification with sub UUID v4 validation and standard error mapping
- * - Refresh token generation (crypto.randomBytes(32).toString('base64url'))
- * - HMAC-SHA256 refresh token hashing with isolated key
- */
-
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const authConfig = require('../../config/authConfig');
@@ -32,12 +22,6 @@ class TokenService {
     return this.refreshTokenExpireDays * 86400;
   }
 
-  /**
-   * Create a signed JWT access token for a user.
-   *
-   * @param {object} user User object containing id and email
-   * @returns {string} Signed JWT access token
-   */
   createAccessToken(user) {
     const userId = user.id || user._id;
     if (!userId) {
@@ -62,12 +46,6 @@ class TokenService {
     });
   }
 
-  /**
-   * Decode and validate a JWT access token.
-   *
-   * @param {string} token JWT token string
-   * @returns {object} Decoded and validated token payload
-   */
   verifyToken(token) {
     if (!token || typeof token !== 'string') {
       throw new InvalidTokenError('Authentication token is missing or invalid.');
@@ -85,7 +63,6 @@ class TokenService {
       throw new InvalidTokenError('Authentication token is invalid.');
     }
 
-    // Required claims check
     if (!payload.sub || !payload.email || !payload.iat || !payload.exp || !payload.jti) {
       throw new InvalidTokenError('Token is missing required claims.');
     }
@@ -117,12 +94,6 @@ class TokenService {
     };
   }
 
-  /**
-   * Generate a cryptographically secure random refresh token.
-   *
-   * @param {object} [user] Optional user reference
-   * @returns {{ rawToken: string, tokenHash: string, expiresAt: Date }}
-   */
   createRefreshToken(user = null) {
     const rawToken = crypto.randomBytes(32).toString('base64url');
     const tokenHash = this.hashRefreshToken(rawToken);
@@ -143,12 +114,6 @@ class TokenService {
     };
   }
 
-  /**
-   * Compute deterministic HMAC-SHA256 keyed hash of a raw refresh token.
-   *
-   * @param {string} rawToken Raw refresh token string
-   * @returns {string} Hex-encoded HMAC-SHA256 hash
-   */
   hashRefreshToken(rawToken) {
     if (!rawToken || typeof rawToken !== 'string') {
       throw new Error('rawToken is required to hash refresh token.');
@@ -159,12 +124,6 @@ class TokenService {
       .digest('hex');
   }
 
-  /**
-   * Compute unkeyed SHA-256 hash for backward compatibility.
-   *
-   * @param {string} rawToken Raw refresh token string
-   * @returns {string} Hex-encoded SHA-256 hash
-   */
   legacyHashRefreshToken(rawToken) {
     if (!rawToken || typeof rawToken !== 'string') {
       throw new Error('rawToken is required to compute legacy hash.');

@@ -1,8 +1,6 @@
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/**
- * Validate that req.params.repositoryId is a valid UUID v4.
- */
+
 function validateRepositoryId(req, res, next) {
   const { repositoryId } = req.params;
 
@@ -19,9 +17,7 @@ function validateRepositoryId(req, res, next) {
   next();
 }
 
-/**
- * Validate payload for registering a repository.
- */
+
 function validateRegisterRepository(req, res, next) {
   const body = req.body;
 
@@ -83,9 +79,7 @@ function validateRegisterRepository(req, res, next) {
   next();
 }
 
-/**
- * Validate payload for updating repository metadata.
- */
+
 function validateUpdateRepository(req, res, next) {
   const body = req.body;
 

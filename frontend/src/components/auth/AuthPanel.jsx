@@ -2,11 +2,6 @@ import React, { useRef, useEffect } from 'react';
 import LoginForm from './LoginForm.jsx';
 import SignupForm from './SignupForm.jsx';
 
-/**
- * Sliding Auth Panel Component
- * Wraps LoginForm and SignupForm in a zero-overflow viewport and executes
- * the horizontal slide transition between Login and Signup modes.
- */
 export default function AuthPanel({
   authMode = 'login',
   onSwitchMode,
@@ -19,14 +14,12 @@ export default function AuthPanel({
   const isLogin = authMode === 'login';
   const viewportRef = useRef(null);
 
-  // Focus the first input of the newly activated form after transition
   useEffect(() => {
     const timer = setTimeout(() => {
       const activeInput = isLogin
         ? document.getElementById('login-identifier')
         : document.getElementById('signup-username');
       if (activeInput && document.activeElement && document.activeElement.tagName !== 'INPUT') {
-        // Only autofocus if user is not already actively focused elsewhere
       }
     }, 400);
     return () => clearTimeout(timer);
