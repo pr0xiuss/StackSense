@@ -13,8 +13,13 @@ from sqlalchemy.pool import StaticPool
 from backend.api.app import app
 from backend.platform.analysis.application.dependencies import (
     get_analysis_orchestrator,
+    get_platform_repository_gateway,
     get_queue_publisher,
 )
+from backend.platform.analysis.application.input_factory import (
+    PlatformAnalysisInputFactory,
+)
+from backend.platform.analysis.application.registry import create_fake_handler_registry
 from backend.platform.analysis.infra.lifecycle_model import (
     AnalysisDiagnosticModel,
     AnalysisEventModel,
@@ -43,8 +48,18 @@ from backend.platform.repositories.infra.model import RepositoryModel
 from backend.platform.repositories.infra.repository import (
     SqlAlchemyRepositoryRepository,
 )
+from tests.p3.analysis.platform_gateway_stub import SqlAlchemyTestPlatformGateway
 
 SERVICE_SECRET = get_settings().internal_api_secret_key.get_secret_value()
+
+
+def _delegated_headers(project_id: object) -> dict[str, str]:
+    return {
+        "X-Service-Token": SERVICE_SECRET,
+        "X-Actor-Id": str(uuid4()),
+        "X-Actor-Role": "ADMIN",
+        "X-Project-Id": str(project_id),
+    }
 
 
 @pytest.fixture
@@ -74,6 +89,7 @@ def db_session() -> Generator[Session]:
         sess.commit()
     finally:
         sess.close()
+        engine.dispose()
 
 
 @pytest.fixture
@@ -93,6 +109,9 @@ def client(
 
     app.dependency_overrides[get_database_session] = override_session
     app.dependency_overrides[get_queue_publisher] = override_queue
+    app.dependency_overrides[get_platform_repository_gateway] = (
+        lambda: SqlAlchemyTestPlatformGateway(db_session)
+    )
     try:
         with TestClient(app) as test_client:
             yield test_client
@@ -153,7 +172,7 @@ def test_m1_end_to_end_lifecycle_pipeline(
     # 1. API: Initiate Analysis
     create_res = client.post(
         "/api/v1/analyses",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),
@@ -179,6 +198,10 @@ def test_m1_end_to_end_lifecycle_pipeline(
     orchestrator = get_analysis_orchestrator(
         session=db_session,
         settings=get_settings(),
+        registry=create_fake_handler_registry(),
+        input_factory=PlatformAnalysisInputFactory(
+            SqlAlchemyTestPlatformGateway(db_session)
+        ),
     )
     orchestrator.execute(
         analysis_id=analysis_id,
@@ -190,7 +213,7 @@ def test_m1_end_to_end_lifecycle_pipeline(
     # 4. REST Verification: Check analysis has completed and all 9 stages passed
     get_res = client.get(
         f"/api/v1/analyses/{analysis_id}?project_id={project.id}",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
     )
     assert get_res.status_code == 200
     final_data = get_res.json()
@@ -202,7 +225,7 @@ def test_m1_end_to_end_lifecycle_pipeline(
     # 5. SSE Verification: Stream durable events from start to finish
     sse_res = client.get(
         f"/api/v1/analyses/{analysis_id}/events?project_id={project.id}",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
     )
     assert sse_res.status_code == 200
     stream_content = sse_res.text
@@ -217,7 +240,7 @@ def test_m1_end_to_end_lifecycle_pipeline(
     # without duplicate job
     replay_res = client.post(
         "/api/v1/analyses",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),

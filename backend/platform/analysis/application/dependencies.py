@@ -1,21 +1,26 @@
 """FastAPI dependency injection providers for Analysis lifecycle infrastructure."""
 
+import secrets
 from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, Header
 from sqlalchemy.orm import Session
 
 from backend.platform.analysis.application.input_factory import (
     AnalysisInputFactory,
+    PlatformAnalysisInputFactory,
 )
 from backend.platform.analysis.application.lifecycle_service import (
     AnalysisLifecycleService,
 )
 from backend.platform.analysis.application.orchestrator import (
     AnalysisOrchestrator,
+)
+from backend.platform.analysis.application.platform_gateway import (
+    HttpPlatformRepositoryGateway,
+    PlatformRepositoryGateway,
 )
 from backend.platform.analysis.application.recovery import (
     JobRecoveryService,
@@ -51,57 +56,12 @@ from backend.platform.analysis.repositories.job_repo import (
 )
 from backend.platform.config import Settings, get_settings
 from backend.platform.dependency_injection import get_database_session
-from backend.platform.identity.application.dependencies import (
-    get_token_service,
+from backend.platform.errors import (
+    AnalysisAccessDeniedError,
+    AnalysisInputError,
+    AuthenticationRequiredError,
+    InvalidTokenError,
 )
-from backend.platform.identity.application.token import TokenService
-from backend.platform.identity.domain.user import User
-from backend.platform.identity.infra.user_repo import SqlAlchemyUserRepository
-from backend.platform.ingestion.application.storage import (
-    StorageService,
-)
-from backend.platform.ingestion.infra.artifact_repository import (
-    SqlAlchemyArtifactRepository,
-)
-from backend.platform.ingestion.infra.revision_repository import (
-    SqlAlchemyRevisionRepository,
-)
-from backend.platform.ingestion.infra.storage.local_storage import (
-    LocalStorageService,
-)
-from backend.platform.ingestion.repositories.artifact_repo import ArtifactRepository
-from backend.platform.ingestion.repositories.revision_repo import RevisionRepository
-from backend.platform.projects.infra.repository import (
-    SqlAlchemyProjectRepository,
-)
-from backend.platform.projects.repositories.project_repo import ProjectRepository
-from backend.platform.repositories.infra.repository import (
-    SqlAlchemyRepositoryRepository,
-)
-from backend.platform.repositories.repositories.repository_repo import (
-    RepositoryRepository,
-)
-
-_http_bearer = HTTPBearer(auto_error=False)
-
-
-def get_current_user_optional(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_http_bearer),
-    session: Session = Depends(get_database_session),
-    token_service: TokenService = Depends(get_token_service),
-) -> User | None:
-    """Resolve current user if valid Bearer token is provided, else None."""
-    if credentials is None or not credentials.credentials:
-        return None
-    try:
-        payload = token_service.verify_token(credentials.credentials)
-        user_repo = SqlAlchemyUserRepository(session)
-        user = user_repo.get_by_id(payload.user_id)
-        if user and user.is_active:
-            return user
-    except Exception:
-        pass
-    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,31 +104,22 @@ def get_stage_handler_registry() -> StageHandlerRegistry:
     return get_worker_registry()
 
 
-def get_artifact_repository(
-    session: Session = Depends(get_database_session),
-) -> ArtifactRepository:
-    """Provide an ArtifactRepository instance."""
-    return SqlAlchemyArtifactRepository(session)
-
-
-def get_storage_service(
+def get_platform_repository_gateway(
     settings: Settings = Depends(get_settings),
-) -> StorageService:
-    """Provide a StorageService instance."""
-    return LocalStorageService(settings.storage_root)
+) -> PlatformRepositoryGateway:
+    """Provide the authorized Express platform source adapter."""
+    return HttpPlatformRepositoryGateway(
+        settings.platform_api_base_url,
+        settings.platform_api_secret_key.get_secret_value(),
+        settings.platform_api_timeout_seconds,
+    )
 
 
 def get_analysis_input_factory(
-    session: Session = Depends(get_database_session),
-    storage_service: StorageService = Depends(get_storage_service),
+    gateway: PlatformRepositoryGateway = Depends(get_platform_repository_gateway),
 ) -> AnalysisInputFactory:
-    """Provide an AnalysisInputFactory instance."""
-    return AnalysisInputFactory(
-        revision_repo=SqlAlchemyRevisionRepository(session),
-        artifact_repo=SqlAlchemyArtifactRepository(session),
-        storage_service=storage_service,
-        repository_repo=SqlAlchemyRepositoryRepository(session),
-    )
+    """Build immutable input through Express APIs, never MongoDB access."""
+    return PlatformAnalysisInputFactory(gateway)
 
 
 def get_analysis_orchestrator(
@@ -182,12 +133,8 @@ def get_analysis_orchestrator(
     if isinstance(input_factory, AnalysisInputFactory):
         resolved_factory = input_factory
     else:
-        storage_service = LocalStorageService(settings.storage_root)
-        resolved_factory = AnalysisInputFactory(
-            revision_repo=SqlAlchemyRevisionRepository(session),
-            artifact_repo=SqlAlchemyArtifactRepository(session),
-            storage_service=storage_service,
-            repository_repo=SqlAlchemyRepositoryRepository(session),
+        resolved_factory = PlatformAnalysisInputFactory(
+            get_platform_repository_gateway(settings)
         )
 
     resolved_registry: StageHandlerRegistry
@@ -207,6 +154,9 @@ def get_analysis_orchestrator(
         input_factory=resolved_factory,
         registry=resolved_registry,
         max_duration_seconds=settings.analysis_max_duration_seconds,
+        stage_timeout_seconds=settings.analysis_stage_timeout_seconds,
+        max_diagnostics=settings.analysis_max_diagnostics_per_analysis,
+        checkpoint=session.commit,
     )
 
 
@@ -221,68 +171,51 @@ def get_job_recovery_service(
         event_repo=SqlAlchemyEventRepository(session),
         diagnostic_repo=SqlAlchemyDiagnosticRepository(session),
         queue_publisher=queue_publisher,
+        checkpoint=session.commit,
     )
 
 
 def get_delegated_context(
     settings: Settings = Depends(get_settings),
-    current_user: User | None = Depends(get_current_user_optional),
     x_service_token: Annotated[str | None, Header(alias="X-Service-Token")] = None,
     x_actor_id: Annotated[str | None, Header(alias="X-Actor-Id")] = None,
     x_actor_role: Annotated[str | None, Header(alias="X-Actor-Role")] = None,
     x_project_id: Annotated[str | None, Header(alias="X-Project-Id")] = None,
     x_correlation_id: Annotated[str | None, Header(alias="X-Correlation-Id")] = None,
 ) -> DelegatedRequestContext:
-    """Extract and validate delegated request context from headers or auth."""
-    # 1. Check Service Authentication header
-    is_service = False
+    """Validate the trusted Express-to-Python delegated request boundary."""
+    if not x_service_token:
+        raise AuthenticationRequiredError(
+            "A service credential is required for the internal analysis API."
+        )
     expected_secret = settings.internal_api_secret_key.get_secret_value()
-    if x_service_token and x_service_token == expected_secret:
-        is_service = True
-
-    actor_uuid: UUID | None = None
-    if x_actor_id:
-        try:
-            actor_uuid = UUID(x_actor_id)
-        except ValueError:
-            pass
-
-    project_uuid: UUID | None = None
-    if x_project_id:
-        try:
-            project_uuid = UUID(x_project_id)
-        except ValueError:
-            pass
-
-    # 2. Determine Role
-    role = x_actor_role.upper() if x_actor_role else None
-    if is_service:
-        return DelegatedRequestContext(
-            actor_id=actor_uuid,
-            role=role or "ADMIN",
-            is_service=True,
-            project_id=project_uuid,
-            correlation_id=x_correlation_id,
+    if not secrets.compare_digest(x_service_token, expected_secret):
+        raise InvalidTokenError("Internal service credential is invalid.")
+    if not x_actor_id or not x_actor_role or not x_project_id:
+        raise AnalysisInputError(
+            "Delegated actor, role, and project headers are required.",
+            details={
+                "required_headers": ["X-Actor-Id", "X-Actor-Role", "X-Project-Id"]
+            },
         )
-
-    # 3. Direct User Token fallback
-    if current_user:
-        return DelegatedRequestContext(
-            actor_id=current_user.id,
-            role=role or "DEVELOPER",
-            is_service=False,
-            project_id=project_uuid,
-            correlation_id=x_correlation_id,
+    try:
+        actor_uuid = UUID(x_actor_id)
+        project_uuid = UUID(x_project_id)
+    except ValueError as exc:
+        raise AnalysisInputError(
+            "Delegated actor and project headers must be valid UUIDs."
+        ) from exc
+    role = x_actor_role.upper()
+    if role not in {"OWNER", "ADMIN", "DEVELOPER", "VIEWER"}:
+        raise AnalysisAccessDeniedError(
+            "Delegated project role is not recognized.", details={"role": x_actor_role}
         )
-
-    # 4. Denied if neither service token nor user token
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=(
-            "Authentication required: valid service token or user credential "
-            "must be provided."
-        ),
-        headers={"WWW-Authenticate": "Bearer"},
+    return DelegatedRequestContext(
+        actor_id=actor_uuid,
+        role=role,
+        is_service=True,
+        project_id=project_uuid,
+        correlation_id=x_correlation_id,
     )
 
 
@@ -291,14 +224,25 @@ def require_operator_role(
 ) -> DelegatedRequestContext:
     """Enforce that caller has operator role (OWNER, ADMIN, DEVELOPER) for mutations."""
     if context.role not in ("OWNER", "ADMIN", "DEVELOPER"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"Role '{context.role}' does not have permission to perform "
-                "this operation."
-            ),
+        raise AnalysisAccessDeniedError(
+            f"Role '{context.role}' does not have permission to perform "
+            "this operation.",
+            details={"role": context.role},
         )
     return context
+
+
+def require_delegated_project(
+    context: DelegatedRequestContext,
+    requested_project_id: UUID,
+) -> UUID:
+    """Require a request project to match the trusted delegated project scope."""
+    if context.project_id != requested_project_id:
+        raise AnalysisAccessDeniedError(
+            "Requested project does not match delegated project scope.",
+            details={"project_id": str(requested_project_id)},
+        )
+    return requested_project_id
 
 
 def get_analysis_repository(
@@ -338,6 +282,9 @@ def get_diagnostic_repository(
 
 def get_analysis_lifecycle_service(
     session: Session = Depends(get_database_session),
+    source_gateway: PlatformRepositoryGateway = Depends(
+        get_platform_repository_gateway
+    ),
 ) -> AnalysisLifecycleService:
     """Provide AnalysisLifecycleService wired with all persistence repositories."""
     analysis_repo = SqlAlchemyAnalysisRepository(session)
@@ -345,17 +292,14 @@ def get_analysis_lifecycle_service(
     stage_repo = SqlAlchemyStageRepository(session)
     event_repo = SqlAlchemyEventRepository(session)
     diagnostic_repo = SqlAlchemyDiagnosticRepository(session)
-    revision_repo: RevisionRepository = SqlAlchemyRevisionRepository(session)
-    project_repo: ProjectRepository = SqlAlchemyProjectRepository(session)
-    repository_repo: RepositoryRepository = SqlAlchemyRepositoryRepository(session)
-
     return AnalysisLifecycleService(
         analysis_repo=analysis_repo,
         job_repo=job_repo,
         stage_repo=stage_repo,
         event_repo=event_repo,
         diagnostic_repo=diagnostic_repo,
-        revision_repo=revision_repo,
-        project_repo=project_repo,
-        repository_repo=repository_repo,
+        revision_repo=None,
+        project_repo=None,
+        repository_repo=None,
+        source_gateway=source_gateway,
     )

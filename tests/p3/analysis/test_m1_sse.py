@@ -62,6 +62,15 @@ from backend.platform.repositories.infra.repository import (
 SERVICE_SECRET = get_settings().internal_api_secret_key.get_secret_value()
 
 
+def _delegated_headers(project_id: object) -> dict[str, str]:
+    return {
+        "X-Service-Token": SERVICE_SECRET,
+        "X-Actor-Id": str(uuid4()),
+        "X-Actor-Role": "ADMIN",
+        "X-Project-Id": str(project_id),
+    }
+
+
 @pytest.fixture
 def db_session() -> Generator[Session]:
     _ = (
@@ -89,6 +98,7 @@ def db_session() -> Generator[Session]:
         sess.commit()
     finally:
         sess.close()
+        engine.dispose()
 
 
 @pytest.fixture
@@ -195,7 +205,7 @@ def test_sse_streaming_events_delivered_in_order(
     # Stream events
     res = client.get(
         f"/api/v1/analyses/{created.id}/events?project_id={project.id}",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
     )
     assert res.status_code == 200
     assert "text/event-stream" in res.headers["content-type"]
@@ -244,7 +254,7 @@ def test_sse_replay_from_after_sequence(
     # Replay after sequence 2 -> should only get sequence 3
     res = client.get(
         f"/api/v1/analyses/{created.id}/events?project_id={project.id}&after_sequence=2",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
     )
     assert res.status_code == 200
     body = res.text
@@ -289,10 +299,7 @@ def test_sse_replay_with_last_event_id_header(
     # Header Last-Event-ID: 1 -> receives sequences > 1 (2 and 3)
     res = client.get(
         f"/api/v1/analyses/{created.id}/events?project_id={project.id}",
-        headers={
-            "X-Service-Token": SERVICE_SECRET,
-            "Last-Event-ID": "1",
-        },
+        headers={**_delegated_headers(project.id), "Last-Event-ID": "1"},
     )
     assert res.status_code == 200
     body = res.text
@@ -309,6 +316,6 @@ def test_sse_nonexistent_analysis_returns_404(
 
     res = client.get(
         f"/api/v1/analyses/{non_existent}/events?project_id={project.id}",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
     )
     assert res.status_code == 404

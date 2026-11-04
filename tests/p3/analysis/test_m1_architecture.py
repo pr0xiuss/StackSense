@@ -99,3 +99,22 @@ def test_no_organization_layer_in_analysis() -> None:
         assert (
             "organization" not in content
         ), f"Forbidden 'organization' found in {file_path}"
+
+
+def test_production_composition_never_reads_express_owned_postgres_tables() -> None:
+    """Production API/worker composition must use the authorized Express API."""
+    for path in (
+        Path("backend/platform/analysis/application/dependencies.py"),
+        Path("backend/worker/tasks.py"),
+    ):
+        content = path.read_text()
+        for forbidden in (
+            "SqlAlchemyRevisionRepository",
+            "SqlAlchemyArtifactRepository",
+            "LocalStorageService",
+            "SqlAlchemyProjectRepository",
+            "SqlAlchemyRepositoryRepository",
+        ):
+            assert (
+                forbidden not in content
+            ), f"Cross-database adapter in {path}: {forbidden}"

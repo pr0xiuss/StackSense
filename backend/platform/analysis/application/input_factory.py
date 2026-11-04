@@ -1,8 +1,12 @@
 """Factory and adapters constructing immutable AnalysisInput from Phase 2 contracts."""
 
+from io import BytesIO
 from typing import BinaryIO
 from uuid import UUID
 
+from backend.platform.analysis.application.platform_gateway import (
+    PlatformRepositoryGateway,
+)
 from backend.platform.analysis.domain.analysis import AnalysisConfiguration
 from backend.platform.analysis.domain.constants import (
     DEFAULT_ARTIFACT_PAGE_SIZE,
@@ -277,6 +281,140 @@ class AnalysisInputFactory:
             snapshot_id=revision.id,
             revision_identifier=revision.revision_identifier,
             source_hash=revision.source_hash,
+            total_files=catalog.total_files,
+            total_bytes=catalog.total_bytes,
+            effective_configuration=configuration or AnalysisConfiguration(),
+            artifact_catalog=catalog,
+            content_reader=reader,
+        )
+
+
+class PlatformArtifactContentReader(ArtifactContentReader):
+    """Lazy bounded reader for Express-owned artifact content."""
+
+    def __init__(
+        self,
+        gateway: PlatformRepositoryGateway,
+        project_id: UUID,
+        repository_id: UUID,
+        revision_id: UUID,
+        artifact_ids: frozenset[UUID],
+    ) -> None:
+        self._gateway = gateway
+        self._project_id = project_id
+        self._repository_id = repository_id
+        self._revision_id = revision_id
+        self._artifact_ids = artifact_ids
+
+    def _read(self, artifact: AnalysisArtifact, limit: int) -> bytes:
+        if artifact.id not in self._artifact_ids:
+            raise ArtifactContentUnavailableError(
+                "Artifact is not part of the authorized immutable manifest.",
+                details={"artifact_id": str(artifact.id)},
+            )
+        return self._gateway.read_artifact(
+            self._project_id,
+            self._repository_id,
+            self._revision_id,
+            artifact.id,
+            max_bytes=limit,
+        )
+
+    def read_bytes(
+        self, artifact: AnalysisArtifact, max_bytes: int | None = None
+    ) -> bytes:
+        limit = min(max_bytes or MAX_READ_BYTES_LIMIT, MAX_READ_BYTES_LIMIT)
+        return self._read(artifact, limit)
+
+    def open_stream(self, artifact: AnalysisArtifact) -> BinaryIO:
+        return BytesIO(self._read(artifact, MAX_READ_BYTES_LIMIT))
+
+    def exists(self, artifact: AnalysisArtifact) -> bool:
+        if artifact.id not in self._artifact_ids:
+            return False
+        try:
+            self._read(artifact, 1)
+            return True
+        except ArtifactContentUnavailableError:
+            return False
+
+
+class PlatformAnalysisInputFactory(AnalysisInputFactory):
+    """Construct AnalysisInput exclusively through the authorized Express API."""
+
+    def __init__(self, gateway: PlatformRepositoryGateway) -> None:
+        self._gateway = gateway
+
+    def build_analysis_input(
+        self,
+        analysis_id: UUID,
+        project_id: UUID,
+        repository_id: UUID,
+        revision_id: UUID,
+        configuration: AnalysisConfiguration | None = None,
+    ) -> AnalysisInput:
+        manifest = self._gateway.get_manifest(project_id, repository_id, revision_id)
+        if (
+            manifest.id != revision_id
+            or manifest.project_id != project_id
+            or manifest.repository_id != repository_id
+        ):
+            raise AnalysisIntegrityError(
+                "Express manifest ownership chain does not match the analysis."
+            )
+
+        artifacts: list[AnalysisArtifact] = []
+        for item in manifest.artifacts:
+            if (
+                item.project_id != project_id
+                or item.repository_id != repository_id
+                or item.revision_id != revision_id
+            ):
+                raise AnalysisIntegrityError(
+                    "Express artifact ownership chain is invalid.",
+                    details={"artifact_id": str(item.id)},
+                )
+            if not is_safe_relative_path(item.path):
+                raise AnalysisIntegrityError(
+                    "Express artifact path is unsafe.",
+                    details={"artifact_id": str(item.id), "path": item.path},
+                )
+            artifacts.append(
+                AnalysisArtifact(
+                    id=item.id,
+                    revision_id=item.revision_id,
+                    path=item.path,
+                    size_bytes=item.size_bytes,
+                    content_hash=item.content_hash,
+                    category=item.category,
+                    support_level=item.support_level,
+                )
+            )
+
+        catalog = ArtifactCatalog(tuple(artifacts))
+        if manifest.total_files != catalog.total_files:
+            raise AnalysisIntegrityError(
+                "Express manifest file count does not match its artifact catalog."
+            )
+        if manifest.total_bytes != catalog.total_bytes:
+            raise AnalysisIntegrityError(
+                "Express manifest byte count does not match its artifact catalog."
+            )
+
+        reader = PlatformArtifactContentReader(
+            self._gateway,
+            project_id,
+            repository_id,
+            revision_id,
+            frozenset(artifact.id for artifact in artifacts),
+        )
+        return AnalysisInput(
+            analysis_id=analysis_id,
+            project_id=project_id,
+            repository_id=repository_id,
+            snapshot_id=manifest.id,
+            revision_identifier=manifest.revision_identifier,
+            source_hash=manifest.source_hash,
             total_files=catalog.total_files,
             total_bytes=catalog.total_bytes,
             effective_configuration=configuration or AnalysisConfiguration(),

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select, update
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.platform.analysis.domain.analysis import (
@@ -133,8 +134,17 @@ class SqlAlchemyAnalysisRepository(AnalysisRepository):
             started_at=analysis.started_at,
             completed_at=analysis.completed_at,
         )
-        self._session.add(model)
-        self._session.flush()
+        try:
+            with self._session.begin_nested():
+                self._session.add(model)
+                self._session.flush()
+        except IntegrityError:
+            if idempotency_key is None:
+                raise
+            existing = self.get_by_idempotency_key(analysis.project_id, idempotency_key)
+            if existing is None:
+                raise
+            return existing
         return analysis
 
     def get_by_id(self, analysis_id: UUID, project_id: UUID) -> Analysis | None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -39,12 +40,14 @@ class JobRecoveryService:
         event_repo: EventRepository,
         diagnostic_repo: DiagnosticRepository,
         queue_publisher: AnalysisQueuePublisher,
+        checkpoint: Callable[[], None] | None = None,
     ) -> None:
         self._analysis_repo = analysis_repo
         self._job_repo = job_repo
         self._event_repo = event_repo
         self._diagnostic_repo = diagnostic_repo
         self._queue_publisher = queue_publisher
+        self._checkpoint = checkpoint or (lambda: None)
 
     def recover_undispatched_job(
         self,
@@ -81,7 +84,10 @@ class JobRecoveryService:
         )
         self._queue_publisher.publish_job(payload)
 
-        # Transition to QUEUED if still CREATED
+        queued_job = active_job.transition_to(JobStatus.QUEUED, updated_at=now)
+        self._job_repo.update(queued_job, expected_version=active_job.version)
+
+        emitter = LifecycleEventEmitter(self._event_repo, analysis.id)
         if analysis.status == AnalysisStatus.CREATED:
             updated_analysis = analysis.transition_to(
                 AnalysisStatus.QUEUED,
@@ -90,8 +96,7 @@ class JobRecoveryService:
             self._analysis_repo.update(
                 updated_analysis, expected_version=analysis.version
             )
-            emitter = LifecycleEventEmitter(self._event_repo, analysis.id)
-            emitter.emit_queued(active_job.id)
+        emitter.emit_queued(active_job.id)
 
         return True
 
@@ -131,6 +136,7 @@ class JobRecoveryService:
                 increment_attempt=True,
             )
             self._job_repo.update(retrying_job, expected_version=job.version)
+            self._checkpoint()
 
             payload = AnalysisJobPayload(
                 analysis_id=job.analysis_id,

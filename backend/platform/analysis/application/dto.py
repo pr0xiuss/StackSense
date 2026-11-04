@@ -5,26 +5,55 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-@dataclass(frozen=True, slots=True)
-class CreateAnalysisRequest:
+from backend.platform.analysis.domain.constants import (
+    DEFAULT_MAX_ANALYSIS_DURATION_SECONDS,
+    MAX_READ_BYTES_LIMIT,
+)
+
+
+class CreateAnalysisRequest(BaseModel):
     """Request DTO to initiate a new analysis run."""
 
     project_id: UUID
     repository_id: UUID
     revision_id: UUID
-    include_paths: tuple[str, ...] = ()
-    exclude_paths: tuple[str, ...] = ()
-    max_file_size_bytes: int = 5 * 1024 * 1024
-    timeout_seconds: int = 1800
-    idempotency_key: str | None = None
+    include_paths: tuple[str, ...] = Field(default=(), max_length=1000)
+    exclude_paths: tuple[str, ...] = Field(default=(), max_length=1000)
+    max_file_size_bytes: int = Field(
+        default=5 * 1024 * 1024, ge=1, le=MAX_READ_BYTES_LIMIT
+    )
+    timeout_seconds: int = Field(
+        default=DEFAULT_MAX_ANALYSIS_DURATION_SECONDS,
+        ge=1,
+        le=DEFAULT_MAX_ANALYSIS_DURATION_SECONDS,
+    )
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator("include_paths", "exclude_paths")
+    @classmethod
+    def _validate_paths(cls, paths: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not path.strip() or len(path) > 4096 for path in paths):
+            raise ValueError("paths must be non-empty and at most 4096 characters")
+        return paths
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def _validate_idempotency_key(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("idempotency_key must not be blank")
+        return value
 
 
-@dataclass(frozen=True, slots=True)
-class CancelAnalysisRequest:
+class CancelAnalysisRequest(BaseModel):
     """Request DTO to cancel an active analysis run."""
 
-    reason: str | None = None
+    reason: str | None = Field(default=None, max_length=1000)
+
+    model_config = ConfigDict(frozen=True)
 
 
 @dataclass(frozen=True, slots=True)

@@ -86,6 +86,7 @@ def session() -> Generator[Session]:
         sess.commit()
     finally:
         sess.close()
+        engine.dispose()
 
 
 def _setup_fixtures(session: Session) -> tuple[Project, Repository, RevisionModel]:
