@@ -588,6 +588,38 @@ class AnalysisInputError(AnalysisError):
         )
 
 
+class AnalysisAccessDeniedError(AnalysisError):
+    """Raised when delegated analysis access does not match request scope."""
+
+    def __init__(
+        self,
+        message: str = "Delegated analysis access is not permitted.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_access_denied",
+            message=message,
+            category=ErrorCategory.AUTHORIZATION,
+            details=details,
+        )
+
+
+class AnalysisQueueUnavailableError(AnalysisError):
+    """Raised when a durable analysis cannot be dispatched to the worker queue."""
+
+    def __init__(
+        self,
+        message: str = "Analysis was saved but could not be dispatched.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_queue_unavailable",
+            message=message,
+            category=ErrorCategory.INTERNAL,
+            details=details,
+        )
+
+
 class AnalysisIntegrityError(AnalysisError):
     """Raised when ownership chain or snapshot verification fails."""
 

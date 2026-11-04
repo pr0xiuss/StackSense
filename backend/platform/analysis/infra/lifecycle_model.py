@@ -30,19 +30,16 @@ class AnalysisModel(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     project_id: Mapped[UUID] = mapped_column(
         Uuid,
-        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     repository_id: Mapped[UUID] = mapped_column(
         Uuid,
-        ForeignKey("repositories.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     snapshot_id: Mapped[UUID] = mapped_column(
         Uuid,
-        ForeignKey("repository_revisions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -131,7 +128,6 @@ class AnalysisJobModel(Base):
     )
     project_id: Mapped[UUID] = mapped_column(
         Uuid,
-        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -386,7 +382,6 @@ class AnalysisDiagnosticModel(Base):
     )
     artifact_id: Mapped[UUID | None] = mapped_column(
         Uuid,
-        ForeignKey("repository_artifacts.id", ondelete="SET NULL"),
         nullable=True,
     )
     artifact_path: Mapped[str | None] = mapped_column(

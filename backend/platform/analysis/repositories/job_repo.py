@@ -1,6 +1,7 @@
 """Job and Stage repository persistence contracts."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from uuid import UUID
 
 from backend.platform.analysis.domain.job import AnalysisJob, AnalysisStage
@@ -27,6 +28,16 @@ class JobRepository(ABC):
     @abstractmethod
     def update(self, job: AnalysisJob, expected_version: int) -> AnalysisJob:
         """Update job with optimistic concurrency check."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_pending_jobs(self, created_cutoff: datetime) -> list[AnalysisJob]:
+        """Find pending jobs old enough to require dispatch recovery."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def find_stale_jobs(self, heartbeat_cutoff: datetime) -> list[AnalysisJob]:
+        """Find running jobs whose worker heartbeat is stale."""
         raise NotImplementedError
 
 

@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.api.app import app
 from backend.platform.analysis.application.dependencies import (
+    get_platform_repository_gateway,
     get_queue_publisher,
 )
 from backend.platform.analysis.infra.lifecycle_model import (
@@ -42,6 +43,7 @@ from backend.platform.repositories.infra.model import RepositoryModel
 from backend.platform.repositories.infra.repository import (
     SqlAlchemyRepositoryRepository,
 )
+from tests.p3.analysis.platform_gateway_stub import SqlAlchemyTestPlatformGateway
 
 SERVICE_SECRET = get_settings().internal_api_secret_key.get_secret_value()
 
@@ -73,6 +75,7 @@ def db_session() -> Generator[Session]:
         sess.commit()
     finally:
         sess.close()
+        engine.dispose()
 
 
 @pytest.fixture
@@ -92,6 +95,9 @@ def client(
 
     app.dependency_overrides[get_database_session] = override_session
     app.dependency_overrides[get_queue_publisher] = override_queue
+    app.dependency_overrides[get_platform_repository_gateway] = (
+        lambda: SqlAlchemyTestPlatformGateway(db_session)
+    )
     try:
         with TestClient(app) as test_client:
             yield test_client
@@ -140,6 +146,15 @@ def _setup_fixtures(session: Session) -> tuple[Project, Repository, RevisionMode
     return project, repository, rev_model
 
 
+def _delegated_headers(project_id: object, role: str = "ADMIN") -> dict[str, str]:
+    return {
+        "X-Service-Token": SERVICE_SECRET,
+        "X-Actor-Id": str(uuid4()),
+        "X-Actor-Role": role,
+        "X-Project-Id": str(project_id),
+    }
+
+
 def test_api_create_analysis_success_returns_202(
     client: TestClient,
     db_session: Session,
@@ -149,7 +164,7 @@ def test_api_create_analysis_success_returns_202(
 
     res = client.post(
         "/api/v1/analyses",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),
@@ -180,10 +195,7 @@ def test_api_create_analysis_with_operator_role_allowed(
 
     res = client.post(
         "/api/v1/analyses",
-        headers={
-            "X-Service-Token": SERVICE_SECRET,
-            "X-Actor-Role": "DEVELOPER",
-        },
+        headers=_delegated_headers(project.id, "DEVELOPER"),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),
@@ -201,10 +213,7 @@ def test_api_create_analysis_with_viewer_role_forbidden(
 
     res = client.post(
         "/api/v1/analyses",
-        headers={
-            "X-Service-Token": SERVICE_SECRET,
-            "X-Actor-Role": "VIEWER",
-        },
+        headers=_delegated_headers(project.id, "VIEWER"),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),
@@ -241,7 +250,7 @@ def test_api_list_analyses_returns_paginated(
     for _ in range(2):
         client.post(
             "/api/v1/analyses",
-            headers={"X-Service-Token": SERVICE_SECRET},
+            headers=_delegated_headers(project.id),
             json={
                 "project_id": str(project.id),
                 "repository_id": str(repo.id),
@@ -251,7 +260,7 @@ def test_api_list_analyses_returns_paginated(
 
     res = client.get(
         f"/api/v1/analyses?project_id={project.id}&limit=10&offset=0",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
     )
     assert res.status_code == 200
     data = res.json()
@@ -269,7 +278,7 @@ def test_api_get_analysis_by_id(
 
     create_res = client.post(
         "/api/v1/analyses",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),
@@ -280,7 +289,7 @@ def test_api_get_analysis_by_id(
 
     res = client.get(
         f"/api/v1/analyses/{analysis_id}?project_id={project.id}",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
     )
     assert res.status_code == 200
     data = res.json()
@@ -298,7 +307,7 @@ def test_api_get_analysis_not_found_returns_404(
 
     res = client.get(
         f"/api/v1/analyses/{non_existent}?project_id={project.id}",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
     )
     assert res.status_code == 404
 
@@ -311,7 +320,7 @@ def test_api_cancel_analysis_success(
 
     create_res = client.post(
         "/api/v1/analyses",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),
@@ -322,7 +331,7 @@ def test_api_cancel_analysis_success(
 
     cancel_res = client.post(
         f"/api/v1/analyses/{analysis_id}/cancel?project_id={project.id}",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={"reason": "User cancelled"},
     )
     assert cancel_res.status_code == 200
@@ -340,7 +349,7 @@ def test_api_cancel_analysis_viewer_forbidden(
 
     create_res = client.post(
         "/api/v1/analyses",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),
@@ -351,10 +360,7 @@ def test_api_cancel_analysis_viewer_forbidden(
 
     cancel_res = client.post(
         f"/api/v1/analyses/{analysis_id}/cancel?project_id={project.id}",
-        headers={
-            "X-Service-Token": SERVICE_SECRET,
-            "X-Actor-Role": "VIEWER",
-        },
+        headers=_delegated_headers(project.id, "VIEWER"),
         json={"reason": "User cancelled"},
     )
     assert cancel_res.status_code == 403
@@ -370,7 +376,7 @@ def test_api_create_analysis_idempotency_replay(
 
     res1 = client.post(
         "/api/v1/analyses",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),
@@ -386,7 +392,7 @@ def test_api_create_analysis_idempotency_replay(
     # without duplicate publish
     res2 = client.post(
         "/api/v1/analyses",
-        headers={"X-Service-Token": SERVICE_SECRET},
+        headers=_delegated_headers(project.id),
         json={
             "project_id": str(project.id),
             "repository_id": str(repo.id),

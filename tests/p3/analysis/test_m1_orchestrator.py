@@ -1,11 +1,12 @@
 """Tests for AnalysisOrchestrator pipeline execution, cancellation, and timeout."""
 
+import time
 from collections.abc import Generator
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.platform.analysis.application.dto import CreateAnalysisRequest
@@ -100,6 +101,7 @@ def session(tmp_path: object) -> Generator[Session]:
         sess.commit()
     finally:
         sess.close()
+        engine.dispose()
 
 
 def _setup_fixtures(session: Session) -> tuple[Project, Repository, RevisionModel]:
@@ -149,6 +151,7 @@ def _build_orchestrator(
     *,
     registry: StageHandlerRegistry | None = None,
     max_duration_seconds: int = 1800,
+    stage_timeout_seconds: float = 600,
 ) -> tuple[AnalysisOrchestrator, AnalysisLifecycleService]:
     analysis_repo = SqlAlchemyAnalysisRepository(session)
     job_repo = SqlAlchemyJobRepository(session)
@@ -188,6 +191,7 @@ def _build_orchestrator(
         input_factory=input_factory,
         registry=registry or create_fake_handler_registry(),
         max_duration_seconds=max_duration_seconds,
+        stage_timeout_seconds=stage_timeout_seconds,
     )
 
     return orchestrator, lifecycle_service
@@ -298,6 +302,76 @@ def test_orchestrator_mandatory_stage_failure_marks_analysis_failed(
     assert stage_dict[AnalysisStageName.INPUT_VALIDATION.value] == StageStatus.COMPLETED
     assert stage_dict[AnalysisStageName.SYNTAX_EXTRACTION.value] == StageStatus.FAILED
     assert stage_dict[AnalysisStageName.IR_CONSTRUCTION.value] == StageStatus.PENDING
+
+
+def test_optional_stage_failure_uses_partial_warning_transition(
+    session: Session, tmp_path: str
+) -> None:
+    project, repo, rev = _setup_fixtures(session)
+    registry = create_fake_handler_registry(
+        override_status={
+            AnalysisStageName.FRAMEWORK_DETECTION.value: StageStatus.FAILED,
+        }
+    )
+    orchestrator, lifecycle_service = _build_orchestrator(
+        session, tmp_path, registry=registry
+    )
+    created = lifecycle_service.create_analysis(
+        CreateAnalysisRequest(
+            project_id=project.id,
+            repository_id=repo.id,
+            revision_id=rev.id,
+        )
+    )
+    assert created.active_job is not None
+    stage_model = session.scalar(
+        select(AnalysisStageModel).where(
+            AnalysisStageModel.analysis_id == created.id,
+            AnalysisStageModel.stage_name
+            == AnalysisStageName.FRAMEWORK_DETECTION.value,
+        )
+    )
+    assert stage_model is not None
+    stage_model.is_mandatory = False
+    session.flush()
+
+    orchestrator.execute(
+        analysis_id=created.id,
+        job_id=created.active_job.id,
+        project_id=project.id,
+    )
+
+    analysis = SqlAlchemyAnalysisRepository(session).get_by_id(created.id, project.id)
+    assert analysis is not None
+    assert analysis.status == AnalysisStatus.COMPLETED_WITH_WARNINGS
+
+
+def test_input_construction_failure_marks_running_job_failed(
+    session: Session, tmp_path: str
+) -> None:
+    project, repo, rev = _setup_fixtures(session)
+    orchestrator, lifecycle_service = _build_orchestrator(session, tmp_path)
+    created = lifecycle_service.create_analysis(
+        CreateAnalysisRequest(
+            project_id=project.id,
+            repository_id=repo.id,
+            revision_id=rev.id,
+        )
+    )
+    assert created.active_job is not None
+    rev.total_files = 1
+    session.flush()
+
+    orchestrator.execute(
+        analysis_id=created.id,
+        job_id=created.active_job.id,
+        project_id=project.id,
+    )
+
+    analysis = SqlAlchemyAnalysisRepository(session).get_by_id(created.id, project.id)
+    job = SqlAlchemyJobRepository(session).get_by_id(created.active_job.id)
+    assert analysis is not None and analysis.status == AnalysisStatus.FAILED
+    assert job is not None and job.status == JobStatus.FAILED
 
 
 def test_orchestrator_missing_mandatory_handler_raises_configuration_error(
@@ -411,6 +485,45 @@ def test_orchestrator_timeout_triggers_failed(session: Session, tmp_path: str) -
 
     analysis_repo = SqlAlchemyAnalysisRepository(session)
     analysis = analysis_repo.get_by_id(created.id, project.id)
+    assert analysis is not None
+    assert analysis.status == AnalysisStatus.FAILED
+    assert analysis.error_code == "analysis_timeout"
+
+
+def test_stage_deadline_interrupts_blocking_handler(
+    session: Session, tmp_path: str
+) -> None:
+    project, repo, rev = _setup_fixtures(session)
+
+    def block(_ctx: ExecutionContext) -> None:
+        time.sleep(0.1)
+
+    registry = create_fake_handler_registry(
+        override_handlers={
+            AnalysisStageName.INPUT_VALIDATION.value: FakeStageHandler(
+                stage_name=AnalysisStageName.INPUT_VALIDATION.value,
+                custom_execute_hook=block,
+            )
+        }
+    )
+    orchestrator, lifecycle_service = _build_orchestrator(
+        session,
+        tmp_path,
+        registry=registry,
+        stage_timeout_seconds=0.01,
+    )
+    created = lifecycle_service.create_analysis(
+        CreateAnalysisRequest(
+            project_id=project.id,
+            repository_id=repo.id,
+            revision_id=rev.id,
+        )
+    )
+    assert created.active_job is not None
+
+    orchestrator.execute(created.id, created.active_job.id, project.id)
+
+    analysis = SqlAlchemyAnalysisRepository(session).get_by_id(created.id, project.id)
     assert analysis is not None
     assert analysis.status == AnalysisStatus.FAILED
     assert analysis.error_code == "analysis_timeout"

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Any
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,11 +26,11 @@ class Settings(BaseSettings):
     github_acquisition_user_agent: str = "StackSense-Ingestion/0.1.0"
 
     # Analysis execution & lifecycle configuration (Phase 3 Module 1)
-    analysis_max_duration_seconds: int = 1800
-    analysis_stage_timeout_seconds: int = 600
-    analysis_heartbeat_interval_seconds: int = 30
-    analysis_stale_job_threshold_seconds: int = 120
-    analysis_max_diagnostics_per_analysis: int = 1000
+    analysis_max_duration_seconds: int = Field(default=1800, ge=1)
+    analysis_stage_timeout_seconds: int = Field(default=600, ge=1)
+    analysis_heartbeat_interval_seconds: int = Field(default=30, ge=1)
+    analysis_stale_job_threshold_seconds: int = Field(default=120, ge=1)
+    analysis_max_diagnostics_per_analysis: int = Field(default=1000, ge=1)
     analysis_default_page_size: int = 20
     analysis_max_page_size: int = 100
 
@@ -40,12 +40,17 @@ class Settings(BaseSettings):
     analysis_queue_name: str = "analysis.jobs"
     analysis_worker_concurrency: int = 2
     analysis_worker_prefetch_multiplier: int = 1
-    analysis_max_retries: int = 3
-    analysis_retry_backoff_seconds: int = 5
-    analysis_dispatch_recovery_interval_seconds: int = 60
+    analysis_max_retries: int = Field(default=3, ge=0)
+    analysis_retry_backoff_seconds: int = Field(default=5, ge=1)
+    analysis_dispatch_recovery_interval_seconds: int = Field(default=60, ge=1)
     internal_api_secret_key: SecretStr = SecretStr(
         "internal-analysis-secret-key-change-in-production"
     )
+    platform_api_base_url: str = "http://localhost:5000/api/v1/internal"
+    platform_api_secret_key: SecretStr = SecretStr(
+        "internal-platform-secret-key-change-in-production"
+    )
+    platform_api_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     sse_poll_interval_seconds: float = 0.5
 
     jwt_secret_key: SecretStr = SecretStr(
@@ -64,6 +69,24 @@ class Settings(BaseSettings):
         if isinstance(v, list):
             return [str(p).strip() for p in v if str(p).strip()]
         return []
+
+    @model_validator(mode="after")
+    def _validate_production_secrets(self) -> Settings:
+        if self.app_env.lower() in {"production", "prod"} and (
+            self.internal_api_secret_key.get_secret_value()
+            == "internal-analysis-secret-key-change-in-production"
+        ):
+            raise ValueError("INTERNAL_API_SECRET_KEY must be changed in production")
+        if self.app_env.lower() in {"production", "prod"} and (
+            self.platform_api_secret_key.get_secret_value()
+            == "internal-platform-secret-key-change-in-production"
+        ):
+            raise ValueError("PLATFORM_API_SECRET_KEY must be changed in production")
+        if self.analysis_stage_timeout_seconds > self.analysis_max_duration_seconds:
+            raise ValueError(
+                "analysis stage timeout cannot exceed analysis max duration"
+            )
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from backend.platform.analysis.application.dependencies import (
     DelegatedRequestContext,
@@ -21,6 +22,7 @@ from backend.platform.analysis.application.dependencies import (
     get_job_repository,
     get_queue_publisher,
     get_stage_repository,
+    require_delegated_project,
     require_operator_role,
 )
 from backend.platform.analysis.application.dto import (
@@ -44,7 +46,8 @@ from backend.platform.analysis.repositories.job_repo import (
     JobRepository,
     StageRepository,
 )
-from backend.platform.errors import AnalysisNotFoundError
+from backend.platform.dependency_injection import get_database_session
+from backend.platform.errors import AnalysisNotFoundError, AnalysisQueueUnavailableError
 
 router = APIRouter(
     prefix="/analyses",
@@ -68,37 +71,44 @@ def create_analysis(
     job_repo: Annotated[JobRepository, Depends(get_job_repository)],
     stage_repo: Annotated[StageRepository, Depends(get_stage_repository)],
     event_repo: Annotated[EventRepository, Depends(get_event_repository)],
+    session: Annotated[Session, Depends(get_database_session)],
 ) -> AnalysisResponse:
     """Initiate a new analysis run, persisting initial state and dispatching task."""
+    require_delegated_project(context, request.project_id)
     created = service.create_analysis(request)
 
-    # If new analysis in CREATED state, transition to QUEUED and dispatch to queue
-    if created.status == AnalysisStatus.CREATED.value:
+    # Commit the durable intent before publishing. A PENDING job is recoverable if
+    # the broker call fails or the process exits before the second commit.
+    if created.active_job and created.active_job.status == JobStatus.PENDING.value:
         analysis = analysis_repo.get_by_id(created.id, created.project_id)
-        if analysis and created.active_job:
+        if analysis:
             now = datetime.now(UTC)
-            queued_analysis = analysis.transition_to(
-                AnalysisStatus.QUEUED, updated_at=now
-            )
-            analysis_repo.update(queued_analysis, expected_version=analysis.version)
+            if analysis.status == AnalysisStatus.CREATED:
+                queued_analysis = analysis.transition_to(
+                    AnalysisStatus.QUEUED, updated_at=now
+                )
+                analysis_repo.update(queued_analysis, expected_version=analysis.version)
+            session.commit()
 
-            active_job = job_repo.get_by_id(created.active_job.id)
-            if active_job and active_job.status == JobStatus.PENDING:
-                queued_job = active_job.transition_to(JobStatus.QUEUED, updated_at=now)
-                job_repo.update(queued_job, expected_version=active_job.version)
-                active_job = queued_job
-
-            emitter = LifecycleEventEmitter(event_repo, created.id)
-            emitter.emit_queued(created.active_job.id)
-
-            # Publish identifier-only task payload to message broker
             payload = AnalysisJobPayload(
                 analysis_id=created.id,
                 job_id=created.active_job.id,
                 project_id=created.project_id,
                 correlation_id=context.correlation_id or str(uuid4()),
             )
-            publisher.publish_job(payload)
+            try:
+                publisher.publish_job(payload)
+            except Exception as exc:
+                raise AnalysisQueueUnavailableError(
+                    details={"analysis_id": str(created.id)}
+                ) from exc
+
+            active_job = job_repo.get_by_id(created.active_job.id)
+            if active_job and active_job.status == JobStatus.PENDING:
+                queued_job = active_job.transition_to(JobStatus.QUEUED, updated_at=now)
+                job_repo.update(queued_job, expected_version=active_job.version)
+                LifecycleEventEmitter(event_repo, created.id).emit_queued(active_job.id)
+                session.commit()
 
             return service.get_analysis(created.id, created.project_id)
 
@@ -121,6 +131,7 @@ def list_analyses(
     analysis_status: Annotated[AnalysisStatus | None, Query(alias="status")] = None,
 ) -> AnalysisListResponse:
     """List analyses belonging to a project with pagination."""
+    require_delegated_project(context, project_id)
     return service.list_analyses(
         project_id=project_id,
         limit=limit,
@@ -150,6 +161,7 @@ def get_analysis(
             message="Project identifier must be provided to retrieve analysis.",
             details={"analysis_id": str(analysis_id)},
         )
+    require_delegated_project(context, effective_project_id)
     return service.get_analysis(analysis_id, effective_project_id)
 
 
@@ -168,6 +180,7 @@ def cancel_analysis(
     project_id: Annotated[UUID, Query()],
 ) -> AnalysisResponse:
     """Cancel an active analysis run (direct if queued, cooperative if running)."""
+    require_delegated_project(context, project_id)
     return service.cancel_analysis(
         analysis_id=analysis_id,
         project_id=project_id,
@@ -190,6 +203,7 @@ async def stream_analysis_events(
     last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
 ) -> StreamingResponse:
     """Stream durable lifecycle events via Server-Sent Events (SSE)."""
+    require_delegated_project(context, project_id)
     # Verify analysis existence
     analysis = analysis_repo.get_by_id(analysis_id, project_id)
     if analysis is None:
@@ -229,25 +243,12 @@ async def stream_analysis_events(
                 yield msg
                 current_seq = ev.sequence_number
 
-            # Check if analysis has terminated and all events delivered
+            # A terminal analysis can have more than one page of unseen events.
             current_analysis = analysis_repo.get_by_id(analysis_id, project_id)
             if current_analysis and current_analysis.is_terminal:
-                # One final drain check
-                final_events = event_repo.list_by_analysis(
-                    analysis_id,
-                    after_sequence=current_seq,
-                    limit=100,
-                )
-                for ev in final_events:
-                    data_str = json.dumps(ev.payload)
-                    msg = (
-                        f"id: {ev.sequence_number}\n"
-                        f"event: {ev.event_type.value}\n"
-                        f"data: {data_str}\n\n"
-                    )
-                    yield msg
-                    current_seq = ev.sequence_number
-                break
+                if not events:
+                    break
+                continue
 
             await asyncio.sleep(0.5)
 

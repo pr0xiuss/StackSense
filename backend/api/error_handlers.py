@@ -74,6 +74,8 @@ def register_exception_handlers(application: FastAPI) -> None:
             "artifact_content_unavailable": 500,
             "unsupported_capability": 422,
             "analysis_configuration_invalid": 422,
+            "analysis_access_denied": 403,
+            "analysis_queue_unavailable": 503,
         }
 
         status_code = status_codes.get(

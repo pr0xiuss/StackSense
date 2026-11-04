@@ -24,4 +24,10 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=settings.analysis_worker_prefetch_multiplier,
     worker_concurrency=settings.analysis_worker_concurrency,
+    beat_schedule={
+        "recover-analysis-jobs": {
+            "task": "stacksense.recover_analysis_jobs",
+            "schedule": settings.analysis_dispatch_recovery_interval_seconds,
+        }
+    },
 )

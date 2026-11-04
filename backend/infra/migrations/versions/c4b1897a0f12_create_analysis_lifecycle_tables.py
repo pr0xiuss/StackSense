@@ -44,21 +44,6 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["project_id"],
-            ["projects.id"],
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["repository_id"],
-            ["repositories.id"],
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["snapshot_id"],
-            ["repository_revisions.id"],
-            ondelete="CASCADE",
-        ),
         sa.PrimaryKeyConstraint("id"),
         sa.CheckConstraint(
             "status IN ('created', 'queued', 'running', 'partial', "
@@ -136,11 +121,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["analysis_id"],
             ["analyses.id"],
-            ondelete="CASCADE",
-        ),
-        sa.ForeignKeyConstraint(
-            ["project_id"],
-            ["projects.id"],
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id"),
@@ -309,11 +289,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["job_id"],
             ["analysis_jobs.id"],
-            ondelete="SET NULL",
-        ),
-        sa.ForeignKeyConstraint(
-            ["artifact_id"],
-            ["repository_artifacts.id"],
             ondelete="SET NULL",
         ),
         sa.PrimaryKeyConstraint("id"),

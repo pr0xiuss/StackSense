@@ -1,7 +1,7 @@
 # PROJECT_CONTEXT.md — StackSense Engineering Context
 
 > Repository handoff maintained through the planning and implementing skills.
-> Last updated: 2026-11-04 on branch `feature_mannan`.
+> Last updated: 2026-11-05 on branch `feature_mannan`.
 
 ---
 
@@ -21,16 +21,16 @@ StackSense is a software repository intelligence and architecture analysis platf
 
 ### 1.2 Verified repository state
 
-- The working tree was clean and the active branch was `feature_mannan` when this plan was produced.
+- The active branch is `feature_mannan`; the working tree contains the reviewed M1 closure changes recorded in §5.
 - Python uses FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, repository interfaces, dependency injection, immutable domain dataclasses, and structured `StackSenseError` responses.
-- Phase 2 already persists immutable `RepositoryRevision` records and per-revision `RepositoryArtifact` metadata. Artifact bytes are read through `StorageService.get(storage_key)`; Phase 3 must consume that boundary rather than reacquire or mutate repositories.
-- Phase 2 ingestion is currently synchronous. There is no analysis domain, worker process, Celery/RabbitMQ wiring, analysis persistence, IR, Architecture Model, or Phase 3 API.
-- `requirements.txt` contains no Celery/RabbitMQ client or JavaScript/TypeScript parser binding. `infra/docker/compose.yml` currently starts PostgreSQL only.
+- Express/MongoDB owns immutable repository revisions, artifact metadata, and artifact storage access. Production M1 consumes only the authenticated manifest/content API in ADR-0001; the retained Python Phase 2 implementation is reference/regression code, not the production platform-data authority.
+- Phase 3 M1 now provides the Analysis domain, lifecycle persistence, internal REST/SSE API, Celery/RabbitMQ worker wiring, orchestration, and recovery. M2 parsing, M3 IR, and M4 Architecture Model implementation remain absent.
+- `requirements.txt` includes the Celery/RabbitMQ client stack and `infra/docker/compose.yml` includes RabbitMQ. The M2 plan approves exact Tree-sitter bindings, but they are not yet declared or installed because implementation has not started.
 - The React frontend has a repository detail route with ingestion, revisions, and artifacts. It currently proxies all `/api` traffic to Express on port 5000.
-- Python and Express use separate persistence systems. Their users, Projects, repositories, revisions, artifacts, and sessions are not synchronized. The authority split is approved, but the service-authentication, resource-reference, artifact-availability, and delegated-authorization contract remains an M1/M5/M6 integration blocker; see §4.6.9 and §7.3.
+- Python and Express use intentionally separate persistence systems. ADR-0001 freezes the two-way authenticated API boundary and forbids synchronization or cross-database access.
 - Verified existing Python extension points include `backend/platform/config.py`, `backend/platform/errors.py`, `backend/platform/dependency_injection.py`, `backend/api/v1/router.py`, `backend/api/error_handlers.py`, `backend/infra/migrations/env.py`, and the Phase 2 capability packages under `backend/platform/`.
-- `backend/platform/analysis/`, `backend/worker/`, and `tests/p3/` do not exist. They are proposed locations following the active `backend/platform/<capability>/{domain,application,repositories,infra}` and `tests/p<phase>/` conventions. Empty top-level placeholders such as `backend/analysis/`, `backend/application/`, and `backend/domain/` are not treated as implemented Phase 3 architecture.
-- Baseline evidence gathered during planning:
+- `backend/platform/analysis/`, `backend/worker/`, and `tests/p3/analysis/` are verified existing M1 implementation paths. Empty top-level placeholders such as `backend/analysis/`, `backend/application/`, and `backend/domain/` are not treated as implemented Phase 3 architecture.
+- Historical pre-M1 baseline evidence retained for context (current closure evidence is in §5 and §7.4):
   - `python -m pytest --collect-only -q` collected 330 Python tests.
   - `cd frontend && npm test` passed all four configured scripts.
   - `cd frontend && npm run build` passed with 63 transformed modules.
@@ -41,8 +41,8 @@ StackSense is a software repository intelligence and architecture analysis platf
 ## 2. Global Constraints and Approved Architecture
 
 1. **Project-first isolation:** `User -> Project -> Repository`. No Organization entity or organization-scoped authorization may be introduced. Analysis, jobs, results, architecture versions, events, and findings must carry and enforce `project_id`.
-2. **Python-only Phase 3 backend:** Modules 1–4 are implemented under `backend/`; no Phase 3 routes, models, jobs, or analysis logic are added to Express.
-3. **Phase 2 boundary:** A `RepositoryRevision` is the immutable snapshot identity. `RepositoryArtifact` plus `StorageService` is the Phase 3 source boundary. Phase 3 does not clone repositories, extract uploads, or rewrite artifacts.
+2. **Python-only Phase 3 backend:** Modules 1–4 remain under `backend/`. Express may implement only the approved internal transport/proxy adapters; no analysis domain, lifecycle persistence, jobs, or analyzers belong there.
+3. **Phase 2 boundary:** An Express-owned `RepositoryRevision` is the immutable snapshot identity. Express supplies verified manifests and bounded artifact content through ADR-0001 APIs. Phase 3 does not clone repositories, extract uploads, rewrite artifacts, or read MongoDB directly.
 4. **Static, untrusted-source analysis:** Normal analysis must not execute repository code, installation scripts, build scripts, or unrestricted network requests. All paths remain repository-relative and storage reads remain sandboxed.
 5. **Deterministic source of truth:** Deterministic analyzers produce IR; validated IR produces the Architecture Model. AI, frontend state, diagrams, search, and graphs cannot create canonical architecture facts.
 6. **IR and Architecture Model are separate:** Parser-specific syntax never leaks into the canonical model. IR can reference shared diagnostics and contain lower-level semantic facts; only validated, identity-resolved architectural concepts enter a published Architecture Version.
@@ -56,7 +56,7 @@ StackSense is a software repository intelligence and architecture analysis platf
 14. **Structured errors:** Phase 3 extends the existing `{ "error": { "code", "message", "details" } }` contract and existing FastAPI error mapping.
 15. **Deferred responsibilities:** Neo4j projection, Elasticsearch, knowledge/RAG, AI explanation, reports, and the full React Flow + ELK Diagram Engine belong to later phases. Phase 3 may expose a basic read-only architecture explorer, but must not implement those later systems.
 16. **Approved platform/analysis split:** Express is the platform authority for authentication, users, Projects, Project membership/RBAC, and repository registration. The frontend communicates through Express. Python is the authority for analysis lifecycle/execution, repository inspection, IR, identity resolution, and Architecture Model construction. Express delegates analysis operations to Python through a trusted service-to-service boundary.
-17. **Integration ADR required:** The approved authority split does not define service authentication, delegated identity/authorization context, resource-reference mapping, artifact availability, error propagation, request/audit correlation, or SSE relay. These security and data contracts require owner-approved ADR detail before the affected M1 work is implemented; no synchronization or trust mechanism may be invented.
+17. **Integration ADR accepted:** `docs/architecture/adr/0001-express-python-integration.md` is authoritative. Separate service credentials protect both directions; resource chains are verified by Express; Python stores opaque platform UUIDs without cross-database foreign keys; no synchronization or direct database access is permitted.
 18. **Project-first conflict rule:** `master.txt` §0 and the current code establish `User -> Project -> Repository`, with no Organization domain. Any remaining Organization wording is historical unless an approved ACR/ADR explicitly restores it.
 19. **Change control:** Material deviations from `master.txt`, the Phase 3 contracts below, or the approved Express/Python authority split require explicit approval/ACR treatment before implementation.
 
@@ -69,7 +69,7 @@ StackSense is a software repository intelligence and architecture analysis platf
 | Phase 1 — Engineering Foundation | Completed | Python/FastAPI bootstrap, PostgreSQL/Alembic, DI, error/logging foundation, CI, Black/Ruff/Mypy/Pytest, and React foundation. |
 | Phase 2 — Project & Repository Platform (Python) | Completed | Identity/JWT, Project-scoped RBAC, projects, repositories, ingestion, immutable revisions/artifacts, safe acquisition, classification, and storage abstraction. This is Phase 3's backend input contract. |
 | Phase 2 — MERN migration | Completed, retained separately | Express/MongoDB platform and the current React integration satisfy the college MERN requirement. It is not the Phase 3 implementation target. Verified historical work includes active-user auth, refresh rotation, RBAC, repository ingestion, username collaborator lookup, self-management prevention, and frontend API coverage. |
-| **Phase 3 — Analysis Engine & Architecture Model** | **Planned; not implemented** | Six-module plan in §4. Backend Modules 1–4 are Python-only. Express remains the frontend/platform boundary and delegates analysis to Python. Module 6 validates the complete vertical slice. |
+| **Phase 3 — Analysis Engine & Architecture Model** | **In progress; M1 FROZEN and COMPLETE; M2 plan FROZEN** | Six-module plan in §4. F1 v1.0.0 and ADR-0001 are frozen; all M1 closure gates passed. M2 is approved/frozen but not implemented; M3–M6 remain planned. |
 | Phase 4 — Architecture Graph & Exploration | Upcoming | Projects published Architecture Versions into Neo4j and adds graph traversal/exploration. Depends on stable Phase 3 identity and model contracts. |
 | Phase 5 — Knowledge, Search & Diagram Intelligence | Upcoming | Elasticsearch/retrieval and the canonical Diagram Specification + ELK + React Flow pipeline. Depends on published Architecture Versions and graph projection. |
 | Phase 6 — AI Architecture Intelligence | Upcoming | Evidence-grounded explanation behind provider abstractions; never replaces deterministic findings. |
@@ -126,8 +126,7 @@ FastAPI DTO/router
 Reusable boundaries:
 
 - `ProjectAuthorization.require_access` for read APIs and `require_create_access` for starting/cancelling analysis.
-- `RevisionRepository` and `ArtifactRepository` for snapshot metadata; both require additional exact lookup/count/streaming methods rather than unbounded list calls.
-- `StorageService.get` for lazy artifact bytes.
+- `PlatformRepositoryGateway` for authenticated Express manifest and bounded content access; production M1 does not compose Python Phase 2 repositories/storage.
 - `backend.platform.config.Settings`, `backend.platform.errors`, and API exception mapping.
 - `Base` and Alembic conventions for PostgreSQL persistence.
 - `apiClient` and existing frontend repository route/components.
@@ -162,10 +161,10 @@ AnalysisInput
   analyzer_version: str
   ir_schema_version: str
   architecture_schema_version: str
-  content_reader: ArtifactContentReader   # lazy, bounded StorageService adapter
+  content_reader: ArtifactContentReader   # lazy, bounded platform API adapter
 ```
 
-`AnalysisArtifact` carries artifact ID, normalized repository-relative path, content hash, size, Phase 2 category/support level, and storage key. The factory must verify that project, repository, revision, and every artifact agree; reject mutable/missing snapshots; sort deterministically; never expose absolute storage paths; and never preload the whole repository.
+`AnalysisArtifact` carries artifact ID, revision ID, normalized repository-relative path, content hash, size, and Phase 2 category/support level. Storage keys and absolute paths are excluded. The production factory verifies the complete Express-owned resource chain and manifest totals, sorts deterministically, and reads content lazily through the authenticated bounded API.
 
 #### 4.4.2 Lifecycle and execution contract
 
@@ -174,8 +173,8 @@ AnalysisInput
 - `PARTIAL` means a usable but incomplete result exists. It is not listed as a primary terminal state in §9.9 and must never be presented as complete. The persisted completeness record must say what was analyzed, failed, unsupported, excluded, and potentially incomplete. Finalization may reach `COMPLETED_WITH_WARNINGS` only when the Architecture Model is valid; otherwise the analysis reaches `FAILED`.
 - `TIMEOUT` is not a successful or terminal result. It records the explicit timeout step required by §9.7/§9.38 and must deterministically finalize as `FAILED`, retaining timeout category, stage, configured limit, and safe diagnostic metadata.
 - Primary terminal states remain exactly `COMPLETED`, `COMPLETED_WITH_WARNINGS`, `FAILED`, and `CANCELLED`. They cannot silently return to `RUNNING`.
-- Job states are a **proposed execution detail**, not an approved replacement for Analysis states: `PENDING`, `QUEUED`, `RUNNING`, `RETRYING`, `COMPLETED`, `FAILED`, `CANCELLED`. They require approval with the M1 persistence contract.
-- Stage state is an F1 freeze decision: Section 9 lists `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `SKIPPED`, while Appendix C also includes `QUEUED` and `CANCELLED`. No enum is implemented until the owner resolves the conflict; cancellation/timeout metadata must remain distinct from Analysis-state semantics.
+- Frozen Job states are `PENDING`, `QUEUED`, `RUNNING`, `RETRYING`, `COMPLETED`, `FAILED`, and `CANCELLED`; they remain execution detail and never replace Analysis states.
+- Frozen Stage states are `PENDING`, `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `SKIPPED`, and `CANCELLED`. `QUEUED`/`CANCELLED` preserve the Appendix C execution detail while Section 9 remains authoritative for Analysis lifecycle semantics.
 - Mandatory stages: input validation, inventory, language/framework detection, syntax extraction for eligible supported source, IR normalization/validation, identity resolution, architecture build/validation/publication.
 - Optional/degradable stages: unsupported artifact analysis and framework enrichment when generic analysis succeeds. Failure becomes a diagnostic/warning, never fabricated output.
 - State transitions use repository methods with expected-current-state predicates to prevent stale workers and duplicate messages from regressing state.
@@ -240,8 +239,8 @@ M1 contracts/lifecycle/AnalysisInput/API/worker skeleton
 
 | Freeze | Owner and consumers | Contract to freeze | Approval prerequisites | Parallel work unlocked |
 |---|---|---|---|---|
-| **F1 — M1 -> M2 execution/input boundary** | M1 owns; M2 consumes | `AnalysisInput`, `AnalysisArtifact`, bounded `ArtifactContentReader`, effective configuration/resource limits, stage reporting, `AnalysisDiagnostic`, evidence reference, cancellation checkpoint, deterministic artifact ordering. | Approve Section 9 transition matrix including `PARTIAL`/`TIMEOUT`; approve revision-as-snapshot boundary, M1 job states, diagnostic schema/version, queue message identity, and Phase 2 repository/storage lookup additions. | M1 persistence/worker/API work and M2 parser spike/inventory implementation may proceed independently behind contract tests. |
-| **F2 — M2 -> M3 syntax/evidence boundary** | M2 owns; M3 consumes and signs off | `SyntaxDocument`, declarations/references/source ranges, language/framework detection result, manifest facts, evidence ordering, parser failure representation through `AnalysisDiagnostic`. | F1 frozen; parser adapter/package approved; supported syntax fact inventory and source-range semantics reviewed; fixtures cover Python/JS/TS/JSX/TSX and approved frameworks. | Language/framework adapters can proceed in parallel with M3 schema/golden-fixture work; M3 normalization cannot merge until F2 contract tests pass. |
+| **F1 — M1 -> M2 execution/input boundary (FROZEN v1.0.0)** | M1 owns; M2 consumes | `AnalysisInput`, `AnalysisArtifact`, bounded `ArtifactContentReader`, effective configuration/resource limits, stage reporting, `AnalysisDiagnostic`, cancellation checkpoint, deterministic artifact ordering, and identifier-only queue payload. | Approved and recorded in `docs/architecture/contracts/f1-analysis-execution-input-v1.md`; Section 9 `PARTIAL`/`TIMEOUT`, Job/Stage states, revision-as-snapshot, diagnostic ownership, and ADR-0001 source access are fixed. | M2 may begin against v1.0.0; incompatible changes require contract versioning and approval. |
+| **F2 — M2 -> M3 syntax/evidence boundary (design baseline approved)** | M2 owns production/rebuild; M3 only consumes and signs off; M1 orchestration owns recovery-only rebuilding | `RepositoryInspectionResult`, separate artifact role/outcome, `SyntaxDocument`, tagged declarations/imports/exports/references/framework facts, canonical UTF-8 source ranges, detection/enrichment evidence, safe manifest facts, deterministic ordering, and parser failure references to `AnalysisDiagnostic`. | F1 remains frozen; parser packages and recovery invariants are approved; role/outcome, encoding/range, sensitive-literal, one-pass parsing, benchmarked-cap, and recovery contracts are reviewed; fixtures cover Python/JS/TS/JSX/TSX and approved frameworks. | M2 Batch 1 may implement the approved design under a separate implementation task. M3 receives an immutable supplied F2 result, never invokes M2, and cannot merge until the implemented F2 contract tests and consumer review pass. |
 | **F3 — M3 -> M4 IR boundary** | M3 owns; M4 consumes and signs off | `IRDocument` v1, entity/relationship kinds, stable IR keys, unresolved/conflicting facts, completeness, evidence/provenance, canonical serialization, diagnostic mapping. | F2 frozen; IR schema/version approved; logical-ID input semantics and architectural promotion rules reviewed; invalid/unresolved behavior and golden IR accepted. | M4 persistence schema and repository contract tests may proceed against frozen fixtures; builder, identity resolution, validation, and publication integrate only after F3 acceptance. |
 
 Contract changes after a freeze require the owning module to version the contract, update consumer fixtures/goldens, document migration impact, and obtain the same reviewers' approval. A downstream module must not silently reinterpret an upstream contract.
@@ -288,7 +287,7 @@ Do not parallelize edits to schema/version/identity contracts without a single o
 
 #### Acceptance criteria
 
-- A valid Python Phase 2 revision can create one durable queued analysis and job.
+- A valid Express-owned immutable revision can create one durable queued analysis and job.
 - A duplicate delivery cannot execute/publish the same stage twice.
 - PostgreSQL alone can reconstruct lifecycle state after API/worker restart.
 - Cross-project access is rejected for every M1 lifecycle surface.
@@ -297,12 +296,11 @@ Do not parallelize edits to schema/version/identity contracts without a single o
 #### 4.6.1 Verified M1 repository and architecture findings
 
 - Existing Python extension points are `backend/platform/config.py`, `backend/platform/dependency_injection.py`, `backend/platform/errors.py`, `backend/api/v1/router.py`, `backend/api/error_handlers.py`, `backend/infra/migrations/env.py`, the shared SQLAlchemy `Base`, and the established domain/application/repository/infra layering under `backend/platform/`.
-- Phase 2's immutable input records are the frozen dataclasses `RepositoryRevision` and `RepositoryArtifact`. `RevisionRepository.get_by_id`, deterministic paginated `ArtifactRepository.list_by_revision`, `RepositoryRepository.get_by_id`, and `StorageService.get/exists` are reusable read boundaries.
-- `RepositoryRevision` already carries ID, Project/Repository/ingestion IDs, revision identifier, source hash, file/byte totals, and creation time. `RepositoryArtifact` already carries ID, full ownership chain, relative path, size, content hash, category, support level, internal storage key, and creation time.
-- The M1 adapter must not copy or mutate Phase 2 persistence. It may page through artifact metadata and open content lazily through `StorageService`; the M2-facing contract must not expose storage keys or absolute paths.
-- `backend/platform/analysis/`, `backend/worker/`, and `tests/p3/` are absent and remain proposed paths. Celery/RabbitMQ packages are absent, Compose contains PostgreSQL only, and no analysis lifecycle tables, workers, internal analysis APIs, or SSE exist.
-- No ADR directory or individual ADR was found. `master.txt` describes `docs/architecture/adr/` as the intended location, but the required Express-to-Python integration ADR is not present.
-- Express and Python currently maintain separate Project/Repository/Revision/Artifact persistence. Their IDs are UUID-formatted, but identity format alone is not a synchronization or authorization contract. The integration ADR must define which immutable snapshot Python reads and how Express-owned resource references map to it.
+- Express revision/artifact documents are the platform authority. The authenticated manifest returns IDs, ownership chain, revision identifier, source hash, totals, relative path, size, content hash, category, and support level; it strips storage keys.
+- `PlatformRepositoryGateway` is the only production M1 source adapter. It retrieves manifests and bounded content through Express and never copies, mutates, synchronizes, or directly queries platform persistence.
+- M1 implementation now exists under `backend/platform/analysis/`, `backend/worker/`, and `tests/p3/analysis/`; Celery/RabbitMQ, lifecycle tables, internal analysis APIs, and SSE are implemented and frozen. The remainder of this M1 subsection is retained as the approved historical batch plan and is superseded by the verified ledger for current status.
+- ADR-0001 now records the accepted Express/Python integration and database-ownership decision.
+- Express and Python maintain separate persistence. ADR-0001 now defines which immutable Express snapshot Python reads, authenticated resource mapping/content access, and the no-synchronization/no-cross-database rule.
 - `master.txt` §9 and the explicit M1 requirements govern the Analysis vocabulary. Appendix C contains an older conflicting Analysis vocabulary and a different Stage vocabulary; the unresolved Stage conflict is an F1 owner decision.
 
 #### 4.6.2 M1 exact boundary
@@ -523,7 +521,7 @@ The migration's Project/Repository/Revision foreign/reference strategy is blocke
 | Configuration/version | M1 | all analysis modules | Approve initial contract/analyzer versions and bounded defaults; invalid/missing/version-mismatch tests. |
 | Delegated request context | Integration ADR; M1 consumer | Express/Python APIs | Approve service authentication, actor/role/Project claims, replay protection, audit correlation; mechanism-specific security tests. |
 
-F1 is frozen only after owner approval and passing contract tests. Creating Python types alone does not freeze it. Contract changes after freeze require versioning, updated consumer fixtures, impact documentation, and renewed approval.
+F1 v1.0.0 is frozen after owner approval and passing contract/integration gates. Future incompatible changes require versioning, updated consumer fixtures, impact documentation, and renewed approval.
 
 #### 4.6.9 M1 risks, blockers, and owner decisions
 
@@ -568,40 +566,213 @@ The existing CI workflow remains an M6-owned file under the phase plan. Batch 3 
 
 ### 4.7 Module 2 — Repository Inspection & Language Analysis
 
-#### Responsibilities
+**Planning status: PLAN APPROVED / FROZEN — IMPLEMENTATION NOT STARTED.** No M2 application code or dependency change exists yet. F1 v1.0.0 and M1 remain frozen.
 
-1. Convert AnalysisInput artifact metadata into a deterministic analysis inventory with analysis roles (`semantic`, `configuration`, `documentation`, `metadata_only`, `ignored`, `unsupported`, `failed`).
-2. Reuse Phase 2 category/support metadata while applying Phase 3 eligibility, generated/test/binary/secret policy and configured exclusions.
-3. Detect Python, JavaScript, TypeScript, JSX, TSX, Python/Node/browser runtimes, and approved frameworks using weighted deterministic evidence.
-4. Define parser-neutral syntax contracts and parser adapters: Python built-in `ast`; proposed Python Tree-sitter bindings for JS/TS/JSX/TSX, subject to the compatibility gate in §7.3.
-5. Extract modules, packages, imports/exports, classes, functions/methods, interfaces/types, decorators, inheritance, calls/references, React components/composition, and source locations.
-6. Add framework enrichment for Django, Flask, FastAPI, Express, NestJS, and Next.js without bypassing generic language extraction.
-7. Capture manifests/configuration safely, redact secret values, and emit parser/detection diagnostics rather than fail the entire repository for one artifact.
+#### 4.7.1 Objective, ownership, and non-goals
 
-#### Detector and analyzer rules
+M2 deterministically turns the frozen `AnalysisInput` artifact catalog and lazy content reader into a complete repository inspection result for M3. It owns artifact analysis roles and eligibility, language/runtime/framework detection, parser adapters, generic syntax extraction, framework enrichment, evidence provenance, source locations, per-artifact processing outcomes, and M2 diagnostics. It emits the proposed F2 parser-neutral contract; it does not emit IR or Architecture entities.
 
-- Extension is one signal; parser compatibility, manifests, imports, entry points, and framework constructs corroborate classification.
-- Framework confidence is deterministic (`confirmed`, `supported`, `unknown`) with evidence references; a package name alone is insufficient.
-- Tests remain identified separately but may contribute evidence. Generated/build/cache/binary artifacts do not dominate semantic analysis.
-- Parser adapters return parser-neutral `SyntaxDocument`/`SyntaxFact` objects; raw AST nodes remain adapter-internal.
-- Framework analyzers enrich generic facts and preserve all supporting evidence. They do not directly create Architecture entities.
-- Unsupported languages remain inventoried and contribute completeness warnings.
+M2 must:
 
-#### Tests
+1. Inventory every F1 artifact in normalized path order and assign exactly one analysis role: `semantic`, `configuration`, `documentation`, `metadata_only`, `ignored`, or `unsupported`; track processing outcome separately, with `failed` only as an outcome.
+2. Preserve Phase 2 `category` and `support_level` as immutable upstream facts while applying separate Phase 3 eligibility, user exclusions, generated/test/binary/secret policy, resource limits, and failure reasons.
+3. Detect Python, JavaScript, TypeScript, JSX, and TSX; distinguish Python, Node.js, and browser runtimes; and detect Django, Flask, FastAPI, Express, NestJS, and Next.js from deterministic evidence.
+4. Parse Python with the built-in `ast` module and JS/TS/JSX/TSX behind a replaceable Tree-sitter adapter using the approved exact pins below.
+5. Extract modules/packages, imports/exports, classes, functions/methods, interfaces, type aliases, decorators, inheritance, calls/references, and React component declarations/composition with source evidence.
+6. Enrich generic facts with the six approved framework analyzers. Generic extraction must survive framework detection/enrichment failure.
+7. Record safe `AnalysisDiagnostic` instances and explicit per-artifact outcomes so malformed, unsupported, excluded, oversized, inaccessible, or sensitive artifacts are never represented as successfully analyzed.
 
-- per-language valid/invalid syntax, encoding, very large file, imports/exports, overload/disambiguation, and stable source ranges;
-- deterministic language/runtime/framework detection with positive, negative, and conflicting signals;
-- framework fixtures for all six approved targets;
-- generated/test/secret/binary/unsupported classification and safe redaction;
-- parser failure isolation, no repository code execution, no network access, and resource-limit enforcement;
-- shuffled artifact order produces identical syntax/evidence output.
+Explicit non-goals are M3 symbol/import/call resolution, common IR, dependency relationship resolution, M4 logical identity or Architecture entities, PostgreSQL Architecture/result persistence, new APIs/UI, AI analysis, code execution, dependency installation, builds, or external network access. React is generic JSX/TSX component evidence in M2, not a newly approved framework target.
 
-#### Acceptance criteria
+#### 4.7.2 Verified reuse and missing capabilities
 
-- All approved source variants produce parser-neutral evidence or explicit diagnostics.
-- One malformed file does not abort independent supported files.
-- Framework facts always include generic source facts and evidence.
-- The same snapshot/config/version produces byte-stable normalized extraction output.
+**Reuse without redesign:**
+
+- Frozen `backend/platform/analysis/domain/input.py`: `AnalysisInput`, deterministic `ArtifactCatalog`, `AnalysisArtifact`, and lazy bounded `ArtifactContentReader`.
+- Frozen `backend/platform/analysis/application/execution.py`: `ExecutionContext`, progress/diagnostic/cancellation ports, `AnalysisStageHandler`, and `StageExecutionResult`.
+- Frozen stage vocabulary in `backend/platform/analysis/domain/constants.py`: `inventory`, `language_detection`, `framework_detection`, and `syntax_extraction` are the M2 lifecycle stages.
+- Frozen M1 `AnalysisDiagnostic`; M2 emits it and introduces no competing finding/diagnostic contract.
+- Express/Mongo Phase 2 manifest/content boundary in ADR-0001. The production manifest contains immutable artifact ID, revision ID, path, size, content hash, category, and support level, but no storage key or source bytes.
+- Express `express/src/services/ingestion/artifactClassifier.js` categories/support levels and limits. The retained Python classifier is a reference/regression equivalent, not the production source authority.
+- Existing `AnalysisConfiguration` include/exclude paths, maximum file size, timeout, and versioned custom rules.
+
+**Important distinctions and gaps:**
+
+- Phase 2 classifies ingestion artifacts broadly (for example Java is `source_code/full`); M2 alone decides whether that artifact is supported for Phase 3 semantic analysis.
+- Phase 2 metadata does not include detected language, generated/test/sensitive classification, M2 role/outcome, runtime/framework evidence, parse facts, source ranges, or completeness statistics.
+- No M2 package, parser dependency, F2 contract, production M2 handlers, parser sandbox/executor, framework detector, fixture corpus, or M2 tests currently exists.
+- M1 persists lifecycle state but intentionally does not persist arbitrary stage output. M2 produces the immutable F2 result and M3 consumes that supplied result; M3 never invokes M2 or owns F2 reconstruction. During one live execution attempt, orchestration composition holds the immutable result in an attempt-scoped handoff. If recovery loses that handoff, M1 orchestration invokes the registered M2 producer through an internal recovery-only rebuild path before M3 runs. Rebuild uses the same immutable `AnalysisInput`, effective configuration, and parser/analyzer versions. Completed Stage records remain terminal and unchanged; no frozen F1 lifecycle state, transition, type, or public event vocabulary changes.
+
+#### 4.7.3 Data flow and component responsibilities
+
+```text
+AnalysisInput / ArtifactCatalog (F1)
+  -> InventoryBuilder
+       preserve Phase 2 facts; apply safety, limits, exclusions, M2 roles
+  -> LanguageDetection + PreliminaryFrameworkDetection
+       extension/manifest/config/path evidence only; no source parsing
+  -> bounded ArtifactContentReader reads for eligible text only
+  -> ParserExecutor (OS-isolated child, hard resource/network/environment boundary)
+       PythonAstAdapter | TreeSitterJsTsAdapter
+  -> generic extractor
+       parser-neutral declarations/imports/exports/references/components
+  -> FrameworkDetectionFinalizer
+       combine preliminary evidence with generic syntax facts
+  -> framework enrichers (no reparsing)
+       Django | Flask | FastAPI | Express | NestJS | Next.js
+  -> canonical RepositoryInspectionResult (F2)
+       inventory + detections + SyntaxDocuments + diagnostic references + coverage
+  -> attempt-scoped immutable handoff supplied by M1 orchestration
+  -> M3 normalization/resolution consumes F2 (outside M2)
+```
+
+The inventory is metadata-first and must not read ignored, binary, prohibited-sensitive, unsupported, or oversized content. Language detection and preliminary framework detection run before parsing. The `framework_detection` lifecycle stage reads only permitted manifests/configuration plus path/metadata signals and produces ordered candidates; it does not parse source or claim source-confirmed framework structures. `syntax_extraction` parses each eligible artifact exactly once, emits generic facts, finalizes framework state by combining candidate evidence with syntax-level imports/decorators/constructs, and then runs enrichment over those same facts without reparsing. Detection answers whether framework evidence exists and records `confirmed`, `supported`, or `unknown`; enrichment extracts framework-specific facts only for supported/confirmed candidates. A dependency name alone cannot confirm a framework, and enrichment failure preserves generic facts plus an explicit diagnostic.
+
+M1 stage adapters are thin orchestration wrappers around stateless M2 services. The `syntax_extraction` handler produces the complete immutable F2 value into an execution-attempt-scoped handoff owned by orchestration composition. M3 receives that value as input and never calls M2. Correctness does not depend on a process-global cache: after handoff loss, M1 recovery invokes M2 in rebuild mode using the original immutable `AnalysisInput`, effective configuration fingerprint, and exact parser/grammar/analyzer versions; M3 is scheduled only after byte-equivalent canonical F2 is rebuilt. Recovery does not reset, reopen, replace, or append completed Stage records and does not change Analysis/Job/Stage state. It introduces no new public event type: approved existing lifecycle events may be emitted only when their defined semantics apply; otherwise replay observability is limited to internal structured logs/metrics and safe existing diagnostics. A version/configuration mismatch or rebuild failure fails the active job explicitly without running M3. Until M3 exists, production analyses still cannot complete the full pipeline, and M2 must not install fake M3/M4 handlers.
+
+#### 4.7.4 Proposed F2 — Repository Inspection and Syntax Evidence v1.0.0
+
+**Owner:** M2. **Consumer/sign-off:** M3. **Status:** design baseline approved and frozen; contract artifact not yet implemented or runtime-frozen. Proposed contract document: `docs/architecture/contracts/f2-repository-inspection-syntax-v1.md`. Batch 1 must encode this baseline without reinterpretation; runtime F2 v1 freezes only after contract tests and M3 consumer review.
+
+Top-level `RepositoryInspectionResult` contains `f2_version`, analysis/project/repository/snapshot IDs, analyzer version, effective-configuration fingerprint, ordered inventory entries, language/runtime/framework detections, ordered `SyntaxDocument` values, coverage counts, and referenced M1 diagnostic IDs. It contains no raw AST nodes, source bytes, secrets, absolute/storage paths, resolved cross-file relationships, IR, or Architecture entities.
+
+`ArtifactInventoryEntry` contains artifact/revision IDs, normalized relative path, content hash, size, original Phase 2 category/support level, detected language when known, test/generated/sensitive flags, one stable analysis role, one separate processing outcome, and stable reason codes. `ArtifactAnalysisRole` is one of `semantic`, `configuration`, `documentation`, `metadata_only`, `ignored`, or `unsupported`. `ArtifactProcessingOutcome` is one of `not_processed`, `analyzed`, `analyzed_with_warnings`, `excluded`, `unsupported`, or `failed`. Role describes intended pipeline participation; outcome describes what actually happened. Thus parser/read failure leaves a semantic role with a failed outcome, an ignored role normally has an excluded outcome, and an unsupported role has an unsupported outcome. `failed` is never a role.
+
+Role precedence is: mandatory safety/resource policy; explicit user exclusion; upstream ignored/generated/build-cache; prohibited-sensitive/binary; supported source/test semantic eligibility; safe configuration/manifest; documentation; metadata-only; unsupported. The proposed exclusion grammar is normalized repository-relative POSIX `gitwildmatch` syntax through the already-declared `pathspec` package: an empty include set means all otherwise eligible artifacts, a non-empty include set narrows eligibility, explicit excludes win over includes, and neither can override secret/safety/resource policy. `.gitignore` remains advisory evidence and is not silently applied as an absolute exclusion list.
+
+Sensitive classification first uses only permitted immutable metadata and path signals: Phase 2 category/support level, normalized relative path, basename/extension, size, and known generated/secret conventions. Files classified by policy as environment secrets, keys/certificates, credential stores, binaries, or otherwise prohibited are assigned `metadata_only` or `ignored` as policy dictates and their content reader is never called. Permitted source/configuration artifacts may be parsed for structural evidence, but F2 may retain only allowlisted architecture literals such as module specifiers, dependency names/declared versions, decorator names, HTTP methods, and route templates. It never emits arbitrary configuration values, environment values, string literal arguments, tokens, connection strings, key material, or a literal value that triggered sensitive detection. Diagnostics record stable reason/signal codes and locations, never the secret value.
+
+`SyntaxDocument` contains the F2 version, artifact ID/path/content hash, language and language version/dialect where known, parser adapter ID/version/grammar ABI, parse status (`parsed`, `parsed_with_errors`, or `failed`), canonically ordered facts, and diagnostic references. A failed supported artifact remains represented without fabricated facts.
+
+`SyntaxFact` is a tagged immutable union rather than an untyped parser-node dump:
+
+- `DeclarationFact`: module, package, class, function, method, interface, type alias, variable/constant, or React component; name, optional qualified/local container key, modifiers, decorators, signature/type text only where safely bounded, and declaration/name ranges.
+- `ImportFact`: source module specifier, relative level, imported name, local alias, side-effect/type-only/CommonJS flags, and range.
+- `ExportFact`: local/exported name, source module when re-exported, default/type-only/CommonJS flags, and range.
+- `ReferenceFact`: call, name/attribute reference, inheritance, decorator use, or React composition; source declaration key when local, unresolved target text, and range. M2 never resolves a cross-file target.
+- `FrameworkFact`: framework-specific route/router/module/provider/model/middleware/component/config evidence linked to supporting generic fact keys and detection evidence.
+- `ManifestFact`: redacted dependency/configuration key/value structure; dependency names and declared versions may be retained, but secret values and arbitrary environment values may not.
+
+Every fact has a deterministic `fact_key` derived from snapshot/artifact identity, tagged kind, normalized local discriminator, and source range; keys are not persistence UUIDs and are not M4 logical IDs. Parent/child references are document-local fact keys only. Facts and documents sort by `(artifact.path, range.start_byte, range.end_byte, kind, fact_key)`; mappings serialize with sorted keys and no timestamps. Duplicate evidence is deduplicated by canonical provenance key.
+
+`SourceRange` uses one canonical coordinate space across adapters: the decoded logical source re-encoded as UTF-8, with zero-based absolute byte offsets, one-based lines, zero-based UTF-8 byte columns, and end-exclusive boundaries. Ranges never mix original-file byte offsets with canonical UTF-8 offsets.
+
+The source decoder records the original encoding as document metadata. Python encoding is determined from the raw bounded bytes using the PEP 263/UTF-8-BOM rules (`tokenize.detect_encoding`); permitted non-UTF-8 Python is decoded strictly and then re-encoded to canonical UTF-8. JS/TS/JSX/TSX accepts strict UTF-8 with an optional UTF-8 BOM. The BOM is excluded from canonical coordinates. Newline bytes are otherwise preserved, including CRLF, so absolute offsets are computed from the exact canonical UTF-8 buffer supplied to the parser. Python `ast` one-based lines and UTF-8 byte columns are converted using canonical line-start offsets; Tree-sitter zero-based rows are incremented by one while its UTF-8 byte columns/offsets map directly. Decode failures produce a failed processing outcome plus a diagnostic; no lossy replacement decoding is allowed. F2 evidence exposes canonical coordinates and original-encoding metadata, not original byte offsets. Invalid or unavailable ranges are omitted only when the fact remains safe and a diagnostic explains the limitation.
+
+`DetectionEvidence` identifies artifact ID/path, optional `SourceRange`, a stable signal code, safe observed token/manifest key, analyzer ID/version, and polarity (`supporting` or `conflicting`). Language detections are artifact-scoped; runtime/framework detections are repository- or application-boundary scoped. Evidence uses named states, never floating-point confidence.
+
+Parser failures use the shared M1 `AnalysisDiagnostic` (`category=parsing`, file/artifact scope, artifact ID/path and safe location). F2 holds diagnostic IDs and coverage state; it does not duplicate diagnostic messages as another domain type. Incompatible F2 changes require a major contract version, updated producer/consumer fixtures, and M2/M3 owner approval; additive optional fields require a minor version and contract tests.
+
+#### 4.7.5 Parser compatibility and security spike
+
+Verified locally on 2026-11-05 with the repository runtime `CPython 3.14.6` in isolated temporary virtual environments; no repository dependency was changed:
+
+- Python built-in `ast` parsed representative Python and is the recommended Python adapter. It exactly matches the active interpreter grammar and provides one-based lines plus UTF-8 byte columns. It can raise `SyntaxError`, `ValueError`, `MemoryError`, or `RecursionError`, and sufficiently complex untrusted input can crash the interpreter; it must therefore run behind process isolation and the per-file resource boundary.
+- `tree-sitter==0.25.2` installed from a CPython 3.14 wheel. `tree-sitter-javascript==0.25.0` and `tree-sitter-typescript==0.23.2` installed from stable-ABI wheels. The combination parsed ESM, CommonJS/Express, JavaScript JSX, TypeScript interfaces/classes/decorators, TSX/React composition, and reported recoverable malformed syntax through `root_node.has_error`.
+- The JavaScript grammar covers JavaScript + JSX. The TypeScript package supplies separate TypeScript and TSX grammars. All are maintained under the official Tree-sitter organization and MIT licensed.
+- `tree-sitter==0.26.0` also installed and parsed the sample corpus, but removes timeout attributes and contains newer breaking API changes. The current recommendation is the narrower 0.25.2 core with the latest compatible official grammars, wrapped behind `ParserAdapter`, until a controlled upgrade is separately tested.
+- Tree-sitter's direct bytes parsing does not provide a reliable hard wall-clock stop through the Python progress callback, and Python `ast` has no safe in-process kill boundary. Both adapters therefore require an actual OS process boundary with a 5 MiB pre-read cap, the master-defined 30-second per-file deadline, forced termination, hard CPU/memory/open-file/process/file-size limits, and bounded IPC/result size. Production must fail closed if the isolation boundary cannot be established. The child receives source bytes and the minimum parser request over explicit IPC, not repository paths; runs with dropped privileges where supported, a minimal allowlisted environment, no network access, no shell/package-manager/code-execution path, no host/workspace traversal, and no inherited database, broker, storage, cloud, credential, socket, or unrelated file handles (`close_fds` or platform-equivalent). Any bounded temporary directory is private and disposable.
+- The packages publish wheels but their inspected PyPI releases do not provide provenance attestations. Implementation must pin exact versions, review wheel availability for CI/deployment architectures, record dependency hashes where the project's dependency workflow permits, and run dependency/security scanning.
+
+**Approved parser baseline:** pin `tree-sitter==0.25.2`, `tree-sitter-javascript==0.25.0`, and `tree-sitter-typescript==0.23.2`; keep Python on built-in `ast`; use iterative tree traversal (not recursive visitor depth) and adapter-owned node mappings rather than Tree-sitter query APIs for the initial implementation.
+
+#### 4.7.6 Practical implementation batches
+
+**Batch 1 — F2 contract and safe parser foundation**
+
+- Implement the approved parser pins, role/outcome model, canonical UTF-8 range semantics, exclusion matching, sensitive-artifact policy, and M1-owned recovery/rebuild semantics without reopening the plan.
+- Add the F2 contract document and immutable model/protocols; add approved dependencies/settings.
+- Implement the fail-closed OS-isolated parser executor, Python and JS/TS adapter bootstraps, encoding policy, timeout/crash/error translation, hard resource/network/environment/handle isolation, and adapter contract tests.
+- Add a benchmark harness before full extraction. Measure fact count, canonical serialized bytes, peak child/parent RSS, and parse/extraction time for each representative framework fixture plus deterministic synthetic files at small, median, and the 5 MiB boundary. Record per-artifact and whole-fixture maxima and proposed headroom; owner approval of per-artifact fact, per-analysis fact, and serialized-F2 byte caps is required before Batch 3 extraction expands beyond the spike corpus.
+- Exit gate: exact versions install on Python 3.14 CI; Unicode, CRLF, UTF-8 BOM, PEP 263 non-UTF-8 Python, invalid encoding, valid/malformed/timeout/oversized fixtures return contract-valid results or shared diagnostics; network/credential/descriptor/host-path isolation and hard resource termination are proven in the production execution mode; benchmark evidence and proposed caps are recorded for approval; no generic/framework extraction yet.
+
+**Batch 2 — Deterministic inventory and detection**
+
+- Implement separate role/outcome mapping from all Phase 2 categories/support levels, include/exclude policy, test/generated/sensitive handling, and coverage counts.
+- Implement permitted metadata/path-only sensitive classification and prove prohibited-sensitive content is never opened. Safe manifest/config readers expose only allowlisted structural values.
+- Implement language/runtime detection and preliminary framework candidate detection from metadata/path/permitted manifest signals, with positive, negative, multi-language, multi-framework, and conflicting evidence; do not parse source in this stage.
+- Exit gate: every artifact has one role and reason; no ineligible content is read; shuffled catalog order produces byte-equivalent inventory/detection serialization.
+
+**Batch 3 — Generic syntax extraction**
+
+- Complete Python and JS/TS/JSX/TSX parser-neutral extraction for all required declarations, import/export forms, decorators, inheritance, calls/references, and React composition.
+- Parse each eligible artifact once; reuse the resulting generic facts to finalize framework detection and supply later enrichment. Canonicalize fact keys, UTF-8 ranges, provenance, ordering, parse-recovery behavior, and per-artifact diagnostics.
+- Enforce the owner-approved caps atomically. Crossing a cap emits `resource_limit_exceeded`, marks the affected artifact/result explicitly, and discards or rejects the incomplete fact set according to the approved failure policy; it never returns an apparently complete truncated document.
+- Exit gate: F2 contract/golden fixtures pass for all five syntax variants and all encoding/newline fixtures; one file failure cannot abort independent files; approved caps are enforced without silent truncation; no parser-specific object escapes.
+
+**Batch 4 — Framework enrichment, M1 integration, and freeze**
+
+- Implement Django/Flask/FastAPI and Express/NestJS/Next.js enrichment over generic facts, including negative fixtures that prevent name/dependency-only false positives.
+- Add thin M1 stage handlers, attempt-scoped immutable F2 handoff, and production registry wiring without changing frozen F1 types or lifecycle semantics. M3 is only a consumer. Add progress/cancellation checkpoints between artifacts and before enrichment.
+- Implement only the owner-approved M1 recovery-only rebuild mechanism: when the non-persisted handoff is lost, orchestration re-executes M2 with the same immutable input/configuration/version tuple before scheduling M3; completed stages and frozen lifecycle states remain unchanged, M3 cannot trigger reconstruction, and no new public event vocabulary is introduced.
+- Run M2 integration, determinism, limits, security, full Python regression, Black, Ruff, Mypy, and dependency checks. Freeze F2 only after M3 consumer review.
+- Exit gate: all six enrichers reuse the single generic parse and preserve facts/evidence; full `RepositoryInspectionResult` is canonical and byte-equivalently rebuildable by M2 under M1 recovery; completed Stage rows and F1 remain unchanged, no public event enum/type is added, and regressions stay green.
+
+#### 4.7.7 File-level implementation specification
+
+All paths below were rechecked on 2026-11-05. **Modify** paths exist; **Create (proposed)** paths do not. No deletion is planned.
+
+| Path | Action | Components and responsibility | Dependencies / tests / rationale |
+|---|---|---|---|
+| `docs/architecture/contracts/f2-repository-inspection-syntax-v1.md` | Create (proposed) | Normative F2 schema, ordering, range, evidence, diagnostic, compatibility, and change-control rules. | Owned by M2; M3 sign-off; contract/golden tests. |
+| `requirements.txt` | Modify in Batch 1 | Pin the three approved Tree-sitter packages only. | Python 3.14 wheel/install/import audit, `pip check`, dependency scan. |
+| `backend/platform/config.py` | Modify | Add M2 parser deadline and approved bounded extraction settings; retain existing analysis/file limits. | Settings validation/default/production tests; no M1 setting reinterpretation. |
+| `backend/platform/analysis/inspection/__init__.py` | Create (proposed) | Public M2 inspection exports only. | Import-boundary test prevents adapter leakage. |
+| `backend/platform/analysis/inspection/model.py` | Create (proposed) | Separate `ArtifactAnalysisRole` and `ArtifactProcessingOutcome`, reason enums, inventory entry, detection/evidence models, coverage, `RepositoryInspectionResult`. | Frozen F1 types + F2 version; role/outcome invariants, immutability/schema/order tests. |
+| `backend/platform/analysis/inspection/inventory.py` | Create (proposed) | `InventoryBuilder`; Phase 2-to-M2 role matrix, include/exclude and safety/resource eligibility. | Metadata-only operation; exhaustive category/support/path tests. |
+| `backend/platform/analysis/inspection/detection.py` | Create (proposed) | Language/runtime detection, preliminary framework candidates, syntax-backed finalization, and safe allowlisted manifest/config signals. | Inventory + bounded reader + generic facts; stage-order/no-duplicate-parse/corroboration/redaction tests. |
+| `backend/platform/analysis/inspection/service.py` | Create (proposed) | Stateless `RepositoryInspectionService` coordinating inventory, detection, parsing, extraction, enrichment, canonicalization, progress, diagnostics, and cancellation. | F1 context ports; full F2 determinism/partial-failure tests. |
+| `backend/platform/analysis/syntax/__init__.py` | Create (proposed) | Public F2 syntax exports. | No parser library types in exports. |
+| `backend/platform/analysis/syntax/model.py` | Create (proposed) | Canonical UTF-8 `SourceRange`, original-encoding metadata, provenance, tagged `SyntaxFact` union, `SyntaxDocument`, parser/detection enums, canonical serializer/key builders. | Unicode/CRLF/BOM/non-UTF-8/end-exclusive/order/round-trip tests. |
+| `backend/platform/analysis/syntax/base.py` | Create (proposed) | `ParserAdapter` and generic/framework extractor protocols; typed success/failure result. | Fake-adapter contract and exception containment tests. |
+| `backend/platform/analysis/syntax/executor.py` | Create (proposed) | Fail-closed OS-isolated parser child execution with bounded IPC, byte/deadline/result bounds, hard process resources, no network, minimal environment, closed unrelated descriptors, termination, and safe error mapping. | 5 MiB/30 s defaults; crash/timeout/cancel/resource/network/environment/credential/descriptor/host-path isolation tests in the production execution mode. |
+| `backend/platform/analysis/syntax/python.py` | Create (proposed) | Built-in `ast` adapter and generic Python fact extraction. | Python 3.14 syntax, imports/decorators/inheritance/calls, Unicode ranges, malformed/deep fixtures. |
+| `backend/platform/analysis/syntax/javascript.py` | Create (proposed) | Tree-sitter adapter plus JS/JSX/TS/TSX generic extraction; grammar-specific nodes remain private. | ESM/CommonJS, interfaces/types/decorators, JSX/TSX components, malformed recovery. |
+| `backend/platform/analysis/frameworks/__init__.py` | Create (proposed) | Framework analyzer registry/export boundary. | Deterministic registration/selection tests. |
+| `backend/platform/analysis/frameworks/base.py` | Create (proposed) | Common enrichment protocol and evidence helper. | Generic facts in, framework facts out; no IR import allowed. |
+| `backend/platform/analysis/frameworks/python.py` | Create (proposed) | Django, Flask, FastAPI detectors/enrichers. | Routes/apps/models/routers/dependencies plus false-positive fixtures. |
+| `backend/platform/analysis/frameworks/javascript.py` | Create (proposed) | Express, NestJS, Next.js detectors/enrichers. | Routers/middleware, modules/controllers/providers, app/pages/API/server-client context and negatives. |
+| `backend/platform/analysis/application/inspection_handlers.py` | Create (proposed) | Thin handlers for the four existing M2 stage names plus the execution-attempt-scoped immutable F2 handoff; M2 produces/rebuilds and M3 only consumes the supplied value. | M1 execution contracts; handoff-loss/rebuild, identical input/config/version enforcement, cancellation, diagnostics, progress, unchanged completed stages, and no-M3-recompute tests. |
+| `backend/worker/tasks.py` | Modify | Register real M2 handlers and the internal M1 recovery-only rebuild hook in production composition; retain absence of fake M3/M4 handlers. | Registry and M1 worker regression tests; no lifecycle/F1/public-event vocabulary changes. |
+| `tests/p3/analysis/test_m2_contracts.py` | Create (proposed) | F2 immutability, separate role/outcome invariants, tagged schema, canonical UTF-8 ranges, keys, ordering, serialization, compatibility rejection. | Batch 1/3 freeze gate. |
+| `tests/p3/analysis/test_m2_inventory_detection.py` | Create (proposed) | Exhaustive role/outcome matrix, exclusions, languages/runtimes/framework candidate/final states, conflicts, safe literal policy, prohibited-content read avoidance. | Batch 2 gate. |
+| `tests/p3/analysis/test_m2_parsers.py` | Create (proposed) | Adapter/executor and one-pass generic extraction across five syntaxes; Unicode, CRLF, BOM, PEP 263 non-UTF-8, invalid encoding, malformed, timeout/crash/resource cases; production-mode OS isolation, no network, environment/credential stripping, descriptor closure, and fail-closed startup. | Batch 1/3 gate. |
+| `tests/p3/analysis/test_m2_frameworks.py` | Create (proposed) | All six framework enrichers and negative/mixed-framework evidence. | Batch 4 gate. |
+| `tests/p3/analysis/test_m2_integration.py` | Create (proposed) | F1 input -> ordered M2 stages -> canonical F2 handoff -> consumer stub; diagnostics/progress/cancellation, handoff-loss/M1 recovery rebuild using the same input/config/version tuple, byte-equivalence, unchanged completed stages/lifecycle/events, no M3 recomputation, shuffled/concurrent rebuilds, M1 regressions. | Batch 4 freeze gate. |
+| `tests/p3/analysis/test_m2_benchmarks.py` | Create (proposed) | Deterministic fact/serialized-byte/RSS/time measurements and cap enforcement at representative and 5 MiB boundaries. | Owner reviews recorded benchmark evidence before Batch 3 full extraction. |
+| `tests/fixtures/p3/m2/{python,js,ts,jsx,tsx,django,flask,fastapi,express,nestjs,nextjs,mixed,malformed,encoding,security,limits}/` | Create (proposed) | Small repositories covering positive/negative/ambiguous/monorepo, Unicode, CRLF, BOM, PEP 263 non-UTF-8, invalid encoding, malformed, secret, and resource cases. | No fixture executes; paired canonical expected F2 JSON. |
+| `tests/fixtures/p3/m2/expected/*.f2.json` | Create (proposed) | Versioned canonical inspection/syntax outputs. | Byte-stability and compatibility regression. |
+
+#### 4.7.8 Testing, security, determinism, and failure policy
+
+- Unit tests cover every Phase 2 category/support-level combination, independent role/outcome invariant, path rule, detector signal, fact type, canonical range normalization, serializer, and framework detection/enrichment rule.
+- Adapter integration tests run the real pinned parsers on Python 3.14 and verify ABI/version metadata, error nodes, malformed syntax, Unicode, CRLF, UTF-8 BOM, PEP 263 non-UTF-8 Python, invalid encodings, modern language features, and no deprecation warnings (`pytest.ini` promotes warnings to errors).
+- Security tests prove prohibited-sensitive/ignored/binary/oversized artifacts are classified from permitted metadata/path signals and never read; permitted source/config parsing emits no non-allowlisted literal values. Production-mode parser tests prove a real OS process boundary, hard resource termination, denied network access, minimal allowlisted environment, absent service/cloud/database/broker/storage credentials, closed unrelated file descriptors/sockets, no host/workspace path access, bounded IPC, and fail-closed startup. No repository code, imports, package manager, shell, or build path is invoked; diagnostic/event/F2 payloads expose no source bytes, storage keys, secrets, tracebacks, or absolute paths.
+- Resource tests enforce the existing 5 MiB analyzable-file limit and master 30-second per-file deadline before expensive processing. Before full extraction, deterministic benchmarks record per-fixture fact counts, serialized F2 bytes, peak RSS, and execution time at representative and boundary sizes; proposed caps and headroom require owner approval. Exceeding an approved cap emits a diagnostic and explicit failed/partial outcome, and never publishes a silently truncated `SyntaxDocument` or complete F2 result.
+- Determinism tests shuffle artifact and analyzer registration order, rerun in separate processes, and compare canonical F2 bytes. Parser/grammar/analyzer versions and configuration fingerprints are part of output metadata.
+- One parser/read failure preserves the artifact role but sets its processing outcome to failed where safe, records a shared diagnostic, and continues independent artifacts. Framework enrichment failure yields generic facts with `analyzed_with_warnings`. Systemic contract/configuration/cap failures follow the approved mandatory-stage policy.
+- Stage-order tests prove preliminary framework detection performs no source parse, each eligible source is parsed once during syntax extraction, final detection incorporates generic facts, and enrichment reuses those facts without reparsing.
+- Recovery tests prove M2 produces F2, M3 only consumes the supplied immutable value, and handoff loss causes M1-orchestrated M2 rebuilding before M3 using the same immutable `AnalysisInput`, configuration fingerprint, and parser/grammar/analyzer versions. Canonical bytes match the original result; completed Stage records and frozen Analysis/Job/Stage states remain unchanged; no new public event type is emitted; mismatch or rebuild failure fails explicitly without scheduling M3. No M3 code imports or invokes an M2 builder/service.
+- M2 itself does not transition the overall Analysis to `PARTIAL`; it reports accurate stage outcome/diagnostics/coverage and lets the frozen M1 lifecycle plus later valid-model publication determine final status.
+- Quality gates: targeted M2 Pytest; full `pytest`; `black --check .`; `ruff check .`; `mypy backend`; `python -m pip check`; dependency/security audit; `git diff --check`. No claim is recorded without execution.
+
+#### 4.7.9 Acceptance criteria and Definition of Done
+
+M2 is complete only when:
+
+1. Every F1 artifact appears exactly once in a canonically ordered inventory with preserved Phase 2 metadata, exactly one analysis role, exactly one separate processing outcome, and explainable reason codes; `failed` never appears in the role vocabulary.
+2. Python/JS/TS/JSX/TSX and Python/Node/browser runtime results are deterministic; unsupported/mixed ecosystems remain explicit.
+3. Django, Flask, FastAPI, Express, NestJS, and Next.js require corroborated evidence, support multi-framework repositories, and cannot be confirmed by a similarly named file or dependency alone.
+4. Approved source variants produce parser-neutral generic facts and canonical UTF-8 source ranges, or explicit per-artifact diagnostics; Unicode, CRLF, BOM and permitted non-UTF-8 Python map deterministically, invalid encodings fail explicitly, and raw AST/CST nodes never cross F2.
+5. All required declaration/reference/import/export/React-composition fact types and safe manifest facts are represented without M3 resolution or M4 entities.
+6. Preliminary framework detection, syntax-backed finalization, and framework enrichment are distinct; each eligible artifact is parsed once, enrichment preserves generic facts/provenance, and enrichment failure does not erase successful generic analysis.
+7. Prohibited-sensitive content is never opened, extracted facts never expose unapproved literal values, and parser crashes/timeouts, malformed input, unreadable content, approved caps, exclusions, and unsupported languages are reflected in outcomes/coverage without fabricated success or silent truncation. Parser children run behind a verified fail-closed OS isolation boundary with bounded resources/IPC, no network, a minimal credential-free environment, and no unrelated inherited descriptors or host paths.
+8. Equivalent snapshot/configuration/parser/analyzer versions produce byte-stable F2 output across artifact-order and process reruns.
+9. M2 produces immutable F2 and M3 only consumes the supplied result. Handoff loss causes M1 orchestration to rebuild F2 with the exact original immutable input/configuration/parser/analyzer version tuple before M3; canonical output is byte-equivalent, completed Stage rows and frozen lifecycle states remain unchanged, mismatches fail explicitly, and no persistence, F1 contract, or public event-vocabulary change is introduced.
+10. F2 v1 is documented, contract-tested, reviewed by M3, owner-approved, and frozen; incompatible changes require versioning/change control.
+11. Production composition registers only real M2 handlers plus the internal recovery hook; frozen F1 remains unchanged, no M3 symbol resolution/IR or M4 identity/Architecture persistence/query work appears, all M1/full regressions and quality gates pass, and `PROJECT_CONTEXT.md` records exact evidence.
+
+Estimated complexity is **High**: five syntax variants, six framework enrichers, untrusted native parsers, canonical evidence/ranges, and deterministic partial-failure semantics. The highest risks are parser sandbox escape/resource exhaustion, credential or descriptor inheritance, grammar-version drift, false-positive framework detection, encoding/range inconsistency, F2 overfitting to parser nodes, and correct orchestration rebuilding of non-persisted F2 without changing frozen F1. Mitigations and acceptance tests above are mandatory Definition-of-Done gates, not optional hardening.
 
 ---
 
@@ -684,7 +855,7 @@ The existing CI workflow remains an M6-owned file under the phase plan. Batch 3 
 
 #### Preconditions
 
-Module 5 follows the approved authority split: the frontend calls Express, and Express delegates analysis operations to Python. Live integration starts only after the integration ADR details in §7.3 and M1/M4 API DTOs are frozen. The current Express token and MongoDB resource IDs cannot be sent to Python as trusted Python identity merely because their formats match. Until the ADR is approved, M5 may refine framework-neutral wireframes and DTO fixtures only; it may not wire proxy authentication, live mutations, SSE relay, or result calls. The frontend portion of M6 end-to-end validation is blocked by the same ADR details.
+Module 5 follows ADR-0001: the frontend calls Express, and Express delegates analysis operations to Python with the accepted service credential and delegated Project context. Live result integration still waits for M4 API DTOs and proxy/result/SSE transport contracts; MongoDB resource IDs remain opaque references rather than permission by format alone.
 
 #### Responsibilities
 
@@ -759,7 +930,7 @@ Additional Phase 3 gates include Celery eager unit tests, real RabbitMQ worker i
 
 ### 4.12 File-by-file implementation specifications
 
-Path status was rechecked against the repository on 2026-11-04. In the tables, **Modify** means the file is verified to exist; **Create (proposed)** means the path does not exist and is a planning proposal. Existing files include `requirements.txt`, `.env.example`, `infra/docker/compose.yml`, `.github/workflows/ci.yml`, the listed Python platform/API/migration extension points, `frontend/src/App.jsx`, `frontend/src/pages/RepositoryDetailPage.jsx`, and `frontend/package.json`. The proposed `backend/platform/analysis/`, `backend/worker/`, `tests/p3/`, and Phase 3 frontend paths are absent. No application file has been created by planning.
+Path status was rechecked against the repository on 2026-11-05. In the tables, **Modify** means the file is verified to exist; **Create (proposed)** means the path does not exist and is a planning proposal. M1 paths under `backend/platform/analysis/`, `backend/worker/`, and `tests/p3/analysis/` now exist and are frozen/complete as recorded in §5. M2-specific `inspection/`, `syntax/`, `frameworks/`, handlers, contract, tests, and fixtures remain absent. Existing frontend paths remain planned for M5. Planning created no application file.
 
 #### Module 1 files
 
@@ -767,23 +938,7 @@ The authoritative, implementation-ready M1 file plan is organized by batch in §
 
 #### Module 2 files
 
-| Path | Action | Components / responsibility | Dependencies and verification |
-|---|---|---|---|
-| `requirements.txt` | Modify | Add the approved Python parser bindings/grammars only after the F2 parser decision. | Python 3.14 compatibility/security spike and pinned-version review. |
-| `backend/platform/analysis/engine/context.py` | Create | Per-analysis context, versions/configuration/registry/metrics; no global mutable state. | Isolation/concurrency tests. |
-| `backend/platform/analysis/engine/inventory.py` | Create | Deterministic artifact inventory, roles, exclusions, counts. | Classification/limit/order tests. |
-| `backend/platform/analysis/engine/detection.py` | Create | Language/runtime/framework evidence and deterministic confidence rules. | Positive/negative/conflict fixtures. |
-| `backend/platform/analysis/engine/registry.py` | Create | Analyzer selection by supported language/framework and capability. | Selection/order/plugin tests. |
-| `backend/platform/analysis/syntax/model.py` | Create (proposed) | Parser-neutral `SyntaxDocument`, declarations, references, ranges, and evidence; failures reference shared `AnalysisDiagnostic`. | F2 schema/serialization/diagnostic contract tests. |
-| `backend/platform/analysis/syntax/base.py` | Create | `ParserAdapter` protocol and safe parse result contract. | Adapter contract tests. |
-| `backend/platform/analysis/syntax/python.py` | Create | Built-in `ast` adapter for Python. | Python syntax fixtures. |
-| `backend/platform/analysis/syntax/tree_sitter.py` | Create, proposed | JS/TS/JSX/TSX adapter behind parser protocol. | Grammar/version/error fixtures. |
-| `backend/platform/analysis/analyzers/base.py` | Create | Language/framework analyzer protocols and evidence emitter. | Contract tests. |
-| `backend/platform/analysis/analyzers/python.py` | Create | Generic Python structure extraction. | modules/imports/classes/functions/calls. |
-| `backend/platform/analysis/analyzers/javascript.py` | Create | Generic JS/JSX extraction. | ESM/CommonJS/React fixtures. |
-| `backend/platform/analysis/analyzers/typescript.py` | Create | TS/TSX types/interfaces/decorators/components. | TS/Nest/React fixtures. |
-| `backend/platform/analysis/analyzers/manifests.py` | Create | Safe package/config/dependency evidence and secret redaction. | manifest/config/security tests. |
-| `backend/platform/analysis/analyzers/frameworks/{django,flask,fastapi,express,nestjs,nextjs}.py` | Create (six files) | Framework-specific enrichment over generic syntax facts. | One focused fixture/test suite per framework. |
+The authoritative M2 file plan is in §4.7.7. It consolidates generic extraction by language family and framework enrichment by ecosystem to avoid the earlier over-fragmented `engine/` and one-file-per-framework proposal. That table identifies every verified existing modification point and every proposed path, with responsibilities and tests.
 
 #### Module 3 files
 
@@ -881,9 +1036,9 @@ The authoritative, implementation-ready M1 file plan is organized by batch in §
 
 Phase 3 is complete only when all are verified:
 
-1. A user with permitted Project access can asynchronously analyze a specific immutable Python Phase 2 revision; a Viewer cannot start/cancel but can read permitted results.
+1. A user with permitted Project access can asynchronously analyze a specific immutable Express-owned revision; a Viewer cannot start/cancel but can read permitted results.
 2. PostgreSQL is authoritative for analysis/job/stage/event/model state; RabbitMQ/Celery outages or duplicate delivery cannot corrupt lifecycle state.
-3. AnalysisInput validates the full project/repository/revision/artifact chain and lazily reads immutable content through `StorageService`.
+3. AnalysisInput validates the full project/repository/revision/artifact chain and lazily reads immutable content through the authenticated Express platform API.
 4. Python, JavaScript, TypeScript, JSX, and TSX are classified and parsed through common adapters; all six approved frameworks have evidence-backed enrichment.
 5. Malformed/unsupported files degrade explicitly without fabricating facts or unnecessarily failing independent files.
 6. IR is versioned, schema-valid, parser-neutral, deterministic, evidence-preserving, and contains explicit unresolved/conflicting facts.
@@ -903,14 +1058,14 @@ Phase 3 is complete only when all are verified:
 
 | Module | Status | Evidence | Remaining work |
 |---|---|---|---|
-| M1 — Analysis Foundation & Execution | Complete (Batches 1, 2 & 3 Implemented & Verified) | All three batches implemented and verified: Batch 1 (domain entities, AnalysisInput adapter, diagnostic/event contracts, execution ports), Batch 2 (PostgreSQL lifecycle models, Alembic migration `c4b1897a0f12`, SQLAlchemy repositories with optimistic locking and terminal immutability, AnalysisLifecycleService orchestration, DTOs, DI providers), and Batch 3 (Celery/RabbitMQ worker infrastructure, identifier-only queue publisher, AnalysisOrchestrator with cooperative cancellation & 30m timeout, StageHandlerRegistry & FakeStageHandler, JobRecoveryService, internal FastAPI lifecycle router, and SSE event streaming). 155 targeted tests pass cleanly (`tests/p3/analysis/`). Alembic offline SQL generation verified. Black, Ruff, and strict Mypy type check pass across all 166 backend and test source files. Total 485 tests collected repo-wide. | None for M1. F1 frozen interfaces ready for M2 consumers. |
-| M2 — Inspection & Language Analysis | Planned; ready to begin | Supported languages/frameworks and current Phase 2 artifact classifier verified. Frozen M1 input and stage contracts available. | Complete parser spike; approve F2; implement inventory, detection, and language/framework analyzers. |
+| M1 — Analysis Foundation & Execution | **FROZEN and COMPLETE (F1 v1.0.0)** | All three batches and hardening fixes are complete. ADR-0001 enforces separate MongoDB/PostgreSQL ownership and authenticated APIs in both directions. Python 3.14 uses AnyIO 4.15.1 and Starlette 1.10.0. The full repository suite passes with every warning treated as an error: `497` tests. PostgreSQL migration/constraint/concurrency and live RabbitMQ/Celery dispatch, recovery, failure, and retry smoke passed. `392` Express tests pass; Ruff, strict Mypy, and full-project Black pass. | None for M1. Any incompatible F1/ADR change requires versioning and owner approval. Do not fold M2 work into M1. |
+| M2 — Inspection & Language Analysis | **PLAN APPROVED / FROZEN — IMPLEMENTATION NOT STARTED** | Repository paths, frozen F1/M1 execution interfaces, Express Phase 2 classifier/manifest/content boundary, Python 3.14 runtime, and master Sections 5–7/10 were rechecked. The frozen plan separates role/outcome, defines canonical UTF-8 coordinates and sensitive handling, gates caps on benchmarks, separates detection/enrichment, requires fail-closed OS parser isolation, and assigns recovery-only F2 rebuilding to M1 orchestration without lifecycle/event changes. No repository dependency or application source was changed. | Under a separate implementation request, execute Batches 1–4 in order. Batch 3 remains gated on owner approval of the numeric caps measured in Batch 1; this is an evidence gate, not an unresolved architecture decision. |
 | M3 — IR & Semantic Analysis | Planned; not implemented | Master IR/identity rules inspected; no current IR code exists. | Approve F3 IR v1; implement/validate/golden-test. |
 | M4 — Identity & Architecture Model | Planned; not implemented | Master canonical model/publication rules inspected; no current model code exists. | Approve F3 and M4 persistence; implement model persistence/publication/result APIs. |
-| M5 — Frontend Integration | Planned; blocked on integration ADR details | Express is the approved frontend/platform boundary. | Freeze Express-to-Python lifecycle/result proxy contracts, delegated errors, and SSE relay after M1/M4 DTOs and the integration ADR are approved. |
-| M6 — Integration & Evaluation | Planned; frontend E2E blocked on ADR details | CI quality commands and current test organization verified. | Build backend fixtures/goldens throughout; browser-to-worker E2E waits for the approved service boundary. |
+| M5 — Frontend Integration | Planned; blocked on M4 result contracts | Express is the approved frontend/platform boundary and ADR-0001 is accepted. | Freeze lifecycle/result proxy DTOs, delegated errors, and SSE relay after M4 result APIs are defined. |
+| M6 — Integration & Evaluation | Planned; frontend E2E waits for M4/M5 | CI quality commands and current test organization verified. | Build backend fixtures/goldens throughout; browser-to-worker E2E follows the accepted service boundary once result/proxy contracts exist. |
 
-Phase 3 M1 (Analysis Foundation & Execution Infrastructure: Batches 1, 2, and 3) is fully implemented and verified. No M2 parsing, M3 IR, M4 Architecture persistence/results, or frontend routes were created, preserving strict phase boundaries.
+Phase 3 M1 is formally frozen. No M2 parsing, M3 IR, M4 Architecture persistence/results, or frontend analysis work was started, preserving strict module boundaries.
 
 ---
 
@@ -925,55 +1080,71 @@ Phase 3 M1 (Analysis Foundation & Execution Infrastructure: Batches 1, 2, and 3)
 - Canonical ingestion is Project/Repository scoped and produces immutable revisions/artifacts with content-addressed storage.
 - Active ingestion concurrency, source validation, archive/path safety, storage abstraction, and structured error responses remain intact.
 - The MERN implementation is retained as a completed parallel platform deliverable; it is not deleted or extended for Phase 3.
-- The owner-approved integration direction is Express as the frontend/platform authority and Python as the Phase 3 analysis authority, with authenticated delegation through a trusted service-to-service boundary. This fixes the authority split but not the still-required integration ADR details.
+- ADR-0001 fixes Express as the frontend/platform authority and Python/PostgreSQL as the analysis authority, with authenticated internal APIs and no cross-database access.
 
 ---
 
 ## 7. Decisions, Risks, Assumptions, and Handoff
 
-### 7.1 Proposed Phase 3 decisions requiring plan approval
+### 7.1 Frozen M1 decisions and later-phase decisions
 
-1. Treat `RepositoryRevision.id` as `snapshot_id`; do not create a duplicate snapshot entity unless implementation evidence shows missing immutable-snapshot semantics.
-2. Approve the F1 lifecycle contract exactly against Section 9: `PARTIAL` is nonterminal/incomplete, `TIMEOUT` follows the explicit path to `FAILED`, primary terminal states remain unchanged, and Job state remains distinct from Analysis state. Resolve whether `TIMEOUT` is persisted and whether the Section 9 or Appendix C Stage vocabulary governs M1 before freezing enums.
+1. **Frozen:** Express `RepositoryRevision.id` is `snapshot_id`; no duplicate snapshot entity exists in M1.
+2. **Frozen:** F1 implements Section 9 exactly: `PARTIAL` is nonterminal/incomplete, `TIMEOUT` is persisted then transitions to `FAILED`, and Job/Stage state remains distinct from Analysis state.
 3. Use one Celery orchestration task per analysis in the first implementation while persisting stage records; split stages into separate jobs later without changing frozen domain contracts.
 4. Approve one shared `AnalysisDiagnostic` contract, owned/versioned and lifecycle-recorded by M1, emitted by M2–M4, and exposed as finding DTOs only through M4 result-query APIs.
 5. Persist Architecture Versions in M4-owned normalized PostgreSQL tables with stable logical IDs and UUID v4 row IDs; keep IR in-memory/serializable but not persist it by default.
 6. Use durable PostgreSQL AnalysisEvent rows for SSE replay and sequence; SSE polls/subscribes to that durable stream rather than treating an in-memory broadcaster as truth.
 7. Interpret P3 “visualization” as summary/hierarchy/entity/relationship/evidence exploration. Defer canonical node-edge Diagram Specification + ELK + React Flow to Phase 5.
-8. Evaluate Python built-in `ast` plus Python Tree-sitter language packages for JS/TS/JSX/TSX through a Python 3.14 compatibility/security spike; package selection remains an approval decision.
+8. **Frozen for M2:** use Python built-in `ast` plus `tree-sitter==0.25.2`, `tree-sitter-javascript==0.25.0`, and `tree-sitter-typescript==0.23.2` behind replaceable adapters and the approved OS isolation boundary.
 
 ### 7.2 Principal risks and mitigations
 
-- **Backend split:** Express/Mongo and Python/PostgreSQL have no shared identity, authorization, Project, repository, revision, or artifact state. The authority split is fixed, but its contract is not. Mitigation: approve the integration ADR's trust, resource mapping, and artifact-access rules before affected M1/M5 work; never bridge by trusting client IDs, accepting an unverified token, or inventing synchronization.
-- **Parser compatibility/safety:** Tree-sitter package/grammar versions may not support Python 3.14 or all syntax variants consistently. Mitigation: isolated adapter spike, pinned grammar versions, malformed/deep input tests, time/size limits, replaceable protocol.
+- **Backend split:** Express/Mongo and Python/PostgreSQL intentionally own separate state. ADR-0001 fixes authenticated delegation, opaque resource mapping, and bounded artifact access. Mitigation: preserve that contract; never bridge by trusting client IDs, directly reading the other database, or inventing synchronization.
+- **Parser compatibility/safety:** The approved Tree-sitter pins install and parse representative syntax on CPython 3.14.6, but native parsers and Python `ast` still face crash/resource risks, grammar lag, non-attested package artifacts, and future API churn. Mitigation: exact pins, fail-closed OS child isolation with hard bounds/no network/minimal environment/closed unrelated handles, version/ABI metadata, malformed/deep/timeout/isolation tests, dependency scanning, and replaceable adapters.
 - **Scope size:** Six frameworks plus lifecycle/IR/model/frontend is large. Mitigation: freeze contracts first, implement generic analyzers before framework enrichment, use fixtures/goldens, parallelize only behind stable interfaces.
 - **Nondeterminism:** concurrent analyzers, set/dict order, or evidence arrival can change output. Mitigation: canonical keys/sorting, analysis-scoped registries, shuffled-order tests, stable serialization.
 - **Queue/database dual-write:** DB commit can succeed while publish fails. Mitigation: persist dispatch state, identifier-only idempotent messages, publish-failure state/recovery, duplicate worker guards.
-- **Partial failures:** one parser/framework failure could either hide coverage or fail too much. Mitigation: mandatory/optional stage policy, per-artifact diagnostics, completeness metrics, `COMPLETED_WITH_WARNINGS` only with a valid model.
-- **Resource exhaustion/malicious source:** parser bombs, huge repositories, secrets, or path tricks. Mitigation: reuse Phase 2 limits, lazy/batched reads, timeouts, redaction, no execution/network, security fixtures.
+- **Partial failures:** one parser/framework failure could either hide coverage or fail too much. Mitigation: explicit artifact roles/outcomes, shared per-artifact diagnostics, coverage metrics, generic fallback after enrichment failure, and `COMPLETED_WITH_WARNINGS` only with a later valid model.
+- **Non-persisted F2 handoff:** frozen F1 does not persist arbitrary stage outputs. M2 owns deterministic production/reconstruction, M3 only consumes the attempt-scoped immutable result, and M1 orchestration owns recovery after handoff loss. The approved internal recovery-only path runs the registered M2 producer with the same immutable input/configuration/version tuple without reopening completed stages, changing lifecycle state, or adding public event vocabulary; mismatch or failure stops before M3.
+- **Resource exhaustion/malicious source:** parser bombs, native-parser compromise, huge repositories, secrets, descriptor/credential inheritance, or path tricks. Mitigation: reuse Phase 2 limits, lazy/batched reads, fail-closed OS isolation and hard termination, bounded IPC, no network, minimal environment, closed unrelated handles, redaction, no execution, and adversarial security fixtures.
 - **Architecture over-granularity:** every symbol could become a visible node. Mitigation: keep symbols in IR/evidence and promote only architecturally meaningful entities.
 - **Schema/version churn:** premature v1 changes can invalidate goldens and consumers. Mitigation: freeze version constants and contracts before module implementation; incompatible changes require version bump/change control.
 
-### 7.3 Outstanding decisions / approval gates
+### 7.3 Frozen M2 approval record
 
-1. **Express/Python integration ADR details:** The authority direction is already approved and must not be reopened: Express is the platform/frontend boundary and Python is the analysis authority. Before Batch 2 reference constraints and Batch 3 APIs, the owner must approve service authentication/rotation, delegated actor/role/Project scope, replay protection, request/audit correlation, resource-reference mapping, which immutable snapshot/artifacts Python reads, artifact-content availability, idempotency ownership, cross-service error mapping, internal route exposure, and SSE proxy/relay.
-2. **F1 lifecycle/input freeze:** Approve the Section 9 transition interpretation, persisted-vs-event `TIMEOUT`, authoritative Stage states, proposed Job states, snapshot/input boundary, shared diagnostic contract, queue identity, resource limits, and Phase 2 lookup/reference behavior before M1/M2 implementation.
-3. **F2 parser/syntax freeze:** Approve Tree-sitter or another Python-native JS/TS parser after the compatibility spike, then approve the parser-neutral syntax/evidence/source-range contract before M2/M3 parallel implementation.
-4. **F3 IR/Architecture freeze:** Approve IR v1, canonical ordering, unresolved/conflict behavior, promotion rules, logical-ID inputs, and golden fixtures before M3/M4 parallel implementation.
-5. **Visualization scope:** Confirm that hierarchy/relationship/evidence exploration satisfies P3. If an interactive node-edge graph is required now, approve the roadmap expansion and define how React Flow + ELK is introduced without duplicating the Phase 5 Diagram Engine.
-6. **Version constants and retry/time limits:** Approve initial analyzer/IR/Architecture schema versions and measured/configured retry, heartbeat, stage timeout, 30-minute analysis limit enforcement, and performance thresholds before freezing public/golden contracts.
-7. **M4 persistence proposal:** Approve normalized PostgreSQL Architecture tables and non-persisted IR. A JSON-blob-only Architecture Model or persisted IR would materially change query, migration, and reproducibility trade-offs.
+The owner approved the following as the frozen M2 planning baseline. No M2 implementation has started:
+
+1. **Parser pins:** built-in Python `ast` plus `tree-sitter==0.25.2`, `tree-sitter-javascript==0.25.0`, and `tree-sitter-typescript==0.23.2` on CPython 3.14.
+2. **Corrected F2 model:** `RepositoryInspectionResult`, separate `ArtifactAnalysisRole` and `ArtifactProcessingOutcome` (`failed` is outcome-only), tagged `SyntaxFact`, document-local fact keys, diagnostic references, and canonical ordering.
+3. **Canonical source coordinates:** decoded logical source re-encoded to UTF-8; zero-based absolute bytes, one-based lines, zero-based UTF-8 byte columns, end-exclusive ranges; original encoding retained as metadata, BOM excluded, CRLF preserved, PEP 263 non-UTF-8 Python decoded strictly, and invalid encodings fail explicitly.
+4. **Eligibility and sensitive policy:** repository-relative POSIX `gitwildmatch`; excludes cannot bypass safety; `.gitignore` is advisory; prohibited-sensitive files are classified from permitted metadata/path signals without content reads; permitted parsing exposes only allowlisted structural literals.
+5. **Cap approval gate:** Batch 1 records deterministic fact count, serialized-byte, peak-RSS, and timing benchmarks on representative and 5 MiB boundary fixtures. The owner approves explicit per-artifact, per-analysis, and serialized-F2 caps before full Batch 3 extraction. Cap failures are diagnostic and explicit, never silently truncated.
+6. **Detection/enrichment order:** metadata/manifest/path framework candidates before parsing; exactly one generic parse per eligible artifact; syntax facts finalize detection; enrichment reuses facts and never reparses.
+7. **Handoff and recovery ownership:** M2 produces immutable F2 and M3 only consumes the supplied result. If the non-persisted handoff is lost, M1 orchestration invokes the registered M2 producer through an internal recovery-only rebuild path using the same immutable `AnalysisInput`, effective configuration, and exact parser/grammar/analyzer versions. M3 neither imports nor invokes M2 reconstruction.
+8. **Recovery invariants:** recovery repopulates only the attempt-scoped handoff. Already-completed Stage rows and frozen Analysis/Job/Stage states and transitions remain unchanged. Rebuilt canonical F2 must be byte-equivalent; a version/configuration mismatch or rebuild failure fails the active job before M3. F2 is not newly persisted, terminal stages are not reset, and frozen F1 is not modified.
+9. **Event compatibility:** recovery adds no public `AnalysisEventType`, event payload, or other public event vocabulary. An existing event may be used only when its already-approved semantics apply; otherwise observability uses internal structured logs/metrics and safe existing diagnostics. Any new public event requires separate owner approval and contract versioning.
+10. **Parser isolation:** every parser runs in an actual OS child process with hard bounded resources and IPC, forced deadline termination, no network, a minimal allowlisted environment, no inherited service/cloud/database/broker/storage credentials, sockets, or unrelated file handles, and no repository/host filesystem access beyond explicitly supplied source bytes. Production fails closed when this boundary cannot be established.
+
+The design baseline for F2 is frozen here, while the runtime F2 v1 contract remains an implementation deliverable: Batch 1 authors the contract artifact and tests, and Batch 4 freezes runtime F2 only after M3 consumer review. Numeric fact/result caps are intentionally determined from Batch 1 benchmarks and require owner approval before Batch 3 full extraction; this is the frozen evidence-based gate, not an unresolved architectural choice. Persisting F2, resetting terminal stages, making M3 call M2, weakening parser isolation, or adding recovery event vocabulary are rejected alternatives.
+
+Later Phase 3 gates remain and do not block the frozen M2 plan:
+
+1. **F3 IR/Architecture freeze:** Approve IR v1, canonical ordering, unresolved/conflict behavior, promotion rules, logical-ID inputs, and golden fixtures before M3/M4 parallel implementation.
+2. **Visualization scope:** Confirm that hierarchy/relationship/evidence exploration satisfies P3. If an interactive node-edge graph is required now, approve the roadmap expansion without duplicating the Phase 5 Diagram Engine.
+3. **M4 persistence proposal:** Approve normalized PostgreSQL Architecture tables and non-persisted IR. A JSON-blob-only Architecture Model or persisted IR would materially change query, migration, and reproducibility trade-offs.
 
 ### 7.4 Current handoff
 
-- **Current phase:** Phase 3 in progress; Module 1 (Analysis Foundation & Execution Infrastructure) fully implemented and verified across all 3 batches.
-- **Plan status:** Module 1 complete with 155 passing unit, integration, concurrency, recovery, API, SSE, and E2E tests (`tests/p3/analysis/`). Celery worker infrastructure configured, RabbitMQ service added to compose, internal FastAPI lifecycle router mounted, and SSE streaming verified.
+- **Current phase:** Phase 3 in progress; Module 1 is **FROZEN and COMPLETE** and Module 2 is **PLAN APPROVED / FROZEN — IMPLEMENTATION NOT STARTED**. Modules 3–6 remain planned.
+- **Closure evidence:** The complete Python suite passes against PostgreSQL with `497 passed` and no skips or warnings, including all API/SSE/E2E and real-PostgreSQL persistence/concurrency tests. `392` Express tests pass. Alembic is at `c4b1897a0f12`; verified M1 foreign keys are internal only. Live RabbitMQ/Celery worker ping, recovery-task success, explicit failure, and transient-database retry/exhaustion passed. Ruff, strict Mypy, and full-project Black pass.
+- **Python 3.14/TestClient resolution:** AnyIO is pinned to `4.15.1`, which contains the Python 3.14 blocking-portal context fix. Starlette is pinned to `1.10.0`, removing its deprecated AnyIO alias. SQLite test engines are explicitly disposed, so the full suite also passes with all resource warnings promoted to errors. Compatible `cryptography==49.0.0` and `python-dateutil==2.9.0.post0` pins satisfy the shared environment, and `pip check` reports no broken requirements. The managed sandbox still rejects the event loop's AF_UNIX cross-thread wakeup with `EPERM`, so TestClient suites must run outside that sandbox restriction.
 - **Frozen M1 Interfaces for M2:**
   - `AnalysisInput` & `AnalysisArtifact` (`backend.platform.analysis.domain.input`): immutable snapshot boundary with lazy `ArtifactContentReader`.
   - `AnalysisExecutionContext` (`backend.platform.analysis.application.orchestrator`): context passed to stage handlers providing access to input, progress reporting, diagnostic recording, and cooperative cancellation checking (`is_cancellation_requested()`).
   - `AnalysisStageHandler` & `StageHandlerRegistry` (`backend.platform.analysis.application.registry`): stage execution contract and registration container.
   - `AnalysisDiagnostic` (`backend.platform.analysis.domain.diagnostic`): shared cross-module diagnostic model with severity, categorization, code, and bounded source location.
   - Lifecycle state machine: Section 9 states, optimistic concurrency control, terminal immutability, and 30m timeout enforcement.
-- **Branch:** `feature_manisha` verified.
-- **Last verified baseline:** 485 Python tests collected repo-wide; all 155 M1 tests passing; Black, Ruff, and strict Mypy passing cleanly across all 166 backend and test source files; Alembic offline SQL migration verified.
-- **Recommended next action:** Proceed to Module 2 (Repository Inspection & Language Analysis) — start with the Python 3.14 Tree-sitter / parser-neutral syntax spike and deterministic artifact inventory.
+- **Branch:** `feature_mannan` verified.
+- **Last verified baseline (2026-11-05):** `pytest.ini` promotes all warnings to errors, and the normal `pytest -q` command passed all `497` tests on branch `feature_mannan`; PostgreSQL and RabbitMQ containers were healthy after verification.
+- **M2 planning evidence:** CPython 3.14.6 is the active/CI runtime and no Tree-sitter dependency is currently installed. Temporary isolated installs verified `tree-sitter` 0.25.2 and 0.26.0 with official JavaScript 0.25.0 and TypeScript/TSX 0.23.2 grammars. The approved 0.25.2 combination parsed representative ESM, CommonJS/Express, JSX, TypeScript decorators/interfaces, TSX/React composition, and recoverable malformed input. Temporary environments were outside the repository and no application file/dependency changed.
+- **Recommended next action:** Stop planning. Begin M2 Batch 1 only under a separate implementing task; do not change frozen F1, start Batch 1 from this planning task, or begin M3. Before Batch 3 full extraction, review and approve the numeric caps produced by the Batch 1 benchmark gate.

@@ -70,6 +70,10 @@ class BoundedDiagnosticCollector:
 
         Returns True if the diagnostic was accepted, False if dropped due to capacity.
         """
+        if self._max_diagnostics <= 0:
+            self._dropped_count += 1
+            return False
+
         if len(self._diagnostics) < self._max_diagnostics:
             self._diagnostics.append(diagnostic)
             return True
@@ -92,5 +96,24 @@ class BoundedDiagnosticCollector:
                 created_at=datetime.now(UTC),
                 details={"max_diagnostics": self._max_diagnostics},
             )
-            self._diagnostics.append(overflow_diagnostic)
+            # Reserve capacity for the aggregate marker rather than exceeding
+            # the advertised hard limit.
+            self._diagnostics[-1] = overflow_diagnostic
+        else:
+            overflow = self._diagnostics[-1]
+            self._diagnostics[-1] = AnalysisDiagnostic(
+                id=overflow.id,
+                analysis_id=overflow.analysis_id,
+                code=overflow.code,
+                category=overflow.category,
+                severity=overflow.severity,
+                scope=overflow.scope,
+                message=overflow.message,
+                retryability=overflow.retryability,
+                created_at=overflow.created_at,
+                details={
+                    "max_diagnostics": self._max_diagnostics,
+                    "dropped_count": self._dropped_count,
+                },
+            )
         return False

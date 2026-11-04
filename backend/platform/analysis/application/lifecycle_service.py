@@ -12,6 +12,9 @@ from backend.platform.analysis.application.dto import (
     AnalysisStageResponse,
     CreateAnalysisRequest,
 )
+from backend.platform.analysis.application.platform_gateway import (
+    PlatformRepositoryGateway,
+)
 from backend.platform.analysis.domain.analysis import (
     Analysis,
     AnalysisConfiguration,
@@ -67,9 +70,10 @@ class AnalysisLifecycleService:
         stage_repo: StageRepository,
         event_repo: EventRepository,
         diagnostic_repo: DiagnosticRepository,
-        revision_repo: RevisionRepository,
-        project_repo: ProjectRepository,
-        repository_repo: RepositoryRepository,
+        revision_repo: RevisionRepository | None,
+        project_repo: ProjectRepository | None,
+        repository_repo: RepositoryRepository | None,
+        source_gateway: PlatformRepositoryGateway | None = None,
     ) -> None:
         self._analysis_repo = analysis_repo
         self._job_repo = job_repo
@@ -79,6 +83,7 @@ class AnalysisLifecycleService:
         self._revision_repo = revision_repo
         self._project_repo = project_repo
         self._repository_repo = repository_repo
+        self._source_gateway = source_gateway
 
     def _to_analysis_response(
         self,
@@ -179,37 +184,60 @@ class AnalysisLifecycleService:
                 return self._to_analysis_response(existing, stages, job)
 
         # 2. Validate prerequisites
-        project = self._project_repo.get_by_id(request.project_id)
-        if project is None:
-            raise AnalysisInputError(
-                message=f"Project '{request.project_id}' does not exist.",
-                details={"project_id": str(request.project_id)},
+        if self._source_gateway is not None:
+            manifest = self._source_gateway.get_manifest(
+                request.project_id, request.repository_id, request.revision_id
             )
+            if (
+                manifest.id != request.revision_id
+                or manifest.project_id != request.project_id
+                or manifest.repository_id != request.repository_id
+            ):
+                raise AnalysisIntegrityError(
+                    "Express manifest ownership chain does not match the request."
+                )
+        else:
+            # Legacy adapter retained only for isolated Phase 1/2 regression tests.
+            # Production composition always supplies the authorized Express gateway.
+            if (
+                self._project_repo is None
+                or self._repository_repo is None
+                or self._revision_repo is None
+            ):
+                raise AnalysisIntegrityError(
+                    "No authorized platform source adapter is configured."
+                )
+            project = self._project_repo.get_by_id(request.project_id)
+            if project is None:
+                raise AnalysisInputError(
+                    message=f"Project '{request.project_id}' does not exist.",
+                    details={"project_id": str(request.project_id)},
+                )
 
-        repository = self._repository_repo.get_by_id(request.repository_id)
-        if repository is None or repository.project_id != request.project_id:
-            raise RepositoryNotFoundError()
+            repository = self._repository_repo.get_by_id(request.repository_id)
+            if repository is None or repository.project_id != request.project_id:
+                raise RepositoryNotFoundError()
 
-        revision = self._revision_repo.get_by_id(request.revision_id)
-        if revision is None:
-            raise AnalysisInputError(
-                message=f"Repository revision '{request.revision_id}' not found.",
-                details={"revision_id": str(request.revision_id)},
-            )
-        if (
-            revision.project_id != request.project_id
-            or revision.repository_id != request.repository_id
-        ):
-            raise AnalysisIntegrityError(
-                message=(
-                    "Revision ownership chain does not match project or repository."
-                ),
-                details={
-                    "revision_id": str(request.revision_id),
-                    "project_id": str(request.project_id),
-                    "repository_id": str(request.repository_id),
-                },
-            )
+            revision = self._revision_repo.get_by_id(request.revision_id)
+            if revision is None:
+                raise AnalysisInputError(
+                    message=f"Repository revision '{request.revision_id}' not found.",
+                    details={"revision_id": str(request.revision_id)},
+                )
+            if (
+                revision.project_id != request.project_id
+                or revision.repository_id != request.repository_id
+            ):
+                raise AnalysisIntegrityError(
+                    message=(
+                        "Revision ownership chain does not match project or repository."
+                    ),
+                    details={
+                        "revision_id": str(request.revision_id),
+                        "project_id": str(request.project_id),
+                        "repository_id": str(request.repository_id),
+                    },
+                )
 
         # 3. Construct domain entities
         now = datetime.now(UTC)
@@ -285,10 +313,16 @@ class AnalysisLifecycleService:
         )
 
         # 4. Save entities
-        self._analysis_repo.save(
+        saved_analysis = self._analysis_repo.save(
             analysis,
             idempotency_key=request.idempotency_key,
         )
+        if saved_analysis.id != analysis.id:
+            existing_stages = self._stage_repo.list_by_analysis(saved_analysis.id)
+            existing_job = self._job_repo.get_active_for_analysis(saved_analysis.id)
+            return self._to_analysis_response(
+                saved_analysis, existing_stages, existing_job
+            )
         self._job_repo.save(job)
         self._stage_repo.save_batch(stages)
         self._event_repo.append(created_event)

@@ -154,6 +154,15 @@ class SqlAlchemyJobRepository(JobRepository):
         models = self._session.scalars(stmt).all()
         return [self._to_domain(m) for m in models]
 
+    def find_pending_jobs(self, created_cutoff: datetime) -> list[AnalysisJob]:
+        """Find pending jobs old enough to require dispatch recovery."""
+        stmt = select(AnalysisJobModel).where(
+            AnalysisJobModel.status == JobStatus.PENDING.value,
+            AnalysisJobModel.created_at < created_cutoff,
+        )
+        models = self._session.scalars(stmt).all()
+        return [self._to_domain(m) for m in models]
+
 
 class SqlAlchemyStageRepository(StageRepository):
     """PostgreSQL-backed implementation of StageRepository."""

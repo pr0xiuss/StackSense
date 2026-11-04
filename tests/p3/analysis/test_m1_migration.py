@@ -58,6 +58,10 @@ def test_analysis_table_schema() -> None:
     for col in expected_cols:
         assert col in cols, f"Column '{col}' missing from analyses table"
 
+    # Express/Mongo owns these platform identities. PostgreSQL stores immutable
+    # references but must never create cross-database foreign-key coupling.
+    assert not table.foreign_keys
+
 
 def test_analysis_jobs_table_schema() -> None:
     """Verify column definitions on analysis_jobs table."""
@@ -83,6 +87,8 @@ def test_analysis_jobs_table_schema() -> None:
     ]
     for col in expected_cols:
         assert col in cols, f"Column '{col}' missing from analysis_jobs table"
+
+    assert {fk.parent.name for fk in table.foreign_keys} == {"analysis_id"}
 
 
 def test_analysis_stages_table_schema() -> None:
@@ -154,3 +160,5 @@ def test_analysis_diagnostics_table_schema() -> None:
     ]
     for col in expected_cols:
         assert col in cols, f"Column '{col}' missing from analysis_diagnostics table"
+
+    assert "artifact_id" not in {fk.parent.name for fk in table.foreign_keys}

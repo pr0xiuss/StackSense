@@ -111,9 +111,9 @@ def test_bounded_diagnostic_collector_caps_and_aggregates_overflow() -> None:
     assert collector.is_capped is True
     assert collector.dropped_count == 1
 
-    # Should have added the overflow summary diagnostic (5 original + 1 summary)
+    # The overflow summary replaces the final slot and never exceeds the cap.
     diagnostics = collector.diagnostics
-    assert len(diagnostics) == 6
+    assert len(diagnostics) == max_limit
     summary = diagnostics[-1]
     assert summary.code == "diagnostic_capacity_exceeded"
     assert summary.category == DiagnosticCategory.RESOURCE

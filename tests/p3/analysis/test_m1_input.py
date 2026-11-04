@@ -9,7 +9,13 @@ import pytest
 
 from backend.platform.analysis.application.input_factory import (
     AnalysisInputFactory,
+    PlatformAnalysisInputFactory,
     is_safe_relative_path,
+)
+from backend.platform.analysis.application.platform_gateway import (
+    PlatformArtifact,
+    PlatformRepositoryGateway,
+    PlatformSnapshotManifest,
 )
 from backend.platform.analysis.domain.input import AnalysisArtifact
 from backend.platform.errors import (
@@ -654,3 +660,59 @@ def test_artifact_paging_across_multiple_pages() -> None:
 )
 def test_is_safe_relative_path(path: str, expected: bool) -> None:
     assert is_safe_relative_path(path) is expected
+
+
+def test_platform_factory_preserves_immutable_input_and_bounded_content() -> None:
+    project_id = uuid4()
+    repository_id = uuid4()
+    revision_id = uuid4()
+    artifact_id = uuid4()
+
+    class Gateway(PlatformRepositoryGateway):
+        requested_max_bytes: int | None = None
+
+        def get_manifest(self, *_: UUID) -> PlatformSnapshotManifest:
+            artifact = PlatformArtifact(
+                id=artifact_id,
+                project_id=project_id,
+                repository_id=repository_id,
+                revision_id=revision_id,
+                path="src/main.py",
+                size_bytes=4,
+                content_hash="hash",
+                category=ArtifactCategory.SOURCE_CODE,
+                support_level=SupportLevel.FULL,
+            )
+            return PlatformSnapshotManifest(
+                id=revision_id,
+                project_id=project_id,
+                repository_id=repository_id,
+                revision_identifier="abc123",
+                source_hash="tree",
+                total_files=1,
+                total_bytes=4,
+                artifacts=(artifact,),
+            )
+
+        def read_artifact(
+            self,
+            _project_id: UUID,
+            _repository_id: UUID,
+            _revision_id: UUID,
+            _artifact_id: UUID,
+            *,
+            max_bytes: int,
+        ) -> bytes:
+            self.requested_max_bytes = max_bytes
+            return b"data"[:max_bytes]
+
+    gateway = Gateway()
+    analysis_input = PlatformAnalysisInputFactory(gateway).build_analysis_input(
+        uuid4(), project_id, repository_id, revision_id
+    )
+    artifact = analysis_input.artifact_catalog.artifacts[0]
+
+    assert analysis_input.snapshot_id == revision_id
+    assert analysis_input.content_reader.read_bytes(artifact, max_bytes=2) == b"da"
+    assert gateway.requested_max_bytes == 2
+    assert "storage_key" not in type(artifact).__annotations__
