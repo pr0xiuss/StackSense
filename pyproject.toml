@@ -24,3 +24,11 @@ target-version = ["py314"]
 python_version = "3.14"
 strict = true
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "celery.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "backend.worker.*"
+disallow_untyped_decorators = false

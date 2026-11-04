@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from backend.api.v1.analyses import router as analyses_router
 from backend.api.v1.auth import router as auth_router
 from backend.api.v1.ingestions import router as ingestions_router
 from backend.api.v1.project_access import router as project_access_router
@@ -21,3 +22,4 @@ router.include_router(projects_router)
 router.include_router(project_access_router)
 router.include_router(repositories_router)
 router.include_router(ingestions_router)
+router.include_router(analyses_router)

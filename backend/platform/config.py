@@ -25,6 +25,29 @@ class Settings(BaseSettings):
     github_acquisition_timeout_seconds: int = 60
     github_acquisition_user_agent: str = "StackSense-Ingestion/0.1.0"
 
+    # Analysis execution & lifecycle configuration (Phase 3 Module 1)
+    analysis_max_duration_seconds: int = 1800
+    analysis_stage_timeout_seconds: int = 600
+    analysis_heartbeat_interval_seconds: int = 30
+    analysis_stale_job_threshold_seconds: int = 120
+    analysis_max_diagnostics_per_analysis: int = 1000
+    analysis_default_page_size: int = 20
+    analysis_max_page_size: int = 100
+
+    # Celery & RabbitMQ orchestration (Phase 3 Module 1 Batch 3)
+    celery_broker_url: str = "amqp://guest:guest@localhost:5672//"
+    celery_result_backend: str | None = None
+    analysis_queue_name: str = "analysis.jobs"
+    analysis_worker_concurrency: int = 2
+    analysis_worker_prefetch_multiplier: int = 1
+    analysis_max_retries: int = 3
+    analysis_retry_backoff_seconds: int = 5
+    analysis_dispatch_recovery_interval_seconds: int = 60
+    internal_api_secret_key: SecretStr = SecretStr(
+        "internal-analysis-secret-key-change-in-production"
+    )
+    sse_poll_interval_seconds: float = 0.5
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )
