@@ -5,6 +5,13 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from backend.platform.analysis.infra.lifecycle_model import (
+    AnalysisDiagnosticModel,
+    AnalysisEventModel,
+    AnalysisJobModel,
+    AnalysisModel,
+    AnalysisStageModel,
+)
 from backend.platform.dependency_injection import get_database_settings
 from backend.platform.identity.infra.user_model import (
     UserCredentialModel,
@@ -28,6 +35,11 @@ _ = (
     RepositoryModel,
     UserModel,
     UserCredentialModel,
+    AnalysisModel,
+    AnalysisJobModel,
+    AnalysisStageModel,
+    AnalysisEventModel,
+    AnalysisDiagnosticModel,
 )
 
 target_metadata = Base.metadata

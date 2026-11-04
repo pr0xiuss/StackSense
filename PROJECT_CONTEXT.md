@@ -903,14 +903,14 @@ Phase 3 is complete only when all are verified:
 
 | Module | Status | Evidence | Remaining work |
 |---|---|---|---|
-| M1 — Analysis Foundation & Execution | Planned in three batches; not implemented | Complete three-batch implementation plan, file map, F1 freeze, DoD, and handoff prompts recorded in §4.6. Verified Phase 2 boundaries, Section 9, Appendix I, API/persistence conventions, and missing broker/ADR infrastructure. | Resolve F1 and integration-ADR decisions; approve Batch 1; implement sequentially. |
-| M2 — Inspection & Language Analysis | Planned; not implemented | Supported languages/frameworks and current Phase 2 artifact classifier verified. | Complete parser spike; approve F2; implement analyzers. |
+| M1 — Analysis Foundation & Execution | Complete (Batches 1, 2 & 3 Implemented & Verified) | All three batches implemented and verified: Batch 1 (domain entities, AnalysisInput adapter, diagnostic/event contracts, execution ports), Batch 2 (PostgreSQL lifecycle models, Alembic migration `c4b1897a0f12`, SQLAlchemy repositories with optimistic locking and terminal immutability, AnalysisLifecycleService orchestration, DTOs, DI providers), and Batch 3 (Celery/RabbitMQ worker infrastructure, identifier-only queue publisher, AnalysisOrchestrator with cooperative cancellation & 30m timeout, StageHandlerRegistry & FakeStageHandler, JobRecoveryService, internal FastAPI lifecycle router, and SSE event streaming). 155 targeted tests pass cleanly (`tests/p3/analysis/`). Alembic offline SQL generation verified. Black, Ruff, and strict Mypy type check pass across all 166 backend and test source files. Total 485 tests collected repo-wide. | None for M1. F1 frozen interfaces ready for M2 consumers. |
+| M2 — Inspection & Language Analysis | Planned; ready to begin | Supported languages/frameworks and current Phase 2 artifact classifier verified. Frozen M1 input and stage contracts available. | Complete parser spike; approve F2; implement inventory, detection, and language/framework analyzers. |
 | M3 — IR & Semantic Analysis | Planned; not implemented | Master IR/identity rules inspected; no current IR code exists. | Approve F3 IR v1; implement/validate/golden-test. |
 | M4 — Identity & Architecture Model | Planned; not implemented | Master canonical model/publication rules inspected; no current model code exists. | Approve F3 and M4 persistence; implement model persistence/publication/result APIs. |
 | M5 — Frontend Integration | Planned; blocked on integration ADR details | Express is the approved frontend/platform boundary. | Freeze Express-to-Python lifecycle/result proxy contracts, delegated errors, and SSE relay after M1/M4 DTOs and the integration ADR are approved. |
 | M6 — Integration & Evaluation | Planned; frontend E2E blocked on ADR details | CI quality commands and current test organization verified. | Build backend fixtures/goldens throughout; browser-to-worker E2E waits for the approved service boundary. |
 
-No application behavior was implemented during this planning pass. Only this handoff document was restructured.
+Phase 3 M1 (Analysis Foundation & Execution Infrastructure: Batches 1, 2, and 3) is fully implemented and verified. No M2 parsing, M3 IR, M4 Architecture persistence/results, or frontend routes were created, preserving strict phase boundaries.
 
 ---
 
@@ -966,9 +966,14 @@ No application behavior was implemented during this planning pass. Only this han
 
 ### 7.4 Current handoff
 
-- **Current phase:** Phase 3 planning complete; implementation has not begun.
-- **Plan status:** Phase plan revised; detailed M1 three-batch draft ready for project-owner review and explicit Batch 1/F1 approval.
-- **Branch:** `feature_mannan` verified before planning.
-- **Last verified baseline:** 330 Python tests collected; frontend tests and production build passed; working tree was clean before this document edit.
-- **Blockers:** M1 Batch 1 waits for the F1 lifecycle/snapshot decisions in §4.6.9; Batch 2 reference constraints and Batch 3 API/security work wait for the integration ADR. M2/M3 parallel work waits for F2; M3/M4 integration waits for F3. M5 live proxy/SSE work and the frontend/E2E portion of M6 also wait for the ADR details. All implementation statuses remain planned.
-- **Recommended next action:** Review §4.6, resolve the five F1 owner decisions and the immutable snapshot mapping, then explicitly approve **M1 Batch 1 only**. Complete the integration ADR before Batch 2 reference constraints are frozen and before any Batch 3 internal API is implemented.
+- **Current phase:** Phase 3 in progress; Module 1 (Analysis Foundation & Execution Infrastructure) fully implemented and verified across all 3 batches.
+- **Plan status:** Module 1 complete with 155 passing unit, integration, concurrency, recovery, API, SSE, and E2E tests (`tests/p3/analysis/`). Celery worker infrastructure configured, RabbitMQ service added to compose, internal FastAPI lifecycle router mounted, and SSE streaming verified.
+- **Frozen M1 Interfaces for M2:**
+  - `AnalysisInput` & `AnalysisArtifact` (`backend.platform.analysis.domain.input`): immutable snapshot boundary with lazy `ArtifactContentReader`.
+  - `AnalysisExecutionContext` (`backend.platform.analysis.application.orchestrator`): context passed to stage handlers providing access to input, progress reporting, diagnostic recording, and cooperative cancellation checking (`is_cancellation_requested()`).
+  - `AnalysisStageHandler` & `StageHandlerRegistry` (`backend.platform.analysis.application.registry`): stage execution contract and registration container.
+  - `AnalysisDiagnostic` (`backend.platform.analysis.domain.diagnostic`): shared cross-module diagnostic model with severity, categorization, code, and bounded source location.
+  - Lifecycle state machine: Section 9 states, optimistic concurrency control, terminal immutability, and 30m timeout enforcement.
+- **Branch:** `feature_manisha` verified.
+- **Last verified baseline:** 485 Python tests collected repo-wide; all 155 M1 tests passing; Black, Ruff, and strict Mypy passing cleanly across all 166 backend and test source files; Alembic offline SQL migration verified.
+- **Recommended next action:** Proceed to Module 2 (Repository Inspection & Language Analysis) — start with the Python 3.14 Tree-sitter / parser-neutral syntax spike and deterministic artifact inventory.
