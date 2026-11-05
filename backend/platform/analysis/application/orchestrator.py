@@ -6,7 +6,7 @@ import logging
 import signal
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
@@ -54,18 +54,86 @@ from backend.platform.errors import (
 logger = logging.getLogger(__name__)
 
 
+class _PosixSignalPlatform:
+    """Cross-platform abstraction isolating POSIX-only signal APIs.
+
+    Provides typed access to POSIX signal features (pthread_sigmask,
+    setitimer, ITIMER_REAL, SIGALRM, etc.) on platforms where they are available,
+    while cleanly degrading on Windows and satisfying static type checkers
+    without blanket type ignores.
+    """
+
+    _pthread_sigmask: Callable[[int, Iterable[int]], set[int]] | None = getattr(
+        signal, "pthread_sigmask", None
+    )
+    _setitimer: Callable[..., tuple[float, float]] | None = getattr(
+        signal, "setitimer", None
+    )
+    SIG_BLOCK: int | None = getattr(signal, "SIG_BLOCK", None)
+    SIG_SETMASK: int | None = getattr(signal, "SIG_SETMASK", None)
+    SIGALRM: int | None = getattr(signal, "SIGALRM", None)
+    ITIMER_REAL: int | None = getattr(signal, "ITIMER_REAL", None)
+
+    @classmethod
+    def can_mask(cls) -> bool:
+        """Return True if POSIX signal mask manipulation is supported."""
+        return (
+            cls._pthread_sigmask is not None
+            and cls.SIG_BLOCK is not None
+            and cls.SIG_SETMASK is not None
+            and cls.SIGALRM is not None
+        )
+
+    @classmethod
+    def pthread_sigmask(cls, how: int, mask: Iterable[int]) -> set[int]:
+        """Call signal.pthread_sigmask if supported on this platform."""
+        if cls._pthread_sigmask is None:
+            raise NotImplementedError(
+                "pthread_sigmask is not supported on this platform"
+            )
+        return cls._pthread_sigmask(how, mask)
+
+    @classmethod
+    def can_interrupt(cls) -> bool:
+        """Return True if synchronous setitimer alarms are supported."""
+        return (
+            threading.current_thread() is threading.main_thread()
+            and cls._setitimer is not None
+            and cls.ITIMER_REAL is not None
+            and cls.SIGALRM is not None
+        )
+
+    @classmethod
+    def setitimer(
+        cls, which: int, seconds: float, interval: float = 0.0
+    ) -> tuple[float, float]:
+        """Call signal.setitimer if supported on this platform."""
+        if cls._setitimer is None:
+            raise NotImplementedError("setitimer is not supported on this platform")
+        return cls._setitimer(which, seconds, interval)
+
+
 @contextmanager
 def _protect_persistence_from_deadline() -> Iterator[None]:
     """Defer SIGALRM while a handler callback mutates its DB transaction."""
-    can_mask = hasattr(signal, "pthread_sigmask") and hasattr(signal, "SIG_BLOCK")
-    if not can_mask:
+    if (
+        not _PosixSignalPlatform.can_mask()
+        or _PosixSignalPlatform.SIG_BLOCK is None
+        or _PosixSignalPlatform.SIG_SETMASK is None
+        or _PosixSignalPlatform.SIGALRM is None
+    ):
         yield
         return
-    previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+
+    sig_block = _PosixSignalPlatform.SIG_BLOCK
+    sig_setmask = _PosixSignalPlatform.SIG_SETMASK
+    sigalrm = _PosixSignalPlatform.SIGALRM
+
+    previous_mask = _PosixSignalPlatform.pthread_sigmask(sig_block, {sigalrm})
     try:
         yield
     finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        _PosixSignalPlatform.pthread_sigmask(sig_setmask, previous_mask)
 
 
 @contextmanager
@@ -74,31 +142,33 @@ def _execution_deadline(seconds: float) -> Iterator[None]:
     if seconds <= 0:
         raise AnalysisTimeoutError("Analysis execution deadline was exhausted.")
     started = time.monotonic()
-    can_interrupt = threading.current_thread() is threading.main_thread() and hasattr(
-        signal, "setitimer"
-    )
+    can_interrupt = _PosixSignalPlatform.can_interrupt()
     previous_handler: Any = None
     previous_timer = (0.0, 0.0)
-    if can_interrupt:
+
+    sigalrm = _PosixSignalPlatform.SIGALRM
+    itimer_real = _PosixSignalPlatform.ITIMER_REAL
+
+    if can_interrupt and sigalrm is not None and itimer_real is not None:
 
         def _raise_timeout(signum: int, frame: Any) -> None:
             raise AnalysisTimeoutError(
                 f"Stage exceeded its execution deadline of {seconds:.1f}s."
             )
 
-        previous_handler = signal.getsignal(signal.SIGALRM)
-        signal.signal(signal.SIGALRM, _raise_timeout)
-        previous_timer = signal.setitimer(signal.ITIMER_REAL, seconds)
+        previous_handler = signal.getsignal(sigalrm)
+        signal.signal(sigalrm, _raise_timeout)
+        previous_timer = _PosixSignalPlatform.setitimer(itimer_real, seconds)
     try:
         yield
     finally:
         elapsed = time.monotonic() - started
-        if can_interrupt:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, previous_handler)
+        if can_interrupt and sigalrm is not None and itimer_real is not None:
+            _PosixSignalPlatform.setitimer(itimer_real, 0.0)
+            signal.signal(sigalrm, previous_handler)
             if previous_timer[0] > 0:
-                signal.setitimer(
-                    signal.ITIMER_REAL,
+                _PosixSignalPlatform.setitimer(
+                    itimer_real,
                     max(0.0, previous_timer[0] - elapsed),
                     previous_timer[1],
                 )
