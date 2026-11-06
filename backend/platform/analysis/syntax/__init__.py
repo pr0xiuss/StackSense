@@ -10,6 +10,12 @@ from backend.platform.analysis.syntax.base import (
 )
 from backend.platform.analysis.syntax.executor import ParserExecutor
 from backend.platform.analysis.syntax.javascript import TreeSitterJsTsAdapter
+from backend.platform.analysis.syntax.limits import (
+    DEFAULT_MAX_FACTS_PER_ANALYSIS,
+    DEFAULT_MAX_FACTS_PER_ARTIFACT,
+    DEFAULT_MAX_SERIALIZED_F2_BYTES,
+    FactLimitExceededError,
+)
 from backend.platform.analysis.syntax.model import (
     DeclarationFact,
     DeclarationKind,
@@ -34,9 +40,13 @@ from backend.platform.analysis.syntax.python import PythonAstAdapter
 __all__ = [
     "DeclarationFact",
     "DeclarationKind",
+    "DEFAULT_MAX_FACTS_PER_ANALYSIS",
+    "DEFAULT_MAX_FACTS_PER_ARTIFACT",
+    "DEFAULT_MAX_SERIALIZED_F2_BYTES",
     "ExportFact",
     "ExportKind",
     "FrameworkFact",
+    "FactLimitExceededError",
     "ImportFact",
     "ImportKind",
     "ManifestFact",

@@ -5,10 +5,11 @@ from __future__ import annotations
 import io
 import re
 import tokenize
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
-from uuid import UUID, uuid4
+from uuid import UUID, uuid5
 
 from backend.platform.analysis.domain.constants import (
     DiagnosticCategory,
@@ -17,6 +18,7 @@ from backend.platform.analysis.domain.constants import (
     FailureRetryability,
 )
 from backend.platform.analysis.domain.diagnostic import AnalysisDiagnostic
+from backend.platform.analysis.syntax.limits import DEFAULT_MAX_FACTS_PER_ARTIFACT
 from backend.platform.analysis.syntax.model import (
     SourceEncodingMetadata,
     SyntaxDocument,
@@ -39,6 +41,15 @@ class ParserRequest:
     configuration_fingerprint: str = ""
     deadline_seconds: float = 30.0
     max_file_size_bytes: int = 5 * 1024 * 1024
+    max_facts_per_artifact: int = DEFAULT_MAX_FACTS_PER_ARTIFACT
+
+    def __post_init__(self) -> None:
+        if self.deadline_seconds <= 0:
+            raise ValueError("deadline_seconds must be positive")
+        if self.max_file_size_bytes <= 0:
+            raise ValueError("max_file_size_bytes must be positive")
+        if self.max_facts_per_artifact <= 0:
+            raise ValueError("max_facts_per_artifact must be positive")
 
 
 @dataclass(frozen=True)
@@ -100,7 +111,9 @@ def normalize_source_encoding(
     detected_encoding = "utf-8"
 
     if norm_lang == "python":
-        bio = io.BytesIO(raw_content)
+        # PEP 263 detection must see the original BOM so a conflicting coding
+        # cookie is rejected and UTF-8-SIG is recorded accurately.
+        bio = io.BytesIO(content)
         try:
             detected_encoding, _ = tokenize.detect_encoding(bio.readline)
         except Exception as exc:
@@ -109,7 +122,7 @@ def normalize_source_encoding(
             ) from exc
 
         try:
-            text = raw_content.decode(detected_encoding)
+            text = content.decode(detected_encoding)
         except Exception as exc:
             msg = (
                 f"Strict decode failed using detected encoding "
@@ -161,6 +174,18 @@ def sanitize_diagnostic_text(text: str) -> str:
     return _SENSITIVE_KEY_PATTERN.sub(r"\1=***", sanitized)
 
 
+def _sanitize_diagnostic_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return sanitize_diagnostic_text(value)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _sanitize_diagnostic_value(item) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return tuple(_sanitize_diagnostic_value(item) for item in value)
+    return value
+
+
 def create_parsing_diagnostic(
     analysis_id: UUID | None,
     artifact_id: UUID,
@@ -177,14 +202,23 @@ def create_parsing_diagnostic(
     safe_details: dict[str, Any] = {}
     if details:
         for k, v in details.items():
-            if isinstance(v, str):
-                safe_details[k] = sanitize_diagnostic_text(v)
-            else:
-                safe_details[k] = v
+            safe_details[k] = _sanitize_diagnostic_value(v)
+
+    resolved_analysis_id = analysis_id or artifact_id
+    diagnostic_name = "|".join(
+        (
+            "m2",
+            code,
+            artifact_path,
+            str(source_line or 0),
+            str(source_column or 0),
+            safe_message,
+        )
+    )
 
     return AnalysisDiagnostic(
-        id=uuid4(),
-        analysis_id=analysis_id or uuid4(),
+        id=uuid5(resolved_analysis_id, diagnostic_name),
+        analysis_id=resolved_analysis_id,
         code=code,
         category=DiagnosticCategory.PARSING,
         severity=severity,

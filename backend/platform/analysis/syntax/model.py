@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
@@ -185,9 +186,12 @@ class FrameworkFact:
     artifact_id: UUID
     fact_type: str
     name: str
-    details: dict[str, Any]
+    details: Mapping[str, Any]
     supporting_fact_keys: tuple[str, ...]
     range: SourceRange | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "details", _freeze_json_mapping(self.details))
 
 
 @dataclass(frozen=True)
@@ -212,6 +216,20 @@ SyntaxFact = (
     | FrameworkFact
     | ManifestFact
 )
+
+
+def _freeze_json_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _freeze_json_mapping(value)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json_value(item) for item in value)
+    return value
+
+
+def _freeze_json_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    return MappingProxyType(
+        {key: _freeze_json_value(item) for key, item in sorted(value.items())}
+    )
 
 
 def build_fact_key(
@@ -259,8 +277,14 @@ def fact_sort_key(fact: SyntaxFact) -> tuple[int, int, str, str]:
 
 
 def sort_facts(facts: Iterable[SyntaxFact]) -> tuple[SyntaxFact, ...]:
-    """Deterministically sort syntax facts."""
-    return tuple(sorted(facts, key=fact_sort_key))
+    """Deduplicate identical evidence and deterministically sort syntax facts."""
+    facts_by_key: dict[str, SyntaxFact] = {}
+    for fact in facts:
+        previous = facts_by_key.get(fact.fact_key)
+        if previous is not None and previous != fact:
+            raise ValueError(f"Conflicting facts share fact_key: {fact.fact_key}")
+        facts_by_key[fact.fact_key] = fact
+    return tuple(sorted(facts_by_key.values(), key=fact_sort_key))
 
 
 @dataclass(frozen=True)

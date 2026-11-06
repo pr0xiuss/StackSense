@@ -27,6 +27,10 @@ from backend.platform.analysis.syntax.model import (
     ReferenceKind,
 )
 from backend.platform.analysis.syntax.python import PythonAstAdapter
+from backend.platform.analysis.syntax.sandbox import (
+    ParserSandboxError,
+    _apply_resource_limits,
+)
 
 
 def test_python_adapter_valid_source_and_canonical_ranges() -> None:
@@ -95,6 +99,7 @@ def test_python_adapter_utf8_bom_and_crlf_preservation() -> None:
     assert res.document is not None
     doc = res.document
     assert doc.encoding_metadata.has_bom is True
+    assert doc.encoding_metadata.detected_encoding.lower() == "utf-8-sig"
 
     fn_fact = next(f for f in doc.facts if getattr(f, "name", "") == "sample")
     # Coordinates must index into canonical bytes without the 3-byte BOM
@@ -104,6 +109,23 @@ def test_python_adapter_utf8_bom_and_crlf_preservation() -> None:
         fn_fact.declaration_range.start_byte : fn_fact.declaration_range.end_byte
     ]
     assert extracted.startswith(b"def sample():\r\n")
+
+
+def test_python_bom_conflicting_encoding_cookie_fails_strictly() -> None:
+    """A UTF-8 BOM cannot be combined with a conflicting PEP 263 cookie."""
+    content = b"\xef\xbb\xbf# coding: latin-1\nvalue = 1\n"
+    result = PythonAstAdapter().parse(
+        ParserRequest(
+            artifact_id=uuid4(),
+            path="src/conflicting_encoding.py",
+            content=content,
+            language="python",
+        )
+    )
+
+    assert result.success is False
+    assert result.document is None
+    assert result.diagnostics[0].code == "source_decode_error"
 
 
 def test_python_adapter_pep263_latin1_encoding() -> None:
@@ -151,6 +173,27 @@ def test_python_adapter_syntax_error_handling() -> None:
     assert diag.code == "syntax_error"
     assert diag.category == DiagnosticCategory.PARSING
     assert diag.source_line is not None
+    assert "text" not in diag.details
+
+
+def test_python_decorator_facts_never_retain_literal_arguments() -> None:
+    """Decorator evidence keeps the structural name without secret arguments."""
+    source = b'@auth.require(token="literal-secret")\ndef handler():\n    pass\n'
+    result = PythonAstAdapter().parse(
+        ParserRequest(
+            artifact_id=uuid4(),
+            path="src/handler.py",
+            content=source,
+            language="python",
+        )
+    )
+
+    assert result.document is not None
+    declaration = next(
+        fact for fact in result.document.facts if getattr(fact, "name", "") == "handler"
+    )
+    assert declaration.decorators == ("auth.require",)
+    assert "literal-secret" not in str(declaration)
 
 
 def test_python_adapter_file_size_ceiling() -> None:
@@ -531,27 +574,38 @@ def test_windows_job_object_assign_failure_kills_child_and_fails_closed(
     sys.platform == "win32",
     reason="POSIX resource limit tests require POSIX",
 )
-def test_posix_setrlimit_failure_fails_closed(
+def test_posix_resource_limit_failure_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Verify ParserExecutor fails closed if POSIX resource.setrlimit fails."""
+    """Verify the child sandbox fails closed if a resource limit cannot apply."""
     import resource
 
     def mock_setrlimit(*args: Any, **kwargs: Any) -> None:
         raise OSError(1, "Operation not permitted")
 
     monkeypatch.setattr(resource, "setrlimit", mock_setrlimit)
+    with pytest.raises(ParserSandboxError, match="Unable to apply RLIMIT_AS"):
+        _apply_resource_limits(max_memory_mb=512, cpu_seconds=30.0)
+
+
+def test_bounded_ipc_input_write_cannot_bypass_deadline() -> None:
+    """A child that never reads stdin cannot deadlock the pytest process."""
     executor = ParserExecutor()
-    req = ParserRequest(
-        artifact_id=uuid4(),
-        path="src/app.py",
-        content=b"x = 1\n",
-        language="python",
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(10)"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    res = executor.execute(req)
-    assert res.success is False
-    assert len(res.diagnostics) == 1
-    assert res.diagnostics[0].code == "parser_isolation_failed"
+    with pytest.raises(subprocess.TimeoutExpired):
+        executor._communicate_bounded(
+            proc=proc,
+            input_data=b"A" * (2 * 1024 * 1024),
+            deadline=0.1,
+            max_stdout_bytes=1024,
+            max_stderr_bytes=1024,
+        )
+    assert proc.poll() is not None
 
 
 def test_truly_bounded_stdout_streaming_kills_child_early() -> None:
@@ -620,12 +674,14 @@ def test_parser_executor_from_settings() -> None:
         parser_max_file_size_bytes=2 * 1024 * 1024,
         parser_max_memory_mb=256,
         parser_max_stderr_bytes=512 * 1024,
+        parser_max_facts_per_artifact=12_345,
     )
     executor = ParserExecutor.from_settings(settings=custom_settings)
     assert executor._default_timeout_seconds == 45.0
     assert executor._max_file_size_bytes == 2 * 1024 * 1024
     assert executor._max_memory_mb == 256
     assert executor._max_stderr_bytes == 512 * 1024
+    assert executor._max_facts_per_artifact == 12_345
 
     # Default fallback to get_settings()
     default_executor = ParserExecutor.from_settings()
@@ -633,6 +689,7 @@ def test_parser_executor_from_settings() -> None:
     assert default_executor._max_file_size_bytes == 5 * 1024 * 1024
     assert default_executor._max_memory_mb == 512
     assert default_executor._max_stderr_bytes == 1024 * 1024
+    assert default_executor._max_facts_per_artifact == 25_000
 
 
 def test_diagnostic_credential_and_secret_redaction() -> None:
@@ -651,6 +708,7 @@ def test_diagnostic_credential_and_secret_redaction() -> None:
         message=raw_msg,
         details={
             "raw_exception": "api_key=sk-1234567890abcdef",
+            "nested": {"password": "password=still-hidden"},
             "safe_metric": 42,
         },
     )
@@ -660,6 +718,7 @@ def test_diagnostic_credential_and_secret_redaction() -> None:
     assert "hidden_pwd" not in diag.message
     assert "***" in diag.message
     assert "sk-1234567890abcdef" not in str(diag.details)
+    assert "still-hidden" not in str(diag.details)
     assert diag.details["safe_metric"] == 42
 
 

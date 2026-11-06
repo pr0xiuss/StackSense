@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+import codecs
 import json
 import sys
 from uuid import UUID
 
+from backend.platform.analysis.inspection.model import _serialize_json_value
 from backend.platform.analysis.syntax.base import (
     ParserAdapter,
     ParserRequest,
@@ -14,15 +16,40 @@ from backend.platform.analysis.syntax.base import (
 )
 from backend.platform.analysis.syntax.javascript import TreeSitterJsTsAdapter
 from backend.platform.analysis.syntax.python import PythonAstAdapter
+from backend.platform.analysis.syntax.sandbox import (
+    apply_parser_sandbox,
+    verify_parser_sandbox,
+)
+
+
+def _preload_source_codecs() -> None:
+    """Load supported source codecs before filesystem access is denied."""
+    for encoding in ("utf-8", "utf-8-sig", "latin-1", "iso-8859-1", "cp1252"):
+        codecs.lookup(encoding)
 
 
 def main() -> None:
     """Read a single ParserRequest from stdin, parse, and write result to stdout."""
     try:
+        if len(sys.argv) == 4 and sys.argv[1] == "--probe":
+            _preload_source_codecs()
+            apply_parser_sandbox(
+                max_memory_mb=int(sys.argv[2]), cpu_seconds=float(sys.argv[3])
+            )
+            verify_parser_sandbox()
+            sys.stdout.write(json.dumps({"sandbox": "ready"}))
+            return
+
         raw_input = sys.stdin.read()
         if not raw_input:
             sys.exit(1)
         req_dict = json.loads(raw_input)
+
+        _preload_source_codecs()
+        apply_parser_sandbox(
+            max_memory_mb=int(req_dict["sandbox_max_memory_mb"]),
+            cpu_seconds=float(req_dict["sandbox_cpu_seconds"]),
+        )
 
         content = base64.b64decode(req_dict["content_b64"])
         artifact_id = UUID(req_dict["artifact_id"])
@@ -41,6 +68,7 @@ def main() -> None:
             max_file_size_bytes=int(
                 req_dict.get("max_file_size_bytes", 5 * 1024 * 1024)
             ),
+            max_facts_per_artifact=int(req_dict.get("max_facts_per_artifact", 25_000)),
         )
 
         norm_lang = req.language.lower().strip()
@@ -68,8 +96,6 @@ def main() -> None:
         # Serialize document and diagnostics
         doc_dict = None
         if result.document is not None:
-            from backend.platform.analysis.inspection.model import _serialize_json_value
-
             doc_dict = _serialize_json_value(result.document)
 
         diag_dicts = []

@@ -1,10 +1,10 @@
 # F2 — Repository Inspection and Syntax Evidence Contract v1.0.0
 
-Status: **PROPOSED / DESIGN BASELINE FROZEN**  
+Status: **FROZEN / IMPLEMENTED**
 Owner: Phase 3 Module 2 (Repository Inspection & Language Analysis)  
 Consumer: Phase 3 Module 3 (Intermediate Representation & Semantic Analysis)  
 Version: `1.0.0`  
-Last Updated: 2026-11-05  
+Last Updated: 2026-11-06
 
 ---
 
@@ -204,11 +204,33 @@ class RepositoryInspectionResult:
 2. **Resource Limits:**
    - Per-file hard wall-clock timeout: default 30.0 seconds.
    - Per-file maximum size: default 5 MiB (5,242,880 bytes).
+   - Per-artifact syntax facts: maximum 25,000.
+   - Per-analysis syntax facts: maximum 250,000.
+   - Canonical serialized F2 result: maximum 50 MiB (52,428,800 bytes).
    - Hard process memory ceiling: 512 MiB.
+   - Child CPU time, output file size, open file descriptor count, process count,
+     and core dump size are constrained with kernel resource limits.
 3. **Environment Stripping:** The child process receives an allowlisted environment with all secrets, tokens, cloud credentials, and database URLs stripped.
-4. **No Network Access:** Child processes are strictly prohibited from network connectivity.
+4. **No Network or Host-File Access:** On the supported Linux worker platform,
+   a seccomp filter returns `EPERM` for socket/network syscalls and for opening or
+   mutating host files after trusted parser modules and approved source codecs are
+   loaded. Source is supplied only through bounded stdin IPC; repository source
+   paths are never passed as filesystem capabilities.
 5. **No Code Execution:** Parsers parse grammar and AST/CST only. Untrusted source code is never executed, imported, or loaded as a Python module.
 6. **Descriptor Isolation:** Unrelated file descriptors and sockets are closed (`close_fds=True`).
+7. **Fail-Closed Startup:** A child probe verifies the same kernel sandbox used
+   for parsing. Unsupported platforms, missing seccomp support, failed resource
+   limits, or ineffective network/filesystem denial make parsing unavailable;
+   no weaker in-process fallback is permitted.
+8. **Bounded IPC:** stdin, stdout, and stderr are handled concurrently under the
+   wall-clock deadline. A child that does not read input, exceeds either output
+   ceiling, or leaves an IPC thread blocked is forcibly terminated.
+9. **Atomic Cap Failure:** Crossing any fact or serialized-result cap emits the
+   shared `resource_limit_exceeded` diagnostic and marks the affected artifact or
+   repository result failed. An incomplete or apparently successful truncated fact
+   set is never returned. Per-artifact failure discards that artifact's facts while
+   independent artifacts continue; aggregate cap failure rejects all accumulated
+   syntax documents for that result.
 
 ---
 
@@ -223,5 +245,16 @@ class RepositoryInspectionResult:
 
 ## 7. Change Control
 
-F2 v1.0.0 design baseline is frozen. Any breaking change (modifying existing fields, changing coordinate semantics, or altering fact keys) requires a major version increment (`2.0.0`) and joint approval from both M2 and M3 module owners.
+F2 v1.0.0 is implemented, contract-tested, consumer-reviewed, owner-approved,
+and frozen as of 2026-11-06. The consumer review exercised the immutable
+parser-neutral result through the M3 consumer stub and confirmed that no parser
+object, source byte, M2 service, or recovery operation is required by a consumer.
+M3 implementation has not started. Any breaking change (modifying existing
+fields, changing coordinate semantics, or altering fact keys) requires a major
+version increment (`2.0.0`) and joint approval from both M2 and M3 module owners.
+
+Freeze verification: focused M2 tests passed `71` tests with `3` platform-only
+skips; the full Python regression passed `568` tests with `3` platform-only skips.
+Full Ruff, strict Mypy over `171` backend source files, full-project sequential
+Black, dependency consistency, and diff-whitespace checks passed.
 
