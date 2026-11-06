@@ -314,6 +314,9 @@ def test_repository_inspection_result_canonical_json_and_immutability() -> None:
     assert parsed["inventory"][0]["analysis_role"] == "semantic"
     assert parsed["inventory"][0]["processing_outcome"] == "analyzed"
 
+    with pytest.raises(TypeError):
+        coverage.role_counts["semantic"] = 2  # type: ignore[index]
+
     # Incompatible version rejection
     with pytest.raises(ValueError, match="Unsupported F2 contract version"):
         RepositoryInspectionResult(

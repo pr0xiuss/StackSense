@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     parser_max_file_size_bytes: int = Field(default=5 * 1024 * 1024, gt=0)
     parser_max_memory_mb: int = Field(default=512, ge=64, le=4096)
     parser_max_stderr_bytes: int = Field(default=1024 * 1024, gt=0)
+    parser_max_facts_per_artifact: int = Field(default=25_000, ge=1)
+    parser_max_facts_per_analysis: int = Field(default=250_000, ge=1)
+    parser_max_serialized_f2_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
 
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"

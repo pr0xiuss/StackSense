@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 from collections.abc import Iterable
 from pathlib import PurePosixPath
 from typing import Any
@@ -89,12 +90,24 @@ BUILD_CACHE_DIRECTORIES: tuple[str, ...] = (
     ".ruff_cache/",
 )
 
+DEFAULT_MAX_ANALYZABLE_FILE_SIZE_BYTES = 5 * 1024 * 1024
+
 
 class InventoryBuilder:
     """Builds and classifies an immutable repository inventory."""
 
-    def __init__(self, configuration: AnalysisConfiguration | None = None) -> None:
+    def __init__(
+        self,
+        configuration: AnalysisConfiguration | None = None,
+        max_analyzable_file_size_bytes: int = DEFAULT_MAX_ANALYZABLE_FILE_SIZE_BYTES,
+    ) -> None:
         self.configuration = configuration or AnalysisConfiguration()
+        if max_analyzable_file_size_bytes <= 0:
+            raise ValueError("max_analyzable_file_size_bytes must be positive")
+        self._max_analyzable_file_size_bytes = min(
+            self.configuration.max_file_size_bytes,
+            max_analyzable_file_size_bytes,
+        )
         self._exclude_spec: pathspec.PathSpec[Any] | None = None
         self._include_spec: pathspec.PathSpec[Any] | None = None
 
@@ -113,11 +126,22 @@ class InventoryBuilder:
 
     def _normalize_path(self, path: str) -> str:
         """Return normalized repository-relative POSIX path."""
-        p = path.replace("\\", "/").strip()
-        while p.startswith("/"):
-            p = p[1:]
+        if not path or "\x00" in path:
+            raise ValueError("Artifact path must be a non-empty safe relative path")
+        p = path.replace("\\", "/")
+        if p.startswith("/"):
+            raise ValueError(f"Artifact path must be repository-relative: {path}")
         while p.startswith("./"):
             p = p[2:]
+        parts = PurePosixPath(p).parts
+        if (
+            not p
+            or p == "."
+            or posixpath.normpath(p) != p
+            or any(part in ("", ".", "..") for part in parts)
+            or (parts and parts[0].endswith(":"))
+        ):
+            raise ValueError(f"Artifact path is not safely normalized: {path}")
         return p
 
     def detect_language_from_path(self, path: str) -> str | None:
@@ -214,7 +238,7 @@ class InventoryBuilder:
             reasons.append("generated_code")
 
         # Rule 1d: Oversized file ceiling
-        elif artifact.size_bytes > self.configuration.max_file_size_bytes:
+        elif artifact.size_bytes > self._max_analyzable_file_size_bytes:
             role = ArtifactAnalysisRole.METADATA_ONLY
             outcome = ArtifactProcessingOutcome.EXCLUDED
             reasons.append("oversized_file")
@@ -315,6 +339,9 @@ class InventoryBuilder:
         entries = [self.classify_artifact(art) for art in artifacts]
         # Sort lexicographically by normalized relative path
         sorted_entries = tuple(sorted(entries, key=lambda e: e.path))
+        paths = [entry.path for entry in sorted_entries]
+        if len(paths) != len(set(paths)):
+            raise ValueError("Artifact inventory contains duplicate normalized paths")
 
         total_bytes = sum(e.size_bytes for e in sorted_entries)
         role_counts: dict[str, int] = {}

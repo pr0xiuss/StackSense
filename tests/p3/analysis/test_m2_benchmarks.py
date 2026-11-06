@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import resource
+import sys
 import time
 import tracemalloc
 from pathlib import Path
@@ -10,6 +12,7 @@ from uuid import uuid4
 
 from backend.platform.analysis.inspection.model import _serialize_json_value
 from backend.platform.analysis.syntax.base import ParserRequest, ParserResult
+from backend.platform.analysis.syntax.executor import ParserExecutor
 from backend.platform.analysis.syntax.javascript import TreeSitterJsTsAdapter
 from backend.platform.analysis.syntax.python import PythonAstAdapter
 
@@ -127,7 +130,7 @@ def test_m2_benchmark_representative_fixtures() -> None:
 
 
 def test_m2_benchmark_synthetic_and_boundary_files() -> None:
-    """Benchmark synthetic small (1 KB), median (50 KB), and boundary (1 MiB) files."""
+    """Benchmark small/median files and 1 MiB high-fact-density stress cases."""
     py_adapter = PythonAstAdapter()
     js_adapter = TreeSitterJsTsAdapter()
 
@@ -151,12 +154,14 @@ def test_m2_benchmark_synthetic_and_boundary_files() -> None:
             language=language,
         )
 
-        tracemalloc.start()
+        # Wall-clock deadlines must measure the extractor itself. Tracemalloc
+        # instruments every allocation and can add enough overhead to turn this
+        # into a profiler benchmark rather than a parser deadline check. The
+        # process high-water RSS below records memory without altering execution.
         start_time = time.perf_counter()
         res = adapter.parse(req)
         exec_time = time.perf_counter() - start_time
-        current_mem, peak_mem = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
+        peak_mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
         assert res.success is True
         assert res.document is not None
@@ -172,7 +177,7 @@ def test_m2_benchmark_synthetic_and_boundary_files() -> None:
             "fact_count": len(res.document.facts),
             "serialized_bytes": serialized_bytes,
             "exec_time_seconds": round(exec_time, 4),
-            "peak_mem_mb": round(peak_mem / (1024 * 1024), 2),
+            "peak_mem_mb": round(peak_mem_mb, 2),
         }
         benchmark_records.append(record)
 
@@ -197,4 +202,60 @@ def test_m2_benchmark_synthetic_and_boundary_files() -> None:
     # Assert bounded execution
     for rec in benchmark_records:
         assert rec["exec_time_seconds"] < 30.0  # within 30s deadline
-        assert rec["peak_mem_mb"] < 256.0  # within 512 MB memory boundary
+        assert rec["peak_mem_mb"] < 512.0  # approved process memory boundary
+
+
+def test_m2_benchmark_exact_five_mib_isolated_boundary() -> None:
+    """Measure exact 5 MiB inputs through the production child sandbox."""
+    if sys.platform != "linux":
+        import pytest
+
+        pytest.skip("The production parser sandbox currently targets Linux workers")
+
+    boundary = 5 * 1024 * 1024
+    cases = (
+        ("python", b"#" + (b"x" * (boundary - 2)) + b"\n"),
+        ("javascript", b"/*" + (b"x" * (boundary - 4)) + b"*/"),
+    )
+    executor = ParserExecutor()
+    records = []
+
+    for language, content in cases:
+        assert len(content) == boundary
+        parent_rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        child_rss_before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+        started = time.perf_counter()
+        result = executor.execute(
+            ParserRequest(
+                artifact_id=uuid4(),
+                path=f"synthetic/boundary_5mib.{language}",
+                content=content,
+                language=language,
+            )
+        )
+        elapsed = time.perf_counter() - started
+        parent_rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        child_rss_after = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+
+        assert result.success is True, result.error_message
+        assert result.document is not None
+        assert elapsed < 30.0
+        records.append(
+            {
+                "language": language,
+                "size_bytes": len(content),
+                "facts": len(result.document.facts),
+                "elapsed_seconds": round(elapsed, 4),
+                "parent_peak_rss_kib": max(parent_rss_before, parent_rss_after),
+                "child_peak_rss_kib": max(child_rss_before, child_rss_after),
+            }
+        )
+
+    print("\n--- M2 Exact 5 MiB Isolated Boundary Records ---")
+    for record in records:
+        print(
+            f"Language: {record['language']} | Size: 5.0 MiB | "
+            f"Facts: {record['facts']} | Time: {record['elapsed_seconds']:.3f}s | "
+            f"Parent peak RSS: {record['parent_peak_rss_kib']} KiB | "
+            f"Child peak RSS: {record['child_peak_rss_kib']} KiB"
+        )

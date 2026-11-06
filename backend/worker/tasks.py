@@ -37,6 +37,10 @@ from backend.platform.analysis.infra.job_repository import (
     SqlAlchemyStageRepository,
 )
 from backend.platform.analysis.infra.queue import CeleryAnalysisQueuePublisher
+from backend.platform.analysis.inspection.handlers import (
+    M2ExecutionCoordinator,
+    register_m2_stage_handlers,
+)
 from backend.platform.config import get_settings
 from backend.platform.dependency_injection import get_database_engine
 from backend.worker.celery_app import celery_app
@@ -44,20 +48,31 @@ from backend.worker.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 _registry_instance: StageHandlerRegistry | None = None
+_m2_coordinator_instance: M2ExecutionCoordinator | None = None
 
 
 def get_worker_registry() -> StageHandlerRegistry:
     """Return registered production handlers; never fabricate analysis results."""
-    global _registry_instance
+    global _registry_instance, _m2_coordinator_instance
     if _registry_instance is None:
         _registry_instance = StageHandlerRegistry()
+        _m2_coordinator_instance = M2ExecutionCoordinator()
+        register_m2_stage_handlers(_registry_instance, _m2_coordinator_instance)
     return _registry_instance
+
+
+def get_m2_coordinator() -> M2ExecutionCoordinator:
+    """Return the production M2 composition for handoff/recovery integration."""
+    get_worker_registry()
+    assert _m2_coordinator_instance is not None
+    return _m2_coordinator_instance
 
 
 def set_worker_registry(registry: StageHandlerRegistry | None) -> None:
     """Set the worker registry instance for testing or M2-M4 registration."""
-    global _registry_instance
+    global _registry_instance, _m2_coordinator_instance
     _registry_instance = registry
+    _m2_coordinator_instance = None
 
 
 @celery_app.task(

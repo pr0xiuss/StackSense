@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum, StrEnum
+from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
@@ -124,11 +126,20 @@ class InspectionCoverage:
 
     total_artifacts: int
     total_bytes: int
-    role_counts: dict[str, int]
-    outcome_counts: dict[str, int]
-    language_counts: dict[str, int]
+    role_counts: Mapping[str, int]
+    outcome_counts: Mapping[str, int]
+    language_counts: Mapping[str, int]
     processed_artifacts: int
     failed_artifacts: int
+
+    def __post_init__(self) -> None:
+        for field_name in ("role_counts", "outcome_counts", "language_counts"):
+            value = getattr(self, field_name)
+            object.__setattr__(
+                self,
+                field_name,
+                MappingProxyType(dict(sorted(value.items()))),
+            )
 
 
 def _serialize_json_value(val: Any) -> Any:
@@ -140,10 +151,13 @@ def _serialize_json_value(val: Any) -> Any:
         return [_serialize_json_value(item) for item in val]
     if isinstance(val, list):
         return [_serialize_json_value(item) for item in val]
-    if isinstance(val, dict):
+    if isinstance(val, Mapping):
         return {k: _serialize_json_value(v) for k, v in sorted(val.items())}
-    if hasattr(val, "__dataclass_fields__"):
-        return _serialize_json_value(asdict(val))
+    if is_dataclass(val) and not isinstance(val, type):
+        return {
+            field.name: _serialize_json_value(getattr(val, field.name))
+            for field in fields(val)
+        }
     return val
 
 

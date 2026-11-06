@@ -1,11 +1,14 @@
-"""Python built-in AST parser adapter for Phase 3 Module 2."""
+"""Python built-in AST parser and parser-neutral generic fact extraction."""
 
 from __future__ import annotations
 
 import ast
 import hashlib
+import re
 import sys
 import time
+from collections.abc import Callable
+from pathlib import PurePosixPath
 
 from backend.platform.analysis.domain.constants import DiagnosticSeverity
 from backend.platform.analysis.syntax.base import (
@@ -16,14 +19,21 @@ from backend.platform.analysis.syntax.base import (
     create_parsing_diagnostic,
     normalize_source_encoding,
 )
+from backend.platform.analysis.syntax.limits import (
+    FactAccumulator,
+    FactLimitExceededError,
+)
 from backend.platform.analysis.syntax.model import (
     DeclarationFact,
     DeclarationKind,
+    ExportFact,
+    ExportKind,
     ImportFact,
     ImportKind,
     ParseStatus,
     ReferenceFact,
     ReferenceKind,
+    SourceEncodingMetadata,
     SourceRange,
     SyntaxDocument,
     SyntaxFact,
@@ -31,9 +41,12 @@ from backend.platform.analysis.syntax.model import (
     sort_facts,
 )
 
+_SAFE_DOTTED_NAME = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
+_MAX_SIGNATURE_CHARS = 2_048
+
 
 class PythonAstAdapter(ParserAdapter):
-    """Parser adapter using Python's built-in `ast` module."""
+    """Parse Python without executing it and emit parser-neutral F2 facts."""
 
     adapter_id = "python-ast"
     adapter_version = (
@@ -41,331 +54,601 @@ class PythonAstAdapter(ParserAdapter):
     )
     supported_languages = ("python",)
 
+    @staticmethod
+    def _dotted_name(node: ast.AST | None) -> str:
+        if isinstance(node, ast.Call):
+            return PythonAstAdapter._dotted_name(node.func)
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = PythonAstAdapter._dotted_name(node.value)
+            return f"{prefix}.{node.attr}" if prefix else node.attr
+        return ""
+
+    @staticmethod
+    def _safe_annotation(node: ast.AST | None) -> str:
+        """Render bounded structural type syntax without retaining literals."""
+        if node is None:
+            return ""
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return PythonAstAdapter._dotted_name(node)
+        if isinstance(node, ast.Subscript):
+            base = PythonAstAdapter._safe_annotation(node.value)
+            arg = PythonAstAdapter._safe_annotation(node.slice)
+            return f"{base}[{arg}]" if base and arg else base
+        if isinstance(node, (ast.Tuple, ast.List)):
+            return ", ".join(
+                part
+                for item in node.elts
+                if (part := PythonAstAdapter._safe_annotation(item))
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            left = PythonAstAdapter._safe_annotation(node.left)
+            right = PythonAstAdapter._safe_annotation(node.right)
+            return f"{left} | {right}" if left and right else left or right
+        return ""
+
+    @classmethod
+    def _signature(cls, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+        pieces: list[str] = []
+        for arg in (*node.args.posonlyargs, *node.args.args):
+            annotation = cls._safe_annotation(arg.annotation)
+            pieces.append(f"{arg.arg}: {annotation}" if annotation else arg.arg)
+        if node.args.vararg:
+            pieces.append(f"*{node.args.vararg.arg}")
+        for arg in node.args.kwonlyargs:
+            annotation = cls._safe_annotation(arg.annotation)
+            pieces.append(f"{arg.arg}: {annotation}" if annotation else arg.arg)
+        if node.args.kwarg:
+            pieces.append(f"**{node.args.kwarg.arg}")
+        result = f"({', '.join(pieces)})"
+        returns = cls._safe_annotation(node.returns)
+        if returns:
+            result += f" -> {returns}"
+        return result[:_MAX_SIGNATURE_CHARS]
+
+    @staticmethod
+    def _module_name(path: str) -> tuple[str, DeclarationKind]:
+        parts = list(PurePosixPath(path).with_suffix("").parts)
+        if parts and parts[-1] == "__init__":
+            parts.pop()
+            return ".".join(parts) or "__root__", DeclarationKind.PACKAGE
+        return ".".join(parts), DeclarationKind.MODULE
+
     def parse(self, request: ParserRequest) -> ParserResult:
-        """Parse Python source content into a SyntaxDocument."""
         start_time = time.perf_counter()
-
-        # Enforce pre-read file size ceiling
         if len(request.content) > request.max_file_size_bytes:
-            diag = create_parsing_diagnostic(
-                analysis_id=request.analysis_id,
-                artifact_id=request.artifact_id,
-                artifact_path=request.path,
-                code="file_size_exceeded",
-                message=(
-                    f"Artifact exceeds maximum allowed size of "
-                    f"{request.max_file_size_bytes} bytes"
-                ),
-                severity=DiagnosticSeverity.ERROR,
-            )
-            return ParserResult(
-                success=False,
-                document=None,
-                diagnostics=(diag,),
-                execution_time_seconds=time.perf_counter() - start_time,
-                error_message="File size ceiling exceeded",
+            return self._failure(
+                request,
+                start_time,
+                "file_size_exceeded",
+                "Artifact exceeds maximum allowed size of "
+                f"{request.max_file_size_bytes} bytes",
             )
 
-        # Normalize encoding and obtain canonical UTF-8 bytes and text
         try:
             canonical_bytes, text, encoding_meta = normalize_source_encoding(
                 request.content, "python"
             )
         except SourceEncodingError as exc:
-            diag = create_parsing_diagnostic(
-                analysis_id=request.analysis_id,
-                artifact_id=request.artifact_id,
-                artifact_path=request.path,
-                code="source_decode_error",
-                message=f"Strict encoding decode failed: {exc}",
-                severity=DiagnosticSeverity.ERROR,
-            )
-            return ParserResult(
-                success=False,
-                document=None,
-                diagnostics=(diag,),
-                execution_time_seconds=time.perf_counter() - start_time,
-                error_message=str(exc),
+            return self._failure(
+                request,
+                start_time,
+                "source_decode_error",
+                f"Strict encoding decode failed: {exc}",
             )
 
         content_hash = hashlib.sha256(canonical_bytes).hexdigest()
-
-        # Parse AST using decoded text to prevent PEP 263 encoding header conflicts
         try:
             tree = ast.parse(text, filename=request.path)
         except SyntaxError as exc:
             diag = create_parsing_diagnostic(
-                analysis_id=request.analysis_id,
-                artifact_id=request.artifact_id,
-                artifact_path=request.path,
-                code="syntax_error",
-                message=f"Python syntax error: {exc.msg}",
-                severity=DiagnosticSeverity.ERROR,
-                source_line=exc.lineno,
-                source_column=exc.offset,
-                details={"text": exc.text.strip() if exc.text else ""},
-            )
-            doc = SyntaxDocument(
-                artifact_id=request.artifact_id,
-                path=request.path,
-                content_hash=content_hash,
-                language="python",
-                language_version=self.adapter_version,
-                parser_adapter_id=self.adapter_id,
-                parser_adapter_version=self.adapter_version,
-                grammar_abi_version=None,
-                parse_status=ParseStatus.FAILED,
-                encoding_metadata=encoding_meta,
-                facts=(),
-                diagnostic_ids=(str(diag.id),),
+                request.analysis_id,
+                request.artifact_id,
+                request.path,
+                "syntax_error",
+                f"Python syntax error: {exc.msg}",
+                DiagnosticSeverity.ERROR,
+                exc.lineno,
+                exc.offset,
             )
             return ParserResult(
                 success=True,
-                document=doc,
+                document=self._document(
+                    request,
+                    content_hash,
+                    encoding_meta,
+                    ParseStatus.FAILED,
+                    (),
+                    (str(diag.id),),
+                ),
                 diagnostics=(diag,),
                 execution_time_seconds=time.perf_counter() - start_time,
             )
         except Exception as exc:
-            diag = create_parsing_diagnostic(
-                analysis_id=request.analysis_id,
-                artifact_id=request.artifact_id,
-                artifact_path=request.path,
-                code="parser_exception",
-                message=f"Unexpected parser failure: {exc}",
-                severity=DiagnosticSeverity.ERROR,
-            )
-            return ParserResult(
-                success=False,
-                document=None,
-                diagnostics=(diag,),
-                execution_time_seconds=time.perf_counter() - start_time,
-                error_message=str(exc),
+            return self._failure(
+                request,
+                start_time,
+                "parser_exception",
+                f"Unexpected parser failure: {type(exc).__name__}",
             )
 
-        # Build line start offsets for canonical byte range mapping
-        line_start_offsets = [0]
-        for idx, b in enumerate(canonical_bytes):
-            if b == 10:  # \n
-                line_start_offsets.append(idx + 1)
+        line_starts = [0]
+        for index, byte in enumerate(canonical_bytes):
+            if byte == 10:
+                line_starts.append(index + 1)
 
-        def make_range(
-            lineno: int,
-            col_offset: int,
-            end_lineno: int | None,
-            end_col_offset: int | None,
-        ) -> SourceRange:
-            el = end_lineno if end_lineno is not None else lineno
-            ec = end_col_offset if end_col_offset is not None else col_offset
-
-            # Clamp lines
-            lineno = max(1, min(lineno, len(line_start_offsets)))
-            el = max(1, min(el, len(line_start_offsets)))
-
-            start_byte = line_start_offsets[lineno - 1] + col_offset
-            end_byte = line_start_offsets[el - 1] + ec
-            start_byte = max(0, min(start_byte, len(canonical_bytes)))
-            end_byte = max(start_byte, min(end_byte, len(canonical_bytes)))
-
+        def source_range(node: ast.AST) -> SourceRange:
+            line = max(1, min(getattr(node, "lineno", 1), len(line_starts)))
+            end_line = max(
+                line, min(getattr(node, "end_lineno", line), len(line_starts))
+            )
+            column = max(0, getattr(node, "col_offset", 0))
+            end_column = max(0, getattr(node, "end_col_offset", column))
+            start_byte = min(line_starts[line - 1] + column, len(canonical_bytes))
+            end_byte = min(
+                max(start_byte, line_starts[end_line - 1] + end_column),
+                len(canonical_bytes),
+            )
             return SourceRange(
-                start_byte=start_byte,
-                end_byte=end_byte,
-                start_line=lineno,
-                end_line=el,
-                start_column=col_offset,
-                end_column=ec,
+                start_byte,
+                end_byte,
+                line,
+                end_line,
+                column,
+                end_column,
             )
 
-        facts: list[SyntaxFact] = []
+        def identifier_range(
+            node: ast.AST, name: str, keyword_bytes: int
+        ) -> SourceRange:
+            line = getattr(node, "lineno", 1)
+            column = getattr(node, "col_offset", 0) + keyword_bytes
+            proxy = ast.Name(id=name, ctx=ast.Load())
+            proxy.lineno = line
+            proxy.end_lineno = line
+            proxy.col_offset = column
+            proxy.end_col_offset = column + len(name.encode("utf-8"))
+            return source_range(proxy)
 
-        # Extract bootstrap facts (declarations, imports, basic calls)
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                start_line = (
-                    node.decorator_list[0].lineno
-                    if node.decorator_list
-                    else node.lineno
+        def outer_declaration_range(
+            node: ast.AST, decorators: list[ast.expr]
+        ) -> SourceRange:
+            outer = source_range(node)
+            if not decorators:
+                return outer
+            start = source_range(decorators[0])
+            return SourceRange(
+                start.start_byte,
+                outer.end_byte,
+                start.start_line,
+                outer.end_line,
+                start.start_column,
+                outer.end_column,
+            )
+
+        accumulator = FactAccumulator(request.max_facts_per_artifact)
+        try:
+            module_name, module_kind = self._module_name(request.path)
+            last_line = canonical_bytes.rsplit(b"\n", 1)[-1]
+            full_range = SourceRange(
+                0,
+                len(canonical_bytes),
+                1,
+                max(1, encoding_meta.line_count),
+                0,
+                len(last_line),
+            )
+            module_key = build_fact_key(
+                request.path, f"decl_{module_kind.value}", module_name, full_range
+            )
+            accumulator.add(
+                DeclarationFact(
+                    module_key,
+                    module_kind,
+                    module_name,
+                    module_name,
+                    None,
+                    (),
+                    (),
+                    None,
+                    full_range,
+                    full_range,
                 )
-                start_col = (
-                    node.decorator_list[0].col_offset
-                    if node.decorator_list
-                    else node.col_offset
+            )
+
+            stack: list[tuple[ast.AST, str, str, bool]] = [
+                (tree, module_key, module_name, False)
+            ]
+            while stack:
+                node, container_key, qualified_container, in_class = stack.pop()
+                next_key, next_qualified, next_in_class = (
+                    container_key,
+                    qualified_container,
+                    in_class,
                 )
-                d_range = make_range(
-                    start_line,
-                    start_col,
-                    node.end_lineno,
-                    node.end_col_offset,
-                )
-                # Compute name range
-                name_col = (
-                    node.col_offset + 4
-                    if isinstance(node, ast.FunctionDef)
-                    else node.col_offset + 10
-                )
-                n_range = make_range(
-                    node.lineno,
-                    name_col,
-                    node.lineno,
-                    name_col + len(node.name),
-                )
-                fact_key = build_fact_key(
-                    request.path, "decl_function", node.name, d_range
-                )
-                decorator_names = tuple(
-                    ast.unparse(d) if hasattr(ast, "unparse") else str(d)
-                    for d in node.decorator_list
-                )
-                facts.append(
-                    DeclarationFact(
-                        fact_key=fact_key,
-                        kind=DeclarationKind.FUNCTION,
-                        name=node.name,
-                        qualified_name=None,
-                        container_key=None,
-                        modifiers=(
-                            ("async",) if isinstance(node, ast.AsyncFunctionDef) else ()
-                        ),
-                        decorators=decorator_names,
-                        signature_text=None,
-                        declaration_range=d_range,
-                        name_range=n_range,
+
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    declaration_range = outer_declaration_range(
+                        node, node.decorator_list
                     )
-                )
-
-            elif isinstance(node, ast.ClassDef):
-                start_line = (
-                    node.decorator_list[0].lineno
-                    if node.decorator_list
-                    else node.lineno
-                )
-                start_col = (
-                    node.decorator_list[0].col_offset
-                    if node.decorator_list
-                    else node.col_offset
-                )
-                d_range = make_range(
-                    start_line,
-                    start_col,
-                    node.end_lineno,
-                    node.end_col_offset,
-                )
-                name_col = node.col_offset + 6
-                n_range = make_range(
-                    node.lineno,
-                    name_col,
-                    node.lineno,
-                    name_col + len(node.name),
-                )
-                fact_key = build_fact_key(
-                    request.path, "decl_class", node.name, d_range
-                )
-                decorator_names = tuple(
-                    ast.unparse(d) if hasattr(ast, "unparse") else str(d)
-                    for d in node.decorator_list
-                )
-                facts.append(
-                    DeclarationFact(
-                        fact_key=fact_key,
-                        kind=DeclarationKind.CLASS,
-                        name=node.name,
-                        qualified_name=None,
-                        container_key=None,
-                        modifiers=(),
-                        decorators=decorator_names,
-                        signature_text=None,
-                        declaration_range=d_range,
-                        name_range=n_range,
+                    kind = (
+                        DeclarationKind.METHOD if in_class else DeclarationKind.FUNCTION
                     )
-                )
-
-            elif isinstance(node, ast.Import):
-                r = make_range(
-                    node.lineno, node.col_offset, node.end_lineno, node.end_col_offset
-                )
-                for alias in node.names:
-                    fact_key = build_fact_key(request.path, "import", alias.name, r)
-                    facts.append(
-                        ImportFact(
-                            fact_key=fact_key,
-                            kind=ImportKind.MODULE,
-                            source_module=alias.name,
-                            relative_level=0,
-                            imported_name=None,
-                            local_alias=alias.asname,
-                            is_type_only=False,
-                            is_commonjs=False,
-                            range=r,
+                    qualified = f"{qualified_container}.{node.name}"
+                    key = build_fact_key(
+                        request.path, f"decl_{kind.value}", qualified, declaration_range
+                    )
+                    decorators = tuple(
+                        name
+                        for item in node.decorator_list
+                        if (name := self._dotted_name(item))
+                    )
+                    accumulator.add(
+                        DeclarationFact(
+                            key,
+                            kind,
+                            node.name,
+                            qualified,
+                            container_key,
+                            (
+                                ("async",)
+                                if isinstance(node, ast.AsyncFunctionDef)
+                                else ()
+                            ),
+                            decorators,
+                            self._signature(node),
+                            declaration_range,
+                            identifier_range(
+                                node,
+                                node.name,
+                                10 if isinstance(node, ast.AsyncFunctionDef) else 4,
+                            ),
                         )
                     )
-
-            elif isinstance(node, ast.ImportFrom):
-                r = make_range(
-                    node.lineno, node.col_offset, node.end_lineno, node.end_col_offset
-                )
-                module_name = node.module or ""
-                for alias in node.names:
-                    fact_key = build_fact_key(
-                        request.path, "import_from", f"{module_name}::{alias.name}", r
+                    self._add_decorators(
+                        accumulator,
+                        request.path,
+                        node.decorator_list,
+                        key,
+                        source_range,
                     )
-                    facts.append(
-                        ImportFact(
-                            fact_key=fact_key,
-                            kind=ImportKind.NAMED,
-                            source_module=module_name,
-                            relative_level=node.level or 0,
-                            imported_name=alias.name,
-                            local_alias=alias.asname,
-                            is_type_only=False,
-                            is_commonjs=False,
-                            range=r,
+                    next_key, next_qualified, next_in_class = key, qualified, False
+
+                elif isinstance(node, ast.ClassDef):
+                    declaration_range = outer_declaration_range(
+                        node, node.decorator_list
+                    )
+                    qualified = f"{qualified_container}.{node.name}"
+                    key = build_fact_key(
+                        request.path, "decl_class", qualified, declaration_range
+                    )
+                    decorators = tuple(
+                        name
+                        for item in node.decorator_list
+                        if (name := self._dotted_name(item))
+                    )
+                    accumulator.add(
+                        DeclarationFact(
+                            key,
+                            DeclarationKind.CLASS,
+                            node.name,
+                            qualified,
+                            container_key,
+                            (),
+                            decorators,
+                            None,
+                            declaration_range,
+                            identifier_range(node, node.name, 6),
                         )
                     )
-
-            elif isinstance(node, ast.Call):
-                if hasattr(node, "lineno") and hasattr(node, "col_offset"):
-                    r = make_range(
-                        node.lineno,
-                        node.col_offset,
-                        getattr(node, "end_lineno", node.lineno),
-                        getattr(node, "end_col_offset", node.col_offset),
+                    for base in node.bases:
+                        name = self._dotted_name(base)
+                        if name:
+                            rng = source_range(base)
+                            accumulator.add(
+                                ReferenceFact(
+                                    build_fact_key(
+                                        request.path, "inheritance", name, rng
+                                    ),
+                                    ReferenceKind.INHERITANCE,
+                                    key,
+                                    name,
+                                    rng,
+                                )
+                            )
+                    self._add_decorators(
+                        accumulator,
+                        request.path,
+                        node.decorator_list,
+                        key,
+                        source_range,
                     )
-                    func_name = ""
-                    if isinstance(node.func, ast.Name):
-                        func_name = node.func.id
-                    elif isinstance(node.func, ast.Attribute):
-                        func_name = node.func.attr
-                    if func_name:
-                        fact_key = build_fact_key(request.path, "call", func_name, r)
-                        facts.append(
-                            ReferenceFact(
-                                fact_key=fact_key,
-                                kind=ReferenceKind.CALL,
-                                source_declaration_key=None,
-                                target_name=func_name,
-                                range=r,
+                    next_key, next_qualified, next_in_class = key, qualified, True
+
+                elif isinstance(node, ast.Import):
+                    rng = source_range(node)
+                    for alias in node.names:
+                        accumulator.add(
+                            ImportFact(
+                                build_fact_key(request.path, "import", alias.name, rng),
+                                ImportKind.MODULE,
+                                alias.name,
+                                0,
+                                None,
+                                alias.asname,
+                                False,
+                                False,
+                                rng,
                             )
                         )
 
-        sorted_facts = sort_facts(facts)
+                elif isinstance(node, ast.ImportFrom):
+                    rng = source_range(node)
+                    for alias in node.names:
+                        accumulator.add(
+                            ImportFact(
+                                build_fact_key(
+                                    request.path,
+                                    "import_from",
+                                    f"{node.module or ''}:{alias.name}",
+                                    rng,
+                                ),
+                                (
+                                    ImportKind.ALL
+                                    if alias.name == "*"
+                                    else ImportKind.NAMED
+                                ),
+                                node.module or "",
+                                node.level,
+                                alias.name,
+                                alias.asname,
+                                False,
+                                False,
+                                rng,
+                            )
+                        )
 
-        doc = SyntaxDocument(
-            artifact_id=request.artifact_id,
-            path=request.path,
-            content_hash=content_hash,
-            language="python",
-            language_version=self.adapter_version,
-            parser_adapter_id=self.adapter_id,
-            parser_adapter_version=self.adapter_version,
-            grammar_abi_version=sys.version_info.major * 100 + sys.version_info.minor,
-            parse_status=ParseStatus.PARSED,
-            encoding_metadata=encoding_meta,
-            facts=sorted_facts,
-            diagnostic_ids=(),
-        )
+                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = (
+                        node.targets if isinstance(node, ast.Assign) else [node.target]
+                    )
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            rng = source_range(target)
+                            qualified = f"{qualified_container}.{target.id}"
+                            accumulator.add(
+                                DeclarationFact(
+                                    build_fact_key(
+                                        request.path, "decl_variable", qualified, rng
+                                    ),
+                                    DeclarationKind.VARIABLE,
+                                    target.id,
+                                    qualified,
+                                    container_key,
+                                    ("constant",) if target.id.isupper() else (),
+                                    (),
+                                    (
+                                        self._safe_annotation(node.annotation)
+                                        if isinstance(node, ast.AnnAssign)
+                                        else None
+                                    ),
+                                    rng,
+                                    rng,
+                                )
+                            )
+                    if (
+                        isinstance(node, ast.Assign)
+                        and any(
+                            isinstance(target, ast.Name) and target.id == "__all__"
+                            for target in node.targets
+                        )
+                        and isinstance(node.value, (ast.List, ast.Tuple))
+                    ):
+                        for exported in node.value.elts:
+                            if (
+                                isinstance(exported, ast.Constant)
+                                and isinstance(exported.value, str)
+                                and exported.value.isidentifier()
+                            ):
+                                rng = source_range(exported)
+                                accumulator.add(
+                                    ExportFact(
+                                        build_fact_key(
+                                            request.path,
+                                            "export_named",
+                                            exported.value,
+                                            rng,
+                                        ),
+                                        ExportKind.NAMED,
+                                        exported.value,
+                                        exported.value,
+                                        None,
+                                        False,
+                                        False,
+                                        rng,
+                                    )
+                                )
 
+                elif isinstance(node, ast.Call):
+                    name = self._dotted_name(node.func)
+                    if name and _SAFE_DOTTED_NAME.fullmatch(name):
+                        rng = source_range(node.func)
+                        accumulator.add(
+                            ReferenceFact(
+                                build_fact_key(request.path, "call", name, rng),
+                                ReferenceKind.CALL,
+                                container_key,
+                                name,
+                                rng,
+                            )
+                        )
+
+                elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                    name = self._dotted_name(node)
+                    if name and _SAFE_DOTTED_NAME.fullmatch(name):
+                        rng = source_range(node)
+                        accumulator.add(
+                            ReferenceFact(
+                                build_fact_key(request.path, "attribute", name, rng),
+                                ReferenceKind.ATTRIBUTE,
+                                container_key,
+                                name,
+                                rng,
+                            )
+                        )
+
+                elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                    rng = source_range(node)
+                    accumulator.add(
+                        ReferenceFact(
+                            build_fact_key(request.path, "name", node.id, rng),
+                            ReferenceKind.NAME,
+                            container_key,
+                            node.id,
+                            rng,
+                        )
+                    )
+
+                for child in reversed(list(ast.iter_child_nodes(node))):
+                    stack.append((child, next_key, next_qualified, next_in_class))
+
+        except FactLimitExceededError as exc:
+            diag = create_parsing_diagnostic(
+                request.analysis_id,
+                request.artifact_id,
+                request.path,
+                "resource_limit_exceeded",
+                str(exc),
+                DiagnosticSeverity.ERROR,
+                details={
+                    "limit": request.max_facts_per_artifact,
+                    "scope": "artifact_facts",
+                },
+            )
+            return ParserResult(
+                success=True,
+                document=self._document(
+                    request,
+                    content_hash,
+                    encoding_meta,
+                    ParseStatus.FAILED,
+                    (),
+                    (str(diag.id),),
+                ),
+                diagnostics=(diag,),
+                execution_time_seconds=time.perf_counter() - start_time,
+                error_message="Artifact fact limit exceeded",
+            )
+
+        try:
+            facts = sort_facts(accumulator.facts)  # type: ignore[arg-type]
+        except ValueError:
+            return self._fact_integrity_failure(
+                request, start_time, content_hash, encoding_meta
+            )
         return ParserResult(
             success=True,
-            document=doc,
-            diagnostics=(),
+            document=self._document(
+                request, content_hash, encoding_meta, ParseStatus.PARSED, facts, ()
+            ),
             execution_time_seconds=time.perf_counter() - start_time,
+        )
+
+    def _add_decorators(
+        self,
+        accumulator: FactAccumulator,
+        path: str,
+        decorators: list[ast.expr],
+        source_key: str,
+        range_builder: Callable[[ast.AST], SourceRange],
+    ) -> None:
+        for decorator in decorators:
+            name = self._dotted_name(decorator)
+            if name:
+                rng = range_builder(decorator)
+                accumulator.add(
+                    ReferenceFact(
+                        build_fact_key(path, "decorator", name, rng),
+                        ReferenceKind.DECORATOR,
+                        source_key,
+                        name,
+                        rng,
+                    )
+                )
+
+    def _document(
+        self,
+        request: ParserRequest,
+        content_hash: str,
+        encoding: SourceEncodingMetadata,
+        status: ParseStatus,
+        facts: tuple[SyntaxFact, ...],
+        diagnostic_ids: tuple[str, ...],
+    ) -> SyntaxDocument:
+        return SyntaxDocument(
+            request.artifact_id,
+            request.path,
+            content_hash,
+            "python",
+            self.adapter_version,
+            self.adapter_id,
+            self.adapter_version,
+            sys.version_info.major * 100 + sys.version_info.minor,
+            status,
+            encoding,
+            facts,
+            diagnostic_ids,
+        )
+
+    def _fact_integrity_failure(
+        self,
+        request: ParserRequest,
+        start_time: float,
+        content_hash: str,
+        encoding: SourceEncodingMetadata,
+    ) -> ParserResult:
+        diag = create_parsing_diagnostic(
+            request.analysis_id,
+            request.artifact_id,
+            request.path,
+            "fact_integrity_error",
+            "Conflicting parser-neutral fact identities were produced",
+            DiagnosticSeverity.ERROR,
+        )
+        return ParserResult(
+            True,
+            self._document(
+                request,
+                content_hash,
+                encoding,
+                ParseStatus.FAILED,
+                (),
+                (str(diag.id),),
+            ),
+            (diag,),
+            time.perf_counter() - start_time,
+            error_message="Fact identity collision",
+        )
+
+    @staticmethod
+    def _failure(
+        request: ParserRequest, start_time: float, code: str, message: str
+    ) -> ParserResult:
+        diag = create_parsing_diagnostic(
+            request.analysis_id,
+            request.artifact_id,
+            request.path,
+            code,
+            message,
+            DiagnosticSeverity.ERROR,
+        )
+        return ParserResult(
+            False,
+            None,
+            (diag,),
+            time.perf_counter() - start_time,
+            error_message=message,
         )

@@ -17,6 +17,11 @@ from backend.platform.analysis.inspection.model import (
     RepositoryInspectionResult,
     RuntimeDetection,
 )
+from backend.platform.analysis.inspection.service import (
+    InspectionPreparation,
+    RepositoryInspectionExecution,
+    RepositoryInspectionService,
+)
 
 __all__ = [
     "ArtifactAnalysisRole",
@@ -26,9 +31,12 @@ __all__ = [
     "DetectionService",
     "FrameworkDetection",
     "InspectionCoverage",
+    "InspectionPreparation",
     "InventoryBuilder",
     "LanguageDetection",
     "RepositoryInspectionResult",
+    "RepositoryInspectionExecution",
+    "RepositoryInspectionService",
     "RuntimeDetection",
     "parse_safe_package_json",
     "parse_safe_requirements_txt",

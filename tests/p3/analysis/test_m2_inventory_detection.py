@@ -6,6 +6,8 @@ import json
 import random
 from uuid import uuid4
 
+import pytest
+
 from backend.platform.analysis.domain.analysis import AnalysisConfiguration
 from backend.platform.analysis.domain.input import (
     AnalysisArtifact,
@@ -904,3 +906,107 @@ def test_all_artifact_categories_mapping_matrix() -> None:
         assert (
             role_map[path] == expected_role
         ), f"Category {cat} mapped to {role_map[path]} instead of {expected_role}"
+
+
+def test_invalid_or_duplicate_normalized_paths_are_rejected() -> None:
+    """Inventory never aliases traversal, absolute, or duplicate paths."""
+    revision_id = uuid4()
+
+    def artifact(path: str) -> AnalysisArtifact:
+        return AnalysisArtifact(
+            id=uuid4(),
+            revision_id=revision_id,
+            path=path,
+            size_bytes=1,
+            content_hash="hash",
+            category=ArtifactCategory.SOURCE_CODE,
+            support_level=SupportLevel.FULL,
+        )
+
+    builder = InventoryBuilder()
+    for unsafe_path in ("/etc/passwd", "../app.py", "src/../app.py", "C:\\app.py"):
+        with pytest.raises(ValueError, match="path"):
+            builder.build_inventory((artifact(unsafe_path),))
+
+    duplicate = artifact("src/app.py")
+    with pytest.raises(ValueError, match="duplicate normalized paths"):
+        builder.build_inventory((duplicate, artifact("src/app.py")))
+
+
+def test_inventory_enforces_m2_five_mib_ceiling_over_larger_f1_config() -> None:
+    """The user-configurable F1 read bound cannot weaken M2's parser ceiling."""
+    artifact = AnalysisArtifact(
+        id=uuid4(),
+        revision_id=uuid4(),
+        path="src/large.py",
+        size_bytes=(5 * 1024 * 1024) + 1,
+        content_hash="large",
+        category=ArtifactCategory.SOURCE_CODE,
+        support_level=SupportLevel.FULL,
+    )
+    inventory, _ = InventoryBuilder(
+        AnalysisConfiguration(max_file_size_bytes=50 * 1024 * 1024)
+    ).build_inventory((artifact,))
+
+    assert inventory[0].analysis_role == ArtifactAnalysisRole.METADATA_ONLY
+    assert inventory[0].processing_outcome == ArtifactProcessingOutcome.EXCLUDED
+    assert inventory[0].reason_codes == ("oversized_file",)
+
+
+def test_ignored_artifacts_do_not_influence_runtime_or_framework_detection() -> None:
+    """Build-cache path markers cannot create language/runtime/framework claims."""
+    artifact = AnalysisArtifact(
+        id=uuid4(),
+        revision_id=uuid4(),
+        path="node_modules/example/manage.py",
+        size_bytes=10,
+        content_hash="ignored",
+        category=ArtifactCategory.SOURCE_CODE,
+        support_level=SupportLevel.FULL,
+    )
+    inventory, _ = InventoryBuilder().build_inventory((artifact,))
+    detector = DetectionService()
+
+    assert detector.detect_languages(inventory) == ()
+    assert detector.detect_runtimes(inventory) == ()
+    frameworks, evidence, diagnostics = detector.detect_framework_candidates(
+        (artifact,), inventory
+    )
+    assert frameworks == ()
+    assert evidence == ()
+    assert diagnostics == ()
+
+
+def test_conflicting_manifest_versions_are_deterministic_and_explicit() -> None:
+    """Conflicting dependency versions do not depend on artifact input order."""
+    revision_id = uuid4()
+    artifacts = [
+        AnalysisArtifact(
+            id=uuid4(),
+            revision_id=revision_id,
+            path=path,
+            size_bytes=50,
+            content_hash=path,
+            category=ArtifactCategory.DEPENDENCY_METADATA,
+            support_level=SupportLevel.METADATA,
+        )
+        for path in ("apps/a/package.json", "apps/b/package.json")
+    ]
+    reader = RecordingContentReader(
+        {
+            "apps/a/package.json": b'{"dependencies":{"express":"^4"}}',
+            "apps/b/package.json": b'{"dependencies":{"express":"^5"}}',
+        }
+    )
+    inventory, _ = InventoryBuilder().build_inventory(artifacts)
+    detector = DetectionService()
+
+    first = detector.detect_framework_candidates(artifacts, inventory, reader)
+    second = detector.detect_framework_candidates(
+        reversed(artifacts), inventory, reader
+    )
+
+    assert first == second
+    express = next(item for item in first[0] if item.framework == "express")
+    assert express.version is None
+    assert any(item.polarity == "conflicting" for item in first[1])

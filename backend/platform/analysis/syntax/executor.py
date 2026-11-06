@@ -9,11 +9,10 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from backend.platform.analysis.domain.constants import (
     DiagnosticCategory,
@@ -27,6 +26,7 @@ from backend.platform.analysis.syntax.base import (
     ParserRequest,
     ParserResult,
     create_parsing_diagnostic,
+    sanitize_diagnostic_text,
 )
 from backend.platform.analysis.syntax.javascript import TreeSitterJsTsAdapter
 from backend.platform.analysis.syntax.model import (
@@ -70,6 +70,7 @@ class ParserExecutor:
         max_memory_mb: int = 512,
         max_ipc_result_bytes: int = 50 * 1024 * 1024,
         max_stderr_bytes: int = 1024 * 1024,
+        max_facts_per_artifact: int = 25_000,
     ) -> None:
         self._python_executable = python_executable or sys.executable
         self._default_timeout_seconds = default_timeout_seconds
@@ -77,6 +78,10 @@ class ParserExecutor:
         self._max_memory_mb = max_memory_mb
         self._max_ipc_result_bytes = max_ipc_result_bytes
         self._max_stderr_bytes = max_stderr_bytes
+        if max_facts_per_artifact <= 0:
+            raise ValueError("max_facts_per_artifact must be positive")
+        self._max_facts_per_artifact = max_facts_per_artifact
+        self._isolation_available: bool | None = None
         self._in_process_adapters: dict[str, ParserAdapter] = {
             "python": PythonAstAdapter(),
             "javascript": TreeSitterJsTsAdapter(),
@@ -105,6 +110,7 @@ class ParserExecutor:
             "max_stderr_bytes": getattr(
                 settings, "parser_max_stderr_bytes", 1024 * 1024
             ),
+            "max_facts_per_artifact": settings.parser_max_facts_per_artifact,
         }
         if python_executable is not None:
             kwargs["python_executable"] = python_executable
@@ -118,13 +124,10 @@ class ParserExecutor:
         allowlist_prefixes = (
             "SYSTEMROOT",
             "COMSPEC",
-            "PATH",
             "WINDIR",
             "TMP",
             "TEMP",
             "SYSTEMDRIVE",
-            "HOME",
-            "USERPROFILE",
             "TMPDIR",
             "LANG",
             "LC_",
@@ -163,29 +166,31 @@ class ParserExecutor:
 
     def is_isolation_available(self) -> bool:
         """Verify that the child process isolation boundary is functional."""
+        if self._isolation_available is not None:
+            return self._isolation_available
         try:
-            # On Windows, verify that Job Objects can be created and configured
-            if sys.platform == "win32":
-                job = self._create_windows_job_object()
-                if job:
-                    import ctypes
-
-                    ctypes.windll.kernel32.CloseHandle(job)
-
-            cmd = [self._python_executable, "-c", "import sys; sys.exit(0)"]
+            cmd = [
+                self._python_executable,
+                "-m",
+                "backend.platform.analysis.syntax.worker",
+                "--probe",
+                str(self._max_memory_mb),
+                "5.0",
+            ]
             env = self._build_sanitized_environment()
-            preexec = self._build_posix_preexec()
             res = subprocess.run(
                 cmd,
                 capture_output=True,
                 timeout=5.0,
                 env=env,
                 check=False,
-                preexec_fn=preexec,
             )
-            return res.returncode == 0
+            self._isolation_available = res.returncode == 0 and json.loads(
+                res.stdout.decode("utf-8")
+            ) == {"sandbox": "ready"}
         except Exception:
-            return False
+            self._isolation_available = False
+        return self._isolation_available
 
     def _create_windows_job_object(self) -> Any:
         """Create a Win32 Job Object with process memory limits and kill-on-close."""
@@ -268,21 +273,6 @@ class ParserExecutor:
                 f"AssignProcessToJobObject failed with Win32 error {err}"
             )
 
-    def _build_posix_preexec(self) -> Callable[[], None] | None:
-        """Build preexec_fn for POSIX resource limits without swallowing errors."""
-        if sys.platform == "win32":
-            return None
-
-        def _posix_preexec() -> None:
-            import resource
-
-            if not hasattr(resource, "RLIMIT_AS"):
-                raise RuntimeError("RLIMIT_AS is not supported on this platform")
-            mem_bytes = self._max_memory_mb * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-
-        return _posix_preexec
-
     def _communicate_bounded(
         self,
         proc: subprocess.Popen[Any],
@@ -292,7 +282,16 @@ class ParserExecutor:
         max_stderr_bytes: int,
     ) -> tuple[bytes, bytes]:
         """Read stdout and stderr in chunks up to strict bounds with bounded joins."""
-        if proc.stdin is not None:
+        stdout_chunks: list[bytes] = []
+        stderr_chunks: list[bytes] = []
+        stdout_bytes = 0
+        stderr_bytes = 0
+        overflow_reason: list[str] = []
+        overflow_lock = threading.Lock()
+
+        def write_stdin() -> None:
+            if proc.stdin is None:
+                return
             try:
                 proc.stdin.write(input_data)
                 proc.stdin.flush()
@@ -303,13 +302,6 @@ class ParserExecutor:
                     proc.stdin.close()
                 except Exception:
                     pass
-
-        stdout_chunks: list[bytes] = []
-        stderr_chunks: list[bytes] = []
-        stdout_bytes = 0
-        stderr_bytes = 0
-        overflow_reason: list[str] = []
-        overflow_lock = threading.Lock()
 
         def read_stream(
             stream: Any,
@@ -346,6 +338,7 @@ class ParserExecutor:
                 except Exception:
                     pass
 
+        t_in = threading.Thread(target=write_stdin, daemon=True)
         t_out = threading.Thread(
             target=read_stream,
             args=(proc.stdout, stdout_chunks, max_stdout_bytes, "stdout"),
@@ -357,6 +350,7 @@ class ParserExecutor:
             daemon=True,
         )
 
+        t_in.start()
         t_out.start()
         t_err.start()
 
@@ -371,12 +365,22 @@ class ParserExecutor:
             except Exception:
                 pass
 
-        # Bounded join on reader threads (REV-021)
+        t_in.join(timeout=2.0)
         t_out.join(timeout=2.0)
         t_err.join(timeout=2.0)
 
         if timed_out:
             raise subprocess.TimeoutExpired(cmd=proc.args, timeout=deadline)
+
+        if t_in.is_alive() or t_out.is_alive() or t_err.is_alive():
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise IsolationConfigurationError(
+                "Parser IPC threads did not terminate within their bounded "
+                "cleanup window"
+            )
 
         with overflow_lock:
             if overflow_reason:
@@ -499,6 +503,11 @@ class ParserExecutor:
             "configuration_fingerprint": request.configuration_fingerprint,
             "deadline_seconds": deadline,
             "max_file_size_bytes": max_bytes,
+            "max_facts_per_artifact": min(
+                request.max_facts_per_artifact, self._max_facts_per_artifact
+            ),
+            "sandbox_max_memory_mb": self._max_memory_mb,
+            "sandbox_cpu_seconds": deadline,
         }
         input_data = json.dumps(req_payload)
 
@@ -527,8 +536,6 @@ class ParserExecutor:
                         error_message=str(job_err),
                     )
 
-            posix_preexec = self._build_posix_preexec()
-
             try:
                 proc = subprocess.Popen(
                     cmd,
@@ -537,8 +544,7 @@ class ParserExecutor:
                     stderr=subprocess.PIPE,
                     text=False,
                     env=env,
-                    close_fds=True if sys.platform != "win32" else False,
-                    preexec_fn=posix_preexec,
+                    close_fds=True,
                 )
             except Exception as popen_err:
                 diag = create_parsing_diagnostic(
@@ -595,9 +601,13 @@ class ParserExecutor:
             )
 
         except subprocess.TimeoutExpired:
+            resolved_analysis_id = request.analysis_id or request.artifact_id
             diag = AnalysisDiagnostic(
-                id=uuid4(),
-                analysis_id=request.analysis_id or uuid4(),
+                id=uuid5(
+                    resolved_analysis_id,
+                    f"m2:parser_timeout:{request.path}:{deadline}",
+                ),
+                analysis_id=resolved_analysis_id,
                 code="parser_timeout",
                 category=DiagnosticCategory.TIMEOUT,
                 severity=DiagnosticSeverity.ERROR,
@@ -741,7 +751,11 @@ class ParserExecutor:
             document=document,
             diagnostics=tuple(diagnostics),
             execution_time_seconds=time.perf_counter() - start_time,
-            error_message=data.get("error_message"),
+            error_message=(
+                sanitize_diagnostic_text(str(data["error_message"]))
+                if data.get("error_message") is not None
+                else None
+            ),
         )
 
     def _deserialize_document(self, d: dict[str, Any]) -> SyntaxDocument:
