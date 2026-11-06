@@ -384,7 +384,15 @@ def test_server_path_symlink_escaping_jail(tmp_path: Path) -> None:
     _create_tar_file(outside_archive, {"data.txt": b"outside"}, mode="w:gz")
 
     symlink_path = staged_root / "symlink_to_outside.tar.gz"
-    symlink_path.symlink_to(outside_archive)
+    try:
+        symlink_path.symlink_to(outside_archive)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip(
+                "Windows unprivileged environment: "
+                "SeCreateSymbolicLinkPrivilege is required."
+            )
+        raise
 
     handler = ServerPathAcquisitionHandler(allowed_roots=[str(staged_root)])
     with pytest.raises(ServerPathNotAllowedError):

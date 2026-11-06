@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     platform_api_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     sse_poll_interval_seconds: float = 0.5
 
+    # Repository inspection & syntax analysis (Phase 3 Module 2)
+    parser_per_file_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    parser_max_file_size_bytes: int = Field(default=5 * 1024 * 1024, gt=0)
+    parser_max_memory_mb: int = Field(default=512, ge=64, le=4096)
+    parser_max_stderr_bytes: int = Field(default=1024 * 1024, gt=0)
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )

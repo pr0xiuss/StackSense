@@ -59,8 +59,21 @@ def test_analysis_domain_is_pure_python() -> None:
 
 
 def test_no_downstream_module_leakage_in_m1() -> None:
-    """Ensure M1 does not import or implement downstream modules (M2-M4)."""
-    analysis_root = Path("backend/platform/analysis")
+    """Ensure M1 does not import or implement downstream modules (M2-M4).
+
+    Change-Control (ACR-M2-001):
+    When M1 was authored, backend/platform/analysis contained only M1 code.
+    With M2 implementation introducing approved Tree-sitter parsers under
+    backend/platform/analysis/syntax, this test is scoped to M1-owned packages
+    (application, domain, infra, repositories) to preserve strict M1 isolation
+    without incorrectly penalizing M2 for its own approved dependencies.
+    """
+    m1_dirs = [
+        Path("backend/platform/analysis/application"),
+        Path("backend/platform/analysis/domain"),
+        Path("backend/platform/analysis/infra"),
+        Path("backend/platform/analysis/repositories"),
+    ]
 
     forbidden_packages = [
         "tree_sitter",
@@ -72,12 +85,13 @@ def test_no_downstream_module_leakage_in_m1() -> None:
         "backend.platform.analysis.m4",
     ]
 
-    for file_path in analysis_root.rglob("*.py"):
-        content = file_path.read_text().lower()
-        for term in forbidden_packages:
-            assert (
-                term not in content
-            ), f"Forbidden downstream leakage '{term}' found in {file_path}"
+    for m1_dir in m1_dirs:
+        for file_path in m1_dir.rglob("*.py"):
+            content = file_path.read_text().lower()
+            for term in forbidden_packages:
+                assert (
+                    term not in content
+                ), f"Forbidden downstream leakage '{term}' found in {file_path}"
 
 
 def test_storage_key_not_exposed_on_domain_analysis_artifact() -> None:
