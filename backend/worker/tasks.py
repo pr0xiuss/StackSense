@@ -11,6 +11,7 @@ from celery import Task
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from backend.platform.analysis.application.handoff import AnalysisAttemptStore
 from backend.platform.analysis.application.input_factory import (
     PlatformAnalysisInputFactory,
 )
@@ -41,6 +42,7 @@ from backend.platform.analysis.inspection.handlers import (
     M2ExecutionCoordinator,
     register_m2_stage_handlers,
 )
+from backend.platform.analysis.ir.handlers import register_ir_stage_handler
 from backend.platform.config import get_settings
 from backend.platform.dependency_injection import get_database_engine
 from backend.worker.celery_app import celery_app
@@ -49,15 +51,25 @@ logger = logging.getLogger(__name__)
 
 _registry_instance: StageHandlerRegistry | None = None
 _m2_coordinator_instance: M2ExecutionCoordinator | None = None
+_attempt_store_instance: AnalysisAttemptStore | None = None
 
 
 def get_worker_registry() -> StageHandlerRegistry:
     """Return registered production handlers; never fabricate analysis results."""
-    global _registry_instance, _m2_coordinator_instance
+    global _registry_instance, _m2_coordinator_instance, _attempt_store_instance
     if _registry_instance is None:
         _registry_instance = StageHandlerRegistry()
         _m2_coordinator_instance = M2ExecutionCoordinator()
         register_m2_stage_handlers(_registry_instance, _m2_coordinator_instance)
+
+        _attempt_store_instance = AnalysisAttemptStore(
+            m2_handoff=_m2_coordinator_instance.handoff
+        )
+        register_ir_stage_handler(
+            _registry_instance,
+            f2_reader=_attempt_store_instance,
+            f3_writer=_attempt_store_instance,
+        )
     return _registry_instance
 
 
@@ -68,11 +80,19 @@ def get_m2_coordinator() -> M2ExecutionCoordinator:
     return _m2_coordinator_instance
 
 
+def get_attempt_store() -> AnalysisAttemptStore:
+    """Return the production attempt store for F2/F3 handoff integration."""
+    get_worker_registry()
+    assert _attempt_store_instance is not None
+    return _attempt_store_instance
+
+
 def set_worker_registry(registry: StageHandlerRegistry | None) -> None:
     """Set the worker registry instance for testing or M2-M4 registration."""
-    global _registry_instance, _m2_coordinator_instance
+    global _registry_instance, _m2_coordinator_instance, _attempt_store_instance
     _registry_instance = registry
     _m2_coordinator_instance = None
+    _attempt_store_instance = None
 
 
 @celery_app.task(

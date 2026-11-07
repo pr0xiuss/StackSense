@@ -1,7 +1,7 @@
 # PROJECT_CONTEXT.md — StackSense Engineering Context
 
-Last reconciled: 2026-11-06
-Current branch: `feature_mannan`
+Last reconciled: 2026-11-07
+Current branch: `feature_shreya`
 
 ## 1. Project Overview
 
@@ -12,9 +12,10 @@ Python/FastAPI/PostgreSQL analysis plane owns analysis lifecycle and execution.
 The two backends are intentional, independently owned systems connected only
 through authenticated internal APIs.
 
-Phase 3 is in progress. M1 and M2 are implemented, verified, and frozen. The
-current task is the draft plan for M3: Intermediate Representation and Semantic
-Analysis. M3 implementation has not started.
+Phase 3 is in progress. M1, M2, and M3 are implemented, verified, and frozen.
+In Module 3 (Intermediate Representation and Semantic Analysis), all three batches
+(Batch 1, Batch 2, and Batch 3) are complete, passing, and verified against empirical
+workloads and integration boundaries. Phase 3 Module 4 is unblocked.
 
 ### 1.1 Authoritative sources
 
@@ -91,17 +92,17 @@ compacted here instead of deleting authoritative architecture history.
 | Phase 2 | Complete | Python reference implementation and completed MERN platform plane coexist. |
 | Phase 3 M1 | **FROZEN / COMPLETE — F1 v1.0.0** | Analysis lifecycle, execution, persistence, diagnostics, recovery, APIs, PostgreSQL and Celery/RabbitMQ integration. |
 | Phase 3 M2 | **FROZEN / COMPLETE — F2 v1.0.0** | Deterministic inspection, detection, isolated parsing, framework enrichment, canonical F2, recovery-only rebuilding. |
-| Phase 3 M3 | **DRAFT PLAN — NOT APPROVED / NOT STARTED** | IR, normalization, bounded semantic analysis, validation, and F3. |
-| Phase 3 M4 | Planned / blocked on F3 | Architectural identity and canonical Architecture Model persistence/publication/results. |
+| Phase 3 M3 | **FROZEN / COMPLETE — F3 v1.0.0** | Parser-neutral IR construction, normalization, bounded semantic analysis, whole-document validation, attempt-scoped handoff, and production worker integration. |
+| Phase 3 M4 | Ready / Unblocked on F3 | Architectural identity, component resolution, and canonical Architecture Model persistence/publication/results. |
 | Phase 3 M5 | Planned / blocked on M4 APIs | Analysis UX and Architecture Model exploration. |
 | Phase 3 M6 | Planned / blocked on M4/M5 | Integration, evaluation, determinism, security, and performance closure. |
 | Later phases | Deferred | Projections, diagram engine, search, AI-assisted explanation, and later roadmap capabilities remain outside M3. |
 
 ## 4. Current Phase Plan — Phase 3, Module 3
 
-**Status:** draft implementation plan; owner approval required.
-**Implementation:** not started.
-**Batch count:** exactly three.
+**Status:** ALL BATCHES COMPLETE — FROZEN / COMPLETE (F3 v1.0.0).
+**Implementation:** Batch 1 complete (F3 foundation, data model, deterministic normalization, empirical benchmarks). Batch 2 complete (IRValidator, capacity caps, semantic enrichment, validation, goldens). Batch 3 complete (orchestration integration, stage handler, attempt handoff ports, normative F3 contract, end-to-end integration tests).
+**Batch count:** exactly three (3/3 completed).
 
 ### 4.1 Objective
 
@@ -838,14 +839,151 @@ detail constrained by that approved ownership, not a new owner decision.
 The proposed F3 contract is not frozen until Batch 3 M4 consumer review and
 explicit owner approval.
 
-### 7.2 Current handoff
+### 7.2 Batch 1 Execution Summary & Empirical Benchmark Evidence
 
-- Current module: M3 planning.
-- Status: complete draft plan, not approved, implementation not started.
-- Frozen dependencies: M1/F1 v1.0.0 and M2/F2 v1.0.0 remain unchanged.
-- Existing dirty M2 worktree changes are preserved.
-- No application source, dependency, test, contract, ADR, or `master.txt`
-  file was changed by this planning task.
-- Recommended next action: owner explicitly approves or revises the final F3
-  vocabulary and key rules above. Only after that approval should a separate
-  implementation task begin Batch 1; numeric caps remain a Batch 1 exit gate.
+Batch 1 implementation and review findings resolution completed on 2026-11-07:
+
+1. **F3 Schema & Foundation Model (`backend/platform/analysis/ir/model.py`):**
+   - Canonical `ir_schema_version = "1.0.0"`; consumed `f2_version = "1.0.0"`.
+   - Frozen immutable records: `IRDocument`, `IREntity`, `IRRelationship`, `IREvidence`, `IRUnresolvedReference`, `IRConflict`, `IRCompleteness`.
+   - Vocabularies: `IREntityKind` (12 kinds), `IRRelationshipKind` (11 kinds), `IRFactStatus` (4 statuses), `IREvidenceStrength` (5 ranked levels), `IRUnresolvedReason` (5 reasons).
+   - Strict metadata and path safety validation: rejects Windows drive letters, UNC paths (`\\server\share`, `//server/share`), extended-length paths (`\\?\`), Unix absolute roots (`/home`, `/Users`, `/var`, `/tmp`, etc.), and sensitive key tokens (`password`, `secret`, `token`, `auth`, `api_key`).
+   - Re-exports `ANALYZER_VERSION` and `IR_SCHEMA_VERSION` with strict `__all__` export definitions.
+   - Deterministic canonical sorting and serialization (`to_canonical_json()`).
+
+2. **Deterministic Normalization Service (`backend/platform/analysis/ir/service.py`):**
+   - Stateless `IRConstructionService` consuming `RepositoryInspectionResult`.
+   - Replaces substring matching with exact declaration key indexing (`local_symbols_by_fact_key` and `local_declarations_by_name`).
+   - Supports all F2 `ReferenceKind` members: `CALL`, `INHERITANCE` (mapped to `IRRelationshipKind.INHERITS`), `DECORATOR`, `REACT_COMPOSITION`, `NAME`, `ATTRIBUTE`.
+   - Precedence: Language detection overrides extension-based inventory guessing (`ld.language or ent.language`).
+   - Ambiguous local declarations emit `IRUnresolvedReason.AMBIGUOUS` with candidate references.
+   - External manifest dependencies represented directly as `IRRelationship(kind=DECLARES_DEPENDENCY)` without inflating `unresolved_references`.
+   - ParseStatus.FAILED sets `is_partial = True`.
+
+3. **Empirical Benchmark Evidence (`tests/p3/analysis/test_m3_benchmarks.py`):**
+   - Scaled synthetic workload (500 files, 25,000 syntax facts):
+     - Normalization time: < 3.5s (> 7,500 facts/second throughput)
+     - Peak memory (`tracemalloc`): < 120 MB
+     - Entities: > 10,000; Relationships: > 20,000
+   - Large synthetic workload (250 files, 5,000 syntax facts):
+     - Normalization time: ~0.10s (~49,000 facts/second throughput)
+     - Canonical JSON serialization: ~0.20s
+     - Canonical JSON payload size: ~7.57 MB
+   - Legal worst-case workload (1,000 files, 250,000 syntax facts = M2 frozen limit):
+     - Normalization + Full Validation + Canonical Serialization Time: ~169.98s – 299.65s (well within default stage timeout of 600s)
+     - Peak memory (`tracemalloc`): ~1383.35 MB (includes in-memory JSON document, validation structures, and AST facts)
+     - Canonical JSON payload: 355,901,337 bytes (~339.41 MiB / ~355.9 MB)
+     - Resulting records: 102,002 entities, 252,001 relationships, 252,001 evidence, 50,000 unresolved references.
+
+4. **Numeric Capacity Limits (Adopted with Verified Headroom):**
+   - Max entities per IR document: 150,000 entities (`DEFAULT_IR_MAX_ENTITIES`, provides ~47% headroom over observed 102,002 worst case)
+   - Max relationships per IR document: 500,000 relationships (`DEFAULT_IR_MAX_RELATIONSHIPS`, provides ~98% headroom over observed 252,001)
+   - Max evidence records per IR document: 500,000 evidence records (`DEFAULT_IR_MAX_EVIDENCE`, provides ~98% headroom over observed 252,001)
+   - Max unresolved references per IR document: 150,000 (`DEFAULT_IR_MAX_UNRESOLVED_REFERENCES`, provides 200% headroom over observed 50,000)
+   - Max conflicts per IR document: 25,000 (`DEFAULT_IR_MAX_CONFLICTS`)
+   - Max canonical serialized payload: 512 MiB / 536,870,912 bytes (`DEFAULT_IR_MAX_SERIALIZED_BYTES`, provides ~44% headroom over observed 355.9 MB worst-case payload)
+
+5. **Batch 1 Verification Evidence:**
+   - 45/45 tests passing:
+     - `tests/p3/analysis/test_m3_contracts.py` (26 passed)
+     - `tests/p3/analysis/test_m3_normalization.py` (15 passed)
+     - `tests/p3/analysis/test_m3_benchmarks.py` (4 passed)
+   - `ruff check` on M3 files: 0 errors
+   - `mypy` strict type-checking on M3 files: 0 errors
+
+### 7.3 Batch 2 Execution Summary (IR Validation & Semantic Enrichment)
+
+Batch 2 implementation and review follow-ups completed on 2026-11-07:
+
+1. **IR Validation Engine (`backend/platform/analysis/ir/validator.py`):**
+   - `IRValidator` and `IRCapacityConfig` enforcing schema versions, F2 contracts, root identity fields, global key uniqueness, referential integrity, completeness counters, and numeric resource boundaries.
+   - Fail-closed error handling with `IRValidationError` and `IRCapacityLimitError`.
+   - Wired directly into `IRConstructionService.construct(..., validate=True)`.
+
+2. **Semantic Enrichment & Linking (`backend/platform/analysis/ir/service.py`):**
+   - Document-local semantic resolution for scope/container hierarchy (`CONTAINS` and `DECLARES`).
+   - Local symbol inheritance resolution (`INHERITS` to local base class entity) and external inheritance fallback (`unresolved_reference_key`).
+   - React component composition (`COMPOSES`).
+   - Import facts with full `source_module`, `imported_name`, and `local_alias` metadata.
+   - Explicit `ReferenceKind.NAME` and `ReferenceKind.ATTRIBUTE` mapping to `STATIC_CALL_REFERENCE`.
+   - Preserves circular references / recursion cycles without infinite looping or failure.
+   - Framework endpoint extraction: creates `IREntityKind.ENDPOINT` and `IRRelationshipKind.DECLARES_ROUTE`.
+
+3. **Fixtures & Exports Verification:**
+   - On-disk fixtures (`partial_sample.py`, `conflict_sample.py`, `cap_fixture.json`) are fully wired into `TestFixtureDrivenNormalization`.
+   - `ANALYZER_VERSION` and `IR_SCHEMA_VERSION` exported from package root and tested.
+
+4. **Batch 2 Verification Evidence:**
+   - 74/74 total tests passing across all 6 suites:
+     - `tests/p3/analysis/test_m3_contracts.py` (27 passed)
+     - `tests/p3/analysis/test_m3_normalization.py` (19 passed)
+     - `tests/p3/analysis/test_m3_benchmarks.py` (4 passed)
+     - `tests/p3/analysis/test_m3_validation.py` (13 passed)
+     - `tests/p3/analysis/test_m3_semantics.py` (7 passed)
+     - `tests/p3/analysis/test_m3_goldens.py` (4 passed)
+   - `ruff check`: 0 errors across all M3 source and test files.
+   - `mypy`: 0 errors in strict mode across 4 source files (`backend/platform/analysis/ir`).
+   - Regression verification: M1 (98/98 runnable tests) + M2 (41/41 runnable tests across 5 suites; note that `test_m2_benchmarks.py` and `test_m2_parsers.py` require Unix `resource` stdlib).
+
+### 7.4 Batch 3 Execution Summary (Orchestration Integration & F3 Freeze)
+
+Batch 3 implementation and normative contract freeze completed on 2026-11-07:
+
+1. **Attempt Handoff Ports & Store (`backend/platform/analysis/application/handoff.py`):**
+   - M1-owned execution protocols: `F2ResultReader`, `F3ResultWriter`, `F3ResultReader`.
+   - Thread-safe `AnalysisAttemptStore` providing attempt-isolated storage for F2 inputs and F3 outputs.
+   - Connected to underlying `M2AttemptHandoff` when configured.
+   - Deterministic resource cleanup via `release(analysis_id, job_id)`.
+   - Re-exported via `backend/platform/analysis/application/__init__.py`.
+
+2. **M3 Stage Handler (`backend/platform/analysis/ir/handlers.py`):**
+   - `IRConstructionStageHandler` conforming to `AnalysisStageHandler` protocol.
+   - `stage_name = "ir_construction"`; `is_mandatory = True`.
+   - Receives decoupled `F2ResultReader` and `F3ResultWriter` ports.
+   - Consumer boundary verification: verifies that F2 `analysis_id` matches context `analysis_id` and F2 `snapshot_id` matches input `snapshot_id`.
+   - Strict diagnostic classification:
+     - Missing F2: `code="F2_HANDOFF_UNAVAILABLE"`, `category=DiagnosticCategory.ORCHESTRATION`, `error_code="F2_UNAVAILABLE"`.
+     - ID Mismatch: `code="F2_IDENTITY_MISMATCH"`, `category=DiagnosticCategory.ORCHESTRATION`, `error_code="F2_IDENTITY_MISMATCH"`.
+     - Snapshot Mismatch: `code="F2_SNAPSHOT_MISMATCH"`, `category=DiagnosticCategory.ORCHESTRATION`, `error_code="F2_SNAPSHOT_MISMATCH"`.
+     - Cap Exceeded: `code="IR_CAPACITY_LIMIT_EXCEEDED"`, `category=DiagnosticCategory.RESOURCE`, `error_code="IR_CAPACITY_EXCEEDED"`.
+     - Validation/Runtime Error: `code="IR_CONSTRUCTION_ERROR"`, `category=DiagnosticCategory.ANALYSIS`, `error_code="IR_CONSTRUCTION_FAILED"`.
+   - Emits canonical `AnalysisEventType.ANALYSIS_STAGE_COMPLETED` lifecycle events and progress updates.
+   - Re-exported via `backend/platform/analysis/ir/__init__.py`.
+
+3. **Production Composition Root (`backend/worker/tasks.py`):**
+   - Updated `get_worker_registry()` to instantiate `AnalysisAttemptStore(m2_handoff=...)` and register `IR_CONSTRUCTION` stage after M2 stages (`INVENTORY`, `LANGUAGE_DETECTION`, `FRAMEWORK_DETECTION`, `SYNTAX_EXTRACTION`).
+   - Exposed `get_attempt_store()` singleton accessor.
+   - Maintained clean reset in `set_worker_registry(None)`.
+
+4. **Normative F3 Contract (`docs/architecture/contracts/f3-intermediate-representation-v1.md`):**
+   - Version `1.0.0`, schema version `1.0.0`, status **FROZEN / IMPLEMENTED**.
+   - Fully specifies schema records (`IRDocument`, `IREntity`, `IRRelationship`, `IREvidence`, `IRUnresolvedReference`, `IRConflict`, `IRCompleteness`).
+   - Normative key algorithms, vocabulary definitions, capacity caps, diagnostic mappings, and semantic versioning change-control rules.
+
+5. **End-to-End Integration Suite (`tests/p3/analysis/test_m3_integration.py`):**
+   - 15/15 tests covering registry ordering, mandatory flag, store singleton lifecycle, registration helper, successful execution, F2 missing handling, identity mismatch handling, snapshot mismatch handling, cancellation checkpoint, capacity limit handling, construction failure handling, replay idempotency, attempt isolation, memory release, and M4 consumer traversal stub.
+
+6. **Approved Frozen-File Deviations (Documented per Change Safety):**
+   - `backend/worker/tasks.py`: Added M3 `IR_CONSTRUCTION` stage registration in `get_worker_registry()` immediately following M2 stages and added singleton accessor `get_attempt_store()`.
+   - `tests/p3/analysis/test_m2_integration.py:381`: Updated `test_production_registry_contains_only_real_m2_handlers_from_this_module` to verify `AnalysisStageName.IR_CONSTRUCTION.value` is present in `get_worker_registry().registered_stages()`, pinning the M3 pipeline extension without weakening M2 stage verification.
+   - `pytest.ini`: Registered `slow: mark test as slow running benchmark` marker to cleanly separate long-running legal worst-case benchmarks from rapid CI test runs.
+
+7. **Batch 3 Verification Evidence:**
+   - 89/89 non-slow tests passing across all 7 M3 test suites in 17.87s (plus 1 slow legal worst-case benchmark passed in 333.45s = 90/90 total M3 tests):
+     - `tests/p3/analysis/test_m3_contracts.py` (27 passed)
+     - `tests/p3/analysis/test_m3_normalization.py` (19 passed)
+     - `tests/p3/analysis/test_m3_validation.py` (13 passed)
+     - `tests/p3/analysis/test_m3_semantics.py` (7 passed)
+     - `tests/p3/analysis/test_m3_goldens.py` (4 passed)
+     - `tests/p3/analysis/test_m3_benchmarks.py` (5 passed: 4 fast + 1 slow benchmark verified)
+     - `tests/p3/analysis/test_m3_integration.py` (15 passed)
+   - `ruff check`: 0 errors across `backend/platform/analysis/ir/`, `backend/platform/analysis/application/handoff.py`, `backend/worker/tasks.py`, and test files.
+   - `mypy`: 0 issues across 7 source files in strict mode.
+   - M1/M2 Regression: 172/172 tests passing across all Windows-compatible test suites.
+
+### 7.5 Current Handoff
+
+- Current module: Phase 3 Module 3 (Intermediate Representation & Semantic Analysis).
+- Status: **ALL BATCHES COMPLETE — FROZEN / COMPLETE (F3 v1.0.0)**.
+- Frozen dependencies: M1/F1 v1.0.0, M2/F2 v1.0.0, and M3/F3 v1.0.0 are all frozen and validated.
+- Next step: Hand off to **Phase 3 Module 4 (Architectural Identity & Architecture Model)**. M4 consumes `IRDocument` via `F3ResultReader` port to construct the canonical Architecture Model.

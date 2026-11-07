@@ -15,6 +15,14 @@ DEFAULT_MAX_DIAGNOSTICS_PER_ANALYSIS: int = 1000  # Bounded diagnostic capacity
 DEFAULT_ARTIFACT_PAGE_SIZE: int = 1000  # Bounded artifact pagination limit
 MAX_READ_BYTES_LIMIT: int = 50 * 1024 * 1024  # 50 MB bounded read limit per file
 
+# --- Intermediate Representation (M3) Capacity Limits ---
+DEFAULT_IR_MAX_ENTITIES: int = 150_000
+DEFAULT_IR_MAX_RELATIONSHIPS: int = 500_000
+DEFAULT_IR_MAX_EVIDENCE: int = 500_000
+DEFAULT_IR_MAX_UNRESOLVED_REFERENCES: int = 150_000
+DEFAULT_IR_MAX_CONFLICTS: int = 25_000
+DEFAULT_IR_MAX_SERIALIZED_BYTES: int = 512 * 1024 * 1024  # 512 MB
+
 
 class AnalysisStatus(StrEnum):
     """Canonical Analysis lifecycle states per master.txt §9.8 and Section 9.

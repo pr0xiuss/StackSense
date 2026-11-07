@@ -378,6 +378,7 @@ def test_production_registry_contains_only_real_m2_handlers_from_this_module() -
             AnalysisStageName.LANGUAGE_DETECTION.value,
             AnalysisStageName.FRAMEWORK_DETECTION.value,
             AnalysisStageName.SYNTAX_EXTRACTION.value,
+            AnalysisStageName.IR_CONSTRUCTION.value,
         )
     finally:
         set_worker_registry(StageHandlerRegistry())
