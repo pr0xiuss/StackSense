@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     parser_max_facts_per_analysis: int = Field(default=250_000, ge=1)
     parser_max_serialized_f2_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
 
+    # Intermediate Representation (Phase 3 Module 3)
+    ir_max_entities: int = Field(default=150_000, ge=1)
+    ir_max_relationships: int = Field(default=500_000, ge=1)
+    ir_max_evidence: int = Field(default=500_000, ge=1)
+    ir_max_unresolved_references: int = Field(default=150_000, ge=1)
+    ir_max_conflicts: int = Field(default=25_000, ge=1)
+    ir_max_serialized_bytes: int = Field(default=512 * 1024 * 1024, ge=1024)
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )
