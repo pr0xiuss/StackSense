@@ -591,9 +591,7 @@ class TestPartialCompletenessHandling:
         assert doc.completeness.failed_artifacts == 0
 
 
-_FIXTURES_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "fixtures" / "p3" / "m3"
-)
+_FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent / "fixtures" / "p3" / "m3"
 
 
 class TestFixtureDrivenNormalization:
@@ -699,4 +697,3 @@ class TestFixtureDrivenNormalization:
             if r.kind == IRRelationshipKind.DECLARES_DEPENDENCY
         ]
         assert len(dep_rels) == len(all_deps)
-

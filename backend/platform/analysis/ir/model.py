@@ -188,9 +188,7 @@ def _freeze_metadata(data: Mapping[str, Any]) -> MappingProxyType[str, Any]:
 
 def build_entity_key(kind: IREntityKind, *parts: str) -> str:
     """Build a deterministic snapshot-scoped entity key."""
-    norm_parts = [
-        p.replace("\\", "/").strip("/").replace(" ", "_") for p in parts if p
-    ]
+    norm_parts = [p.replace("\\", "/").strip("/").replace(" ", "_") for p in parts if p]
     if not norm_parts:
         msg = (
             f"Cannot build entity key for {kind.value} without path or "

@@ -34,6 +34,7 @@ from backend.platform.analysis.domain.input import (
     ArtifactCatalog,
     ArtifactContentReader,
 )
+from backend.platform.analysis.inspection.model import RepositoryInspectionResult
 from backend.platform.analysis.ir.handlers import (
     IRConstructionStageHandler,
     register_ir_stage_handler,
@@ -367,7 +368,12 @@ class TestIRStageExecution:
         store.set_f2_result(ctx.analysis_id, ctx.job_id, f2_result)
 
         class _CapExceededService(IRConstructionService):
-            def construct(self, result: Any) -> IRDocument:
+            def construct(
+                self,
+                inspection_result: RepositoryInspectionResult,
+                expected_schema_version: str = "1.0.0",
+                validate: bool = True,
+            ) -> IRDocument:
                 raise IRCapacityLimitError("Entity limit 150000 exceeded")
 
         handler = IRConstructionStageHandler(
@@ -394,7 +400,12 @@ class TestIRStageExecution:
         store.set_f2_result(ctx.analysis_id, ctx.job_id, f2_result)
 
         class _FailingService(IRConstructionService):
-            def construct(self, result: Any) -> IRDocument:
+            def construct(
+                self,
+                inspection_result: RepositoryInspectionResult,
+                expected_schema_version: str = "1.0.0",
+                validate: bool = True,
+            ) -> IRDocument:
                 raise IRConstructionError("Syntax fact tree corrupted")
 
         handler = IRConstructionStageHandler(
@@ -556,6 +567,4 @@ class TestM4ConsumerStub:
         assert components[0]["name"] == "UserModel"
         assert components[0]["qualified_name"] == "src/models.py::UserModel"
         assert components[0]["module_key"] == "module::src/models.py"
-        assert components[0]["key"].startswith(
-            "symbol::src/models.py::UserModel::"
-        )
+        assert components[0]["key"].startswith("symbol::src/models.py::UserModel::")

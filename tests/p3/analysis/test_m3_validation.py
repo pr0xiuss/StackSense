@@ -290,9 +290,7 @@ class TestIRValidatorCapacityLimits:
         )
         doc_over = _make_test_doc(conflicts=(conflict,))
 
-        with pytest.raises(
-            IRCapacityLimitError, match="Conflict count .* exceeds cap"
-        ):
+        with pytest.raises(IRCapacityLimitError, match="Conflict count .* exceeds cap"):
             validator.validate(doc_over)
 
     def test_serialized_bytes_cap_exceeded_raises_capacity_error(self) -> None:
@@ -301,7 +299,5 @@ class TestIRValidatorCapacityLimits:
         validator = IRValidator(caps=caps)
         doc = _make_test_doc()
 
-        with pytest.raises(
-            IRCapacityLimitError, match="payload size .* exceeds cap"
-        ):
+        with pytest.raises(IRCapacityLimitError, match="payload size .* exceeds cap"):
             validator.validate(doc)

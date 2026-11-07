@@ -135,4 +135,3 @@ __all__ = [
     "F3ResultReader",
     "F3ResultWriter",
 ]
-

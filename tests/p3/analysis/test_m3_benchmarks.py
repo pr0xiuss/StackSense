@@ -330,4 +330,3 @@ class TestIRM3Benchmarks:
         assert len(doc.evidence) <= 500_000
         assert len(doc.unresolved_references) <= 150_000
         assert payload_bytes <= 512 * 1024 * 1024
-

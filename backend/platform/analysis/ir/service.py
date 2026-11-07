@@ -525,18 +525,18 @@ class IRConstructionService:
                         IREntityKind.MODULE
                         if fact.kind
                         in (DeclarationKind.MODULE, DeclarationKind.PACKAGE)
-                        else IREntityKind.COMPONENT
-                        if fact.kind == DeclarationKind.REACT_COMPONENT
-                        else IREntityKind.SYMBOL
+                        else (
+                            IREntityKind.COMPONENT
+                            if fact.kind == DeclarationKind.REACT_COMPONENT
+                            else IREntityKind.SYMBOL
+                        )
                     )
                     dr = fact.declaration_range
                     range_disc = f"{dr.start_byte}_{dr.end_byte}"
                     sym_key = build_entity_key(
                         decl_kind, doc.path, fact.name, range_disc
                     )
-                    local_declarations_by_name.setdefault(
-                        fact.name, []
-                    ).append(sym_key)
+                    local_declarations_by_name.setdefault(fact.name, []).append(sym_key)
                     local_symbols_by_fact_key[fact.fact_key] = sym_key
 
             # Normalize facts
@@ -546,9 +546,11 @@ class IRConstructionService:
                         IREntityKind.MODULE
                         if fact.kind
                         in (DeclarationKind.MODULE, DeclarationKind.PACKAGE)
-                        else IREntityKind.COMPONENT
-                        if fact.kind == DeclarationKind.REACT_COMPONENT
-                        else IREntityKind.SYMBOL
+                        else (
+                            IREntityKind.COMPONENT
+                            if fact.kind == DeclarationKind.REACT_COMPONENT
+                            else IREntityKind.SYMBOL
+                        )
                     )
                     dr = fact.declaration_range
                     range_disc = f"{dr.start_byte}_{dr.end_byte}"

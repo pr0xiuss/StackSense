@@ -10,6 +10,7 @@ import random
 from uuid import UUID
 
 from backend.platform.analysis.inspection.model import (
+    ArtifactInventoryEntry,
     ArtifactProcessingOutcome,
 )
 from backend.platform.analysis.ir import (
@@ -21,6 +22,7 @@ from backend.platform.analysis.syntax.model import (
     ImportKind,
     ParseStatus,
     ReferenceKind,
+    SyntaxDocument,
 )
 from tests.p3.analysis.m3_test_helper import (
     create_mock_declaration_fact,
@@ -40,7 +42,9 @@ _FIXED_ANALYSIS_ID = UUID("33333333-3333-3333-3333-333333333333")
 _FIXED_PROJECT_ID = UUID("44444444-4444-4444-4444-444444444444")
 
 
-def _build_standard_inspection_workload() -> tuple[list, list]:
+def _build_standard_inspection_workload() -> (
+    tuple[list[ArtifactInventoryEntry], list[SyntaxDocument]]
+):
     """Build a fixed deterministic set of inventory and syntax documents."""
     inv_py = create_mock_inventory_entry(
         path="src/main.py",
@@ -202,9 +206,7 @@ class TestIRGoldens:
             details={"reason": "competing types inferred"},
         )
         doc_with_conflict = service.construct(inspection, validate=False)
-        object.__setattr__(
-            doc_with_conflict, "conflicts", (conflict,)
-        )
+        object.__setattr__(doc_with_conflict, "conflicts", (conflict,))
         # Update completeness counter to match
         comp = doc_with_conflict.completeness
         new_comp = type(comp)(

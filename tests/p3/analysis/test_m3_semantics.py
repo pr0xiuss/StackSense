@@ -68,8 +68,7 @@ class TestContainerAndScopeSemantics:
         declares_rels = [
             r
             for r in doc.relationships
-            if r.kind == IRRelationshipKind.DECLARES
-            and r.source_key == module_key
+            if r.kind == IRRelationshipKind.DECLARES and r.source_key == module_key
         ]
         target_keys = {r.target_key for r in declares_rels}
         assert "symbol::src/services/user.py::UserService::0_100" in target_keys
@@ -80,8 +79,7 @@ class TestContainerAndScopeSemantics:
         contains_rel = next(
             r
             for r in doc.relationships
-            if r.kind == IRRelationshipKind.CONTAINS
-            and r.source_key == art_key
+            if r.kind == IRRelationshipKind.CONTAINS and r.source_key == art_key
         )
         assert contains_rel.target_key == module_key
 
@@ -111,9 +109,7 @@ class TestAliasAndExportSemantics:
         doc = service.construct(inspection)
 
         imp_rel = next(
-            r
-            for r in doc.relationships
-            if r.kind == IRRelationshipKind.IMPORTS
+            r for r in doc.relationships if r.kind == IRRelationshipKind.IMPORTS
         )
         assert imp_rel.metadata["imported_name"] == "DataFrame"
         assert imp_rel.metadata["local_alias"] == "DF"
@@ -141,9 +137,7 @@ class TestAliasAndExportSemantics:
         doc = service.construct(inspection)
 
         exp_rel = next(
-            r
-            for r in doc.relationships
-            if r.kind == IRRelationshipKind.EXPORTS
+            r for r in doc.relationships if r.kind == IRRelationshipKind.EXPORTS
         )
         assert exp_rel.target_key is None
         assert exp_rel.unresolved_reference_key is not None
@@ -196,9 +190,7 @@ class TestInheritanceAndCompositionSemantics:
         doc = service.construct(inspection)
 
         inherit_rel = next(
-            r
-            for r in doc.relationships
-            if r.kind == IRRelationshipKind.INHERITS
+            r for r in doc.relationships if r.kind == IRRelationshipKind.INHERITS
         )
         base_sym_key = "symbol::src/handlers.py::BaseHandler::0_50"
         sub_sym_key = "symbol::src/handlers.py::HttpHandler::60_120"
@@ -237,9 +229,7 @@ class TestInheritanceAndCompositionSemantics:
         doc = service.construct(inspection)
 
         compose_rel = next(
-            r
-            for r in doc.relationships
-            if r.kind == IRRelationshipKind.COMPOSES
+            r for r in doc.relationships if r.kind == IRRelationshipKind.COMPOSES
         )
         comp_key = "component::src/components/UserCard.tsx::UserCard::0_80"
         assert compose_rel.source_key == comp_key
@@ -318,9 +308,7 @@ class TestFrameworkEndpointExtraction:
         doc = service.construct(inspection)
 
         # Endpoint entity created
-        ep_entities = [
-            e for e in doc.entities if e.kind == IREntityKind.ENDPOINT
-        ]
+        ep_entities = [e for e in doc.entities if e.kind == IREntityKind.ENDPOINT]
         assert len(ep_entities) == 1
         ep = ep_entities[0]
         assert ep.name == "/api/v1/users"
@@ -329,9 +317,7 @@ class TestFrameworkEndpointExtraction:
 
         # Declares route relationship
         route_rel = next(
-            r
-            for r in doc.relationships
-            if r.kind == IRRelationshipKind.DECLARES_ROUTE
+            r for r in doc.relationships if r.kind == IRRelationshipKind.DECLARES_ROUTE
         )
         assert route_rel.source_key == "module::src/api/routes.py"
         assert route_rel.target_key == ep.ir_key
