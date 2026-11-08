@@ -113,7 +113,6 @@ def create_fake_handler_registry(
         AnalysisStageName.IR_CONSTRUCTION.value,
         AnalysisStageName.IDENTITY_RESOLUTION.value,
         AnalysisStageName.ARCHITECTURE_BUILD.value,
-        AnalysisStageName.PROJECTION.value,
     ]
 
     for name in stage_names:

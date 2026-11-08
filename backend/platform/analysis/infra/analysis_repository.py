@@ -16,7 +16,10 @@ from backend.platform.analysis.domain.analysis import (
 )
 from backend.platform.analysis.domain.constants import AnalysisStatus
 from backend.platform.analysis.infra.lifecycle_model import AnalysisModel
-from backend.platform.analysis.repositories.analysis_repo import AnalysisRepository
+from backend.platform.analysis.repositories.analysis_repo import (
+    AnalysisPublicationLinker,
+    AnalysisRepository,
+)
 from backend.platform.errors import AnalysisStateConflictError
 
 
@@ -28,7 +31,7 @@ def _ensure_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
-class SqlAlchemyAnalysisRepository(AnalysisRepository):
+class SqlAlchemyAnalysisRepository(AnalysisRepository, AnalysisPublicationLinker):
     """PostgreSQL-backed implementation of AnalysisRepository."""
 
     def __init__(self, session: Session) -> None:
@@ -243,3 +246,48 @@ class SqlAlchemyAnalysisRepository(AnalysisRepository):
         if status is not None:
             stmt = stmt.where(AnalysisModel.status == status.value)
         return self._session.scalar(stmt) or 0
+
+    def link_published_version(
+        self,
+        analysis_id: UUID,
+        project_id: UUID,
+        version_id: UUID,
+    ) -> None:
+        """Atomically and optimistically assign the published version pointer."""
+        now = datetime.now(UTC)
+        statement = (
+            update(AnalysisModel)
+            .where(
+                AnalysisModel.id == analysis_id,
+                AnalysisModel.project_id == project_id,
+                AnalysisModel.status == AnalysisStatus.RUNNING.value,
+                AnalysisModel.published_version_id.is_(None),
+            )
+            .values(
+                published_version_id=version_id,
+                version=AnalysisModel.version + 1,
+                updated_at=now,
+            )
+        )
+        result = self._session.execute(statement)
+        if isinstance(result, CursorResult) and result.rowcount == 0:
+            existing = self._session.scalar(
+                select(AnalysisModel).where(
+                    AnalysisModel.id == analysis_id,
+                    AnalysisModel.project_id == project_id,
+                )
+            )
+            if (
+                existing is not None
+                and existing.status == AnalysisStatus.RUNNING.value
+                and existing.published_version_id == version_id
+            ):
+                return
+            raise AnalysisStateConflictError(
+                message=(
+                    "Analysis must be running with an empty or identical "
+                    "published-version pointer."
+                ),
+                details={"analysis_id": str(analysis_id)},
+            )
+        self._session.flush()

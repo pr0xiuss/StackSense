@@ -22,6 +22,7 @@ from backend.platform.analysis.inspection.model import (
     ArtifactProcessingOutcome,
     RepositoryInspectionResult,
 )
+from backend.platform.analysis.syntax.model import ManifestFact
 from backend.platform.ingestion.domain.constants import ArtifactCategory, SupportLevel
 
 
@@ -1010,3 +1011,57 @@ def test_conflicting_manifest_versions_are_deterministic_and_explicit() -> None:
     express = next(item for item in first[0] if item.framework == "express")
     assert express.version is None
     assert any(item.polarity == "conflicting" for item in first[1])
+
+
+def test_manifest_dependency_credentials_never_enter_f2() -> None:
+    revision_id = uuid4()
+    marker = "credential-marker"
+    package = json.dumps(
+        {
+            "dependencies": {
+                "express": f"https://user:{marker}@registry.invalid/express.tgz"
+            }
+        }
+    ).encode()
+    requirement = f"fastapi @ https://user:{marker}@example.invalid/pkg.whl\n".encode()
+    artifacts = [
+        AnalysisArtifact(
+            id=uuid4(),
+            revision_id=revision_id,
+            path=path,
+            size_bytes=len(content),
+            content_hash=f"hash-{index}",
+            category=ArtifactCategory.DEPENDENCY_METADATA,
+            support_level=SupportLevel.METADATA,
+        )
+        for index, (path, content) in enumerate(
+            (("package.json", package), ("requirements.txt", requirement))
+        )
+    ]
+    reader = RecordingContentReader(
+        {"package.json": package, "requirements.txt": requirement}
+    )
+    inventory, _ = InventoryBuilder().build_inventory(artifacts)
+    manifests = []
+
+    DetectionService().detect_framework_candidates(
+        artifacts,
+        inventory,
+        content_reader=reader,
+        manifest_documents=manifests,
+    )
+
+    rendered = repr(manifests)
+    facts = [
+        fact
+        for document in manifests
+        for fact in document.facts
+        if isinstance(fact, ManifestFact)
+    ]
+    assert marker not in rendered
+    assert "registry.invalid" not in rendered
+    assert "example.invalid" not in rendered
+    assert {(fact.name, fact.version) for fact in facts} == {
+        ("express", None),
+        ("fastapi", None),
+    }

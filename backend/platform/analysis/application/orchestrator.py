@@ -25,6 +25,7 @@ from backend.platform.analysis.domain.constants import (
     DEFAULT_MAX_ANALYSIS_DURATION_SECONDS,
     DEFAULT_MAX_DIAGNOSTICS_PER_ANALYSIS,
     DEFAULT_STAGE_TIMEOUT_SECONDS,
+    AnalysisStageName,
     AnalysisStatus,
     DiagnosticCategory,
     DiagnosticScope,
@@ -396,7 +397,7 @@ class AnalysisOrchestrator:
             updated_at=now,
             worker_id=worker_id or "worker-default",
             heartbeat_at=now,
-            started_at=now,
+            started_at=job.started_at or now,
         )
         try:
             self._job_repo.update(job, expected_version=job.version - 1)
@@ -425,10 +426,13 @@ class AnalysisOrchestrator:
         self._checkpoint()
 
         stages = self._stage_repo.list_by_analysis(analysis_id)
-        execution_start = job.started_at or now
+        # The configured analysis timeout is a lifecycle-wide safety boundary,
+        # not a fresh allowance for each queue retry.
+        execution_start = analysis.started_at or job.started_at or now
 
         # 3. Stage Execution Loop
         has_warnings = False
+        requires_architecture_publication = False
         current_stage_id: UUID | None = None
         try:
             # Input construction is part of execution and must fail the durable
@@ -467,6 +471,29 @@ class AnalysisOrchestrator:
                     continue
 
                 stage_now = datetime.now(UTC)
+
+                # Compatibility only for legacy rows created before projection
+                # became an independently owned post-publication concern.
+                if (
+                    stage.stage_name == AnalysisStageName.PROJECTION.value
+                    and stage.can_transition_to(StageStatus.SKIPPED)
+                ):
+                    latest_analysis = self._analysis_repo.get_by_id(
+                        analysis_id, project_id
+                    )
+                    if latest_analysis and latest_analysis.published_version_id:
+                        skipped_stage = stage.transition_to(
+                            StageStatus.SKIPPED,
+                            updated_at=stage_now,
+                        )
+                        self._stage_repo.update(
+                            skipped_stage, expected_version=stage.version
+                        )
+                        emitter.emit_stage_skipped(
+                            stage.stage_name, stage.id, "projection_deferred"
+                        )
+                        self._checkpoint()
+                        continue
 
                 # D. Transition Stage to RUNNING
                 if stage.can_transition_to(StageStatus.RUNNING):
@@ -507,6 +534,11 @@ class AnalysisOrchestrator:
                     has_warnings = True
                     self._checkpoint()
                     continue
+
+                requires_architecture_publication = (
+                    requires_architecture_publication
+                    or handler.requires_published_architecture
+                )
 
                 # F. Execute Handler
                 ctx = _DefaultExecutionContext(
@@ -620,6 +652,24 @@ class AnalysisOrchestrator:
             # 4. All stages completed successfully -> Terminal Analysis Success
             complete_now = datetime.now(UTC)
             latest_analysis = self._analysis_repo.get_by_id(analysis_id, project_id)
+            if (
+                requires_architecture_publication
+                and latest_analysis is not None
+                and latest_analysis.published_version_id is None
+            ):
+                self._handle_terminal_failure(
+                    analysis_id=analysis_id,
+                    project_id=project_id,
+                    job_id=job_id,
+                    error_code="architecture_publication_missing",
+                    error_message=(
+                        "Mandatory Architecture Model publication did not produce "
+                        "a durable version pointer."
+                    ),
+                    emitter=emitter,
+                )
+                self._checkpoint()
+                return
             if has_warnings and latest_analysis:
                 partial_analysis = latest_analysis.transition_to(
                     AnalysisStatus.PARTIAL, updated_at=complete_now

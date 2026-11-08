@@ -166,7 +166,7 @@ def test_create_analysis_success(
     assert resp.repository_id == repo.id
     assert resp.snapshot_id == rev.id
     assert resp.status == AnalysisStatus.CREATED.value
-    assert len(resp.stages) == 9
+    assert len(resp.stages) == 8
     assert resp.active_job is not None
     assert resp.active_job.status == JobStatus.PENDING.value
 
@@ -270,7 +270,7 @@ def test_get_analysis_success_and_not_found(
 
     fetched = service.get_analysis(created.id, project.id)
     assert fetched.id == created.id
-    assert len(fetched.stages) == 9
+    assert len(fetched.stages) == 8
 
     with pytest.raises(AnalysisNotFoundError):
         service.get_analysis(uuid4(), project.id)

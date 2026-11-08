@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from typing import Any
@@ -211,7 +212,18 @@ def test_ordered_handlers_produce_attempt_scoped_immutable_f2_once() -> None:
         for document in f2.syntax_documents
         for fact in document.facts
     )
-    assert "/secret" not in f2.to_canonical_json()
+    route = next(
+        fact
+        for document in f2.syntax_documents
+        for fact in document.facts
+        if isinstance(fact, FrameworkFact) and fact.fact_type == "route"
+    )
+    assert route.name == "/secret"
+    assert route.details == {
+        "method": "GET",
+        "path": "/secret",
+        "reference_kind": "decorator",
+    }
     assert context.events == []
     assert context.progress
     assert _m3_consumer_stub(f2) == (
@@ -231,6 +243,48 @@ def test_ordered_handlers_produce_attempt_scoped_immutable_f2_once() -> None:
         and fact.is_dev
         for document in f2.syntax_documents
         for fact in document.facts
+    )
+
+
+def test_inspection_rejects_content_that_breaks_immutable_hash() -> None:
+    content = b"def ok():\n    return 1\n"
+    other = b"def no():\n    return 2\n"
+    assert len(content) == len(other)
+    revision_id = uuid4()
+    artifact = AnalysisArtifact(
+        id=uuid4(),
+        revision_id=revision_id,
+        path="app.py",
+        size_bytes=len(content),
+        content_hash=hashlib.sha256(other).hexdigest(),
+        category=ArtifactCategory.SOURCE_CODE,
+        support_level=SupportLevel.FULL,
+    )
+    analysis_input = AnalysisInput(
+        analysis_id=uuid4(),
+        project_id=uuid4(),
+        repository_id=uuid4(),
+        snapshot_id=revision_id,
+        revision_identifier="main",
+        source_hash="sha256:repository",
+        total_files=1,
+        total_bytes=len(content),
+        effective_configuration=AnalysisConfiguration(),
+        artifact_catalog=ArtifactCatalog((artifact,)),
+        content_reader=_MemoryReader({artifact.id: content}),
+    )
+    executor = _InProcessExecutor()
+
+    execution = RepositoryInspectionService(parser_executor=executor).inspect(  # type: ignore[arg-type]
+        analysis_input,
+        configuration_fingerprint="f" * 64,
+    )
+
+    assert executor.calls == 0
+    assert execution.result.inventory[0].processing_outcome.value == "failed"
+    assert any(
+        diagnostic.code == "artifact_read_failed"
+        for diagnostic in execution.diagnostics
     )
 
 

@@ -60,6 +60,12 @@ class AnalysisModel(Base):
     )
     published_version_id: Mapped[UUID | None] = mapped_column(
         Uuid,
+        ForeignKey(
+            "architecture_versions.id",
+            name="fk_analyses_published_version_id_architecture_versions",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
         nullable=True,
     )
     error_code: Mapped[str | None] = mapped_column(

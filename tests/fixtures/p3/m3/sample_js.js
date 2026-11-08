@@ -13,4 +13,3 @@ module.exports = {
   calculateTotal,
   TAX_RATE,
 };
-

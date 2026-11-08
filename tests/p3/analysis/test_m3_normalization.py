@@ -199,6 +199,7 @@ class TestLanguageAndEnvironmentNormalization:
         )
         assert fd_ev.metadata["framework"] == "express"
         assert fd_ev.metadata["version"] == "^4.18.0"
+        assert fd_ev.strength == IREvidenceStrength.DEPENDENCY
 
 
 class TestSyntaxAndFactNormalization:
@@ -366,6 +367,44 @@ class TestSyntaxAndFactNormalization:
         )
         assert rel_ext.target_key is None
         assert rel_ext.unresolved_reference_key is not None
+        assert rel_ext.status == IRFactStatus.UNRESOLVED
+
+    def test_nested_declaration_uses_ir_container_and_declares_edge(self) -> None:
+        service = IRConstructionService()
+        parent = create_mock_declaration_fact(
+            fact_key="decl::class::1",
+            name="Service",
+            kind=DeclarationKind.CLASS,
+            declaration_range=create_mock_source_range(0, 100),
+        )
+        child = create_mock_declaration_fact(
+            fact_key="decl::method::1",
+            name="run",
+            kind=DeclarationKind.METHOD,
+            container_key=parent.fact_key,
+            declaration_range=create_mock_source_range(20, 60),
+        )
+        syntax_doc = create_mock_syntax_document(
+            path="src/service.py",
+            declarations=[parent, child],
+        )
+        inspection = create_mock_inspection_result(
+            inventory=[create_mock_inventory_entry(path="src/service.py")],
+            syntax_documents=[syntax_doc],
+        )
+
+        doc = service.construct(inspection)
+
+        parent_key = "symbol::src/service.py::Service::0_100"
+        child_entity = next(entity for entity in doc.entities if entity.name == "run")
+        assert child_entity.container_key == parent_key
+        declares = next(
+            relationship
+            for relationship in doc.relationships
+            if relationship.kind == IRRelationshipKind.DECLARES
+            and relationship.target_key == child_entity.ir_key
+        )
+        assert declares.source_key == parent_key
 
     def test_reference_fact_relationships(self) -> None:
         service = IRConstructionService()
@@ -418,7 +457,7 @@ class TestSyntaxAndFactNormalization:
         assert inherit_rel.target_key is None
         assert inherit_rel.unresolved_reference_key is not None
 
-    def test_name_and_attribute_reference_fact_mapping(self) -> None:
+    def test_name_and_attribute_facts_do_not_imply_static_calls(self) -> None:
         service = IRConstructionService()
         ref_name = create_mock_reference_fact(
             fact_key="ref::name::1",
@@ -444,15 +483,18 @@ class TestSyntaxAndFactNormalization:
 
         doc = service.construct(inspection)
 
-        rels = [
+        call_rels = [
             r
             for r in doc.relationships
             if r.kind == IRRelationshipKind.STATIC_CALL_REFERENCE
         ]
-        assert len(rels) == 2
-        ref_kinds = {r.metadata.get("reference_kind") for r in rels}
-        assert "name" in ref_kinds
-        assert "attribute" in ref_kinds
+        assert call_rels == []
+        ref_evidence = {
+            ev.metadata["reference_kind"]
+            for ev in doc.evidence
+            if ev.source_record_type == "reference_fact"
+        }
+        assert ref_evidence == {"name", "attribute"}
 
     def test_manifest_fact_creates_declares_dependency(self) -> None:
         service = IRConstructionService()

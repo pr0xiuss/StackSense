@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -47,6 +49,63 @@ FRAMEWORK_TARGETS: tuple[str, ...] = (
     "nextjs",
 )
 
+_PACKAGE_NAME_RE = re.compile(
+    r"(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*", re.IGNORECASE
+)
+_PYTHON_REQUIREMENT_NAME_RE = re.compile(
+    r"(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[A-Za-z0-9_,.-]+\])?"
+)
+_SAFE_VERSION_RE = re.compile(r"(?:[vV]?\d|[<>=!~^*])[-+0-9A-Za-z.*<>=!~^,|& ]*")
+_SHA256_HEX_RE = re.compile(r"[0-9a-fA-F]{64}")
+
+
+def _validate_manifest_content(artifact: AnalysisArtifact, content: bytes) -> None:
+    if not _SHA256_HEX_RE.fullmatch(artifact.content_hash):
+        return
+    if len(content) != artifact.size_bytes:
+        raise ValueError("manifest content size did not match immutable metadata")
+    actual = hashlib.sha256(content).hexdigest()
+    if actual.lower() != artifact.content_hash.lower():
+        raise ValueError("manifest content hash did not match immutable metadata")
+
+
+def _safe_dependency_version(value: object) -> str | None:
+    """Retain registry-style version constraints, never URLs or local paths."""
+    if value is None:
+        return None
+    version = str(value).strip()
+    if not version or len(version) > 128:
+        return None
+    if any(marker in version for marker in ("://", "@", "/", "\\", "#", "%")):
+        return None
+    return version if _SAFE_VERSION_RE.fullmatch(version) else None
+
+
+def _package_json_dependency_records(
+    content: str,
+) -> tuple[tuple[str, str | None, str, bool], ...]:
+    data = json.loads(content)
+    if not isinstance(data, dict):
+        raise ValueError("package.json root must be a JSON object")
+    records: list[tuple[str, str | None, str, bool]] = []
+    for section in ("dependencies", "devDependencies", "peerDependencies"):
+        values = data.get(section)
+        if not isinstance(values, dict):
+            continue
+        for raw_name, raw_version in values.items():
+            name = str(raw_name).lower().strip()
+            if not _PACKAGE_NAME_RE.fullmatch(name):
+                continue
+            records.append(
+                (
+                    name,
+                    _safe_dependency_version(raw_version),
+                    section,
+                    section == "devDependencies",
+                )
+            )
+    return tuple(sorted(records, key=lambda item: (item[2], item[0], item[1] or "")))
+
 
 def _is_detection_eligible(entry: ArtifactInventoryEntry) -> bool:
     return (
@@ -65,36 +124,32 @@ def parse_safe_requirements_txt(content: str) -> dict[str, str | None]:
         clean = line.strip()
         if not clean or clean.startswith("#") or clean.startswith("-"):
             continue
-        # Split on comments
-        clean = clean.split("#")[0].strip()
-        # Parse package name and version
-        for op in ("==", ">=", "<=", "~=", ">", "<", "!="):
-            if op in clean:
-                parts = clean.split(op, 1)
-                pkg_name = parts[0].strip().lower()
-                version = parts[1].strip()
-                if pkg_name:
-                    dependencies[pkg_name] = version
-                break
-        else:
-            pkg_name = clean.split(";")[0].strip().lower()
-            if pkg_name:
-                dependencies[pkg_name] = None
+        clean = clean.split(" #", 1)[0].strip()
+        match = _PYTHON_REQUIREMENT_NAME_RE.match(clean)
+        if match is None:
+            continue
+        package_name = match.group("name").lower()
+        remainder = clean[match.end() :].split(";", 1)[0].strip()
+        # PEP 508 direct references may contain embedded credentials. The package
+        # identity is useful evidence; the literal locator never is.
+        version = None
+        if not remainder.startswith("@"):
+            for operator in ("==", ">=", "<=", "~=", "!=", ">", "<"):
+                if remainder.startswith(operator):
+                    version = _safe_dependency_version(
+                        remainder[len(operator) :].strip()
+                    )
+                    break
+        dependencies[package_name] = version
     return dependencies
 
 
 def parse_safe_package_json(content: str) -> dict[str, str | None]:
     """Extract allowlisted dependencies from package.json without secrets."""
-    dependencies: dict[str, str | None] = {}
-    data = json.loads(content)
-    if not isinstance(data, dict):
-        raise ValueError("package.json root must be a JSON object")
-    for section in ("dependencies", "devDependencies", "peerDependencies"):
-        sec_dict = data.get(section)
-        if isinstance(sec_dict, dict):
-            for k, v in sec_dict.items():
-                dependencies[k.lower().strip()] = str(v).strip() if v else None
-    return dependencies
+    return {
+        name: version
+        for name, version, _, _ in _package_json_dependency_records(content)
+    }
 
 
 class DetectionService:
@@ -228,6 +283,7 @@ class DetectionService:
                         content_bytes = content_reader.read_bytes(
                             art, max_bytes=1024 * 1024
                         )
+                        _validate_manifest_content(art, content_bytes)
                         text = content_bytes.decode("utf-8", errors="strict")
                         try:
                             pkg_deps = parse_safe_package_json(text)
@@ -319,6 +375,7 @@ class DetectionService:
                         content_bytes = content_reader.read_bytes(
                             art, max_bytes=1024 * 1024
                         )
+                        _validate_manifest_content(art, content_bytes)
                         text = content_bytes.decode("utf-8", errors="strict")
                         requirements = parse_safe_requirements_txt(text)
                         for name, version in sorted(requirements.items()):
@@ -646,20 +703,9 @@ def _manifest_document(
     """Build safe dependency facts from one already-read permitted manifest."""
     dependency_records: list[tuple[str, str | None, str | None, bool]] = []
     if manifest_type == "package_json":
-        data = json.loads(content.decode("utf-8"))
-        if isinstance(data, dict):
-            for section in ("dependencies", "devDependencies", "peerDependencies"):
-                values = data.get(section)
-                if isinstance(values, dict):
-                    dependency_records.extend(
-                        (
-                            str(name).lower().strip(),
-                            str(version).strip() if version else None,
-                            section,
-                            section == "devDependencies",
-                        )
-                        for name, version in values.items()
-                    )
+        dependency_records.extend(
+            _package_json_dependency_records(content.decode("utf-8"))
+        )
     else:
         dependency_records.extend(
             (name, version, "runtime", False) for name, version in dependencies.items()

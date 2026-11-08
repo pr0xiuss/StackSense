@@ -180,7 +180,7 @@ def test_api_create_analysis_success_returns_202(
     assert data["snapshot_id"] == str(rev.id)
     assert data["active_job"] is not None
     assert data["active_job"]["status"] == "queued"
-    assert len(data["stages"]) == 9
+    assert len(data["stages"]) == 8
 
     # Queue received job payload
     assert len(queue_publisher.published_jobs) == 1
@@ -295,7 +295,7 @@ def test_api_get_analysis_by_id(
     data = res.json()
     assert data["id"] == analysis_id
     assert data["status"] == "queued"
-    assert len(data["stages"]) == 9
+    assert len(data["stages"]) == 8
 
 
 def test_api_get_analysis_not_found_returns_404(

@@ -53,9 +53,23 @@ _REFERENCE_KIND_MAP: dict[ReferenceKind, IRRelationshipKind] = {
     ReferenceKind.INHERITANCE: IRRelationshipKind.INHERITS,
     ReferenceKind.DECORATOR: IRRelationshipKind.USES_FRAMEWORK,
     ReferenceKind.REACT_COMPOSITION: IRRelationshipKind.COMPOSES,
-    ReferenceKind.NAME: IRRelationshipKind.STATIC_CALL_REFERENCE,
-    ReferenceKind.ATTRIBUTE: IRRelationshipKind.STATIC_CALL_REFERENCE,
 }
+
+
+def _detection_evidence_strength(
+    signals: tuple[str, ...],
+) -> IREvidenceStrength:
+    """Classify detection evidence by the strongest signal actually present."""
+    if any(signal.startswith("syntax_import:") for signal in signals):
+        return IREvidenceStrength.FRAMEWORK_STRUCTURAL
+    if any(signal == "shebang" or signal.startswith("shebang:") for signal in signals):
+        return IREvidenceStrength.DIRECT_SOURCE
+    if any(
+        signal.startswith("dependency:") or "dependencies" in signal
+        for signal in signals
+    ):
+        return IREvidenceStrength.DEPENDENCY
+    return IREvidenceStrength.CONFIGURATION
 
 
 class IRConstructionService:
@@ -377,7 +391,7 @@ class IRConstructionService:
                     artifact_id=ld.artifact_id,
                     path=ld.path,
                     source_record_type="language_detection",
-                    strength=IREvidenceStrength.CONFIGURATION,
+                    strength=_detection_evidence_strength(ld.evidence_signals),
                     upstream_analyzer_version=inspection_result.analyzer_version,
                     m3_transformation_version=self._analyzer_version,
                     metadata={
@@ -419,7 +433,7 @@ class IRConstructionService:
                     artifact_id=None,
                     path="root",
                     source_record_type="runtime_detection",
-                    strength=IREvidenceStrength.CONFIGURATION,
+                    strength=_detection_evidence_strength(rd.evidence_signals),
                     upstream_analyzer_version=inspection_result.analyzer_version,
                     m3_transformation_version=self._analyzer_version,
                     metadata={
@@ -440,7 +454,7 @@ class IRConstructionService:
                     artifact_id=None,
                     path="root",
                     source_record_type="framework_detection",
-                    strength=IREvidenceStrength.FRAMEWORK_STRUCTURAL,
+                    strength=_detection_evidence_strength(fd.evidence_signals),
                     upstream_analyzer_version=inspection_result.analyzer_version,
                     m3_transformation_version=self._analyzer_version,
                     metadata={
@@ -517,8 +531,11 @@ class IRConstructionService:
             )
 
             # Build document-local declaration indexes for exact local resolution
-            local_declarations_by_name: dict[str, list[str]] = {}
+            local_declarations_by_name: dict[str, list[tuple[str, str, str | None]]] = (
+                {}
+            )
             local_symbols_by_fact_key: dict[str, str] = {}
+            local_container_by_fact_key: dict[str, str | None] = {}
             for fact in doc.facts:
                 if isinstance(fact, DeclarationFact):
                     decl_kind = (
@@ -536,8 +553,57 @@ class IRConstructionService:
                     sym_key = build_entity_key(
                         decl_kind, doc.path, fact.name, range_disc
                     )
-                    local_declarations_by_name.setdefault(fact.name, []).append(sym_key)
+                    local_declarations_by_name.setdefault(fact.name, []).append(
+                        (sym_key, fact.fact_key, fact.container_key)
+                    )
                     local_symbols_by_fact_key[fact.fact_key] = sym_key
+                    local_container_by_fact_key[fact.fact_key] = fact.container_key
+
+            def resolve_local_declaration(
+                name: str,
+                source_fact_key: str | None,
+                declarations_by_name: dict[
+                    str, list[tuple[str, str, str | None]]
+                ] = local_declarations_by_name,
+                container_by_fact_key: dict[
+                    str, str | None
+                ] = local_container_by_fact_key,
+            ) -> list[str]:
+                """Resolve a name in the nearest visible document-local scope."""
+                declarations = declarations_by_name.get(name, [])
+                if not declarations:
+                    return []
+                if source_fact_key is not None:
+                    recursive = [
+                        ir_key
+                        for ir_key, fact_key, _ in declarations
+                        if fact_key == source_fact_key
+                    ]
+                    if recursive:
+                        return recursive
+
+                scope = source_fact_key
+                visited: set[str | None] = set()
+                while scope not in visited:
+                    visited.add(scope)
+                    scoped = [
+                        ir_key
+                        for ir_key, _, container_key in declarations
+                        if container_key == scope
+                    ]
+                    if scoped:
+                        return scoped
+                    scope = (
+                        container_by_fact_key.get(scope) if scope is not None else None
+                    )
+                    if scope is None:
+                        module_scoped = [
+                            ir_key
+                            for ir_key, _, container_key in declarations
+                            if container_key is None
+                        ]
+                        return module_scoped
+                return []
 
             # Normalize facts
             for fact in doc.facts:
@@ -559,6 +625,16 @@ class IRConstructionService:
                     )
                     if fact.signature_text:
                         validate_safe_string("signature_text", fact.signature_text)
+                    container_ir_key = None
+                    if fact.container_key is not None:
+                        container_ir_key = local_symbols_by_fact_key.get(
+                            fact.container_key
+                        )
+                        if container_ir_key is None:
+                            raise IRConstructionError(
+                                "Declaration container_key does not reference a "
+                                f"declaration in {doc.path}: {fact.container_key}"
+                            )
                     fact_ev_key = build_evidence_key(
                         "declaration_fact", doc.path, fact.fact_key
                     )
@@ -594,7 +670,7 @@ class IRConstructionService:
                             or f"{doc.path}::{fact.name}",
                             artifact_id=doc.artifact_id,
                             module_key=module_key,
-                            container_key=fact.container_key,
+                            container_key=container_ir_key,
                             language=doc.language,
                             status=IRFactStatus.CONFIRMED,
                             evidence_keys=(fact_ev_key,),
@@ -609,10 +685,12 @@ class IRConstructionService:
                     add_relationship(
                         IRRelationship(
                             ir_key=build_relationship_key(
-                                IRRelationshipKind.DECLARES, module_key, sym_key
+                                IRRelationshipKind.DECLARES,
+                                container_ir_key or module_key,
+                                sym_key,
                             ),
                             kind=IRRelationshipKind.DECLARES,
-                            source_key=module_key,
+                            source_key=container_ir_key or module_key,
                             target_key=sym_key,
                             status=IRFactStatus.CONFIRMED,
                             evidence_keys=(fact_ev_key,),
@@ -720,7 +798,7 @@ class IRConstructionService:
                     )
 
                     lookup_name = fact.local_name or fact.exported_name
-                    candidates = local_declarations_by_name.get(lookup_name, [])
+                    candidates = resolve_local_declaration(lookup_name, None)
                     target_key: str | None = None
                     export_unres_key: str | None = None
                     if len(candidates) == 1:
@@ -780,7 +858,7 @@ class IRConstructionService:
                                 else (
                                     IRFactStatus.CONFLICTING
                                     if len(candidates) > 1
-                                    else IRFactStatus.INFERRED
+                                    else IRFactStatus.UNRESOLVED
                                 )
                             ),
                             evidence_keys=(fact_ev_key,),
@@ -815,9 +893,9 @@ class IRConstructionService:
 
                     rel_kind = _REFERENCE_KIND_MAP.get(fact.kind)
                     if rel_kind is None:
-                        raise IRConstructionError(
-                            f"Unsupported ReferenceKind: {fact.kind!r}"
-                        )
+                        # NAME and ATTRIBUTE facts establish source evidence but do
+                        # not prove a call or another supported F3 relationship.
+                        continue
 
                     source_key = module_key
                     if fact.source_declaration_key:
@@ -825,7 +903,9 @@ class IRConstructionService:
                             fact.source_declaration_key, module_key
                         )
 
-                    candidates = local_declarations_by_name.get(fact.target_name, [])
+                    candidates = resolve_local_declaration(
+                        fact.target_name, fact.source_declaration_key
+                    )
                     target_key = None
                     ref_unres_key = None
                     if len(candidates) == 1:
@@ -879,7 +959,7 @@ class IRConstructionService:
                                 else (
                                     IRFactStatus.CONFLICTING
                                     if len(candidates) > 1
-                                    else IRFactStatus.INFERRED
+                                    else IRFactStatus.UNRESOLVED
                                 )
                             ),
                             evidence_keys=(fact_ev_key,),

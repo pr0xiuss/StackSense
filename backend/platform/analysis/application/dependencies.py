@@ -28,6 +28,10 @@ from backend.platform.analysis.application.recovery import (
 from backend.platform.analysis.application.registry import (
     StageHandlerRegistry,
 )
+from backend.platform.analysis.architecture.persistence import (
+    SqlAlchemyArchitectureRepository,
+)
+from backend.platform.analysis.architecture.service import ArchitectureQueryService
 from backend.platform.analysis.infra.analysis_repository import (
     SqlAlchemyAnalysisRepository,
 )
@@ -250,6 +254,13 @@ def get_analysis_repository(
 ) -> AnalysisRepository:
     """Provide an AnalysisRepository instance bound to the request database session."""
     return SqlAlchemyAnalysisRepository(session)
+
+
+def get_architecture_query_service(
+    session: Session = Depends(get_database_session),
+) -> ArchitectureQueryService:
+    """Provide published Architecture Model reads in the request transaction."""
+    return ArchitectureQueryService(SqlAlchemyArchitectureRepository(session))
 
 
 def get_job_repository(

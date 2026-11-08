@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from backend.platform.analysis.syntax.model import (
     DeclarationFact,
     FrameworkFact,
@@ -23,6 +25,7 @@ class PythonFrameworkEnricher:
         self,
         document: SyntaxDocument,
         frameworks: frozenset[str],
+        framework_hints: Mapping[str, Mapping[str, str]] | None = None,
     ) -> tuple[FrameworkFact, ...]:
         if document.language != "python":
             return ()
@@ -34,6 +37,7 @@ class PythonFrameworkEnricher:
             fact for fact in document.facts if isinstance(fact, DeclarationFact)
         )
         produced: list[FrameworkFact] = []
+        hints = framework_hints or {}
         for framework in sorted(frameworks):
             import_keys = tuple(
                 fact.fact_key
@@ -54,6 +58,7 @@ class PythonFrameworkEnricher:
                             "re_path": "route",
                             "include": "route_include",
                         },
+                        hints,
                     )
                 )
                 produced.extend(
@@ -65,6 +70,7 @@ class PythonFrameworkEnricher:
                         import_keys,
                         ("Model", "models.Model"),
                         "model",
+                        hints,
                     )
                 )
             elif framework == "flask":
@@ -75,6 +81,7 @@ class PythonFrameworkEnricher:
                         references,
                         import_keys,
                         {"route": "route", "before_request": "middleware"},
+                        hints,
                     )
                 )
             elif framework == "fastapi":
@@ -95,6 +102,7 @@ class PythonFrameworkEnricher:
                             "websocket": "route",
                             "Depends": "dependency",
                         },
+                        hints,
                     )
                 )
         return tuple(
@@ -112,19 +120,29 @@ def _make_fact(
     fact_type: str,
     reference: ReferenceFact,
     import_keys: tuple[str, ...],
+    framework_hints: Mapping[str, Mapping[str, str]],
 ) -> FrameworkFact:
+    details = {
+        "reference_kind": reference.kind.value,
+        **framework_hints.get(reference.fact_key, {}),
+    }
+    name = (
+        details["path"]
+        if fact_type in {"route", "route_handler"} and "path" in details
+        else reference.target_name
+    )
     return FrameworkFact(
         fact_key=build_fact_key(
             document.path,
             f"framework_{framework}_{fact_type}",
-            reference.target_name,
+            name,
             reference.range,
         ),
         framework_name=framework,
         artifact_id=document.artifact_id,
         fact_type=fact_type,
-        name=reference.target_name,
-        details={"reference_kind": reference.kind.value},
+        name=name,
+        details=details,
         supporting_fact_keys=tuple(sorted((*import_keys, reference.fact_key))),
         range=reference.range,
     )
@@ -136,9 +154,17 @@ def _facts_for_references(
     references: tuple[ReferenceFact, ...],
     import_keys: tuple[str, ...],
     targets: dict[str, str],
+    framework_hints: Mapping[str, Mapping[str, str]],
 ) -> list[FrameworkFact]:
     return [
-        _make_fact(document, framework, targets[ref.target_name], ref, import_keys)
+        _make_fact(
+            document,
+            framework,
+            targets[ref.target_name],
+            ref,
+            import_keys,
+            framework_hints,
+        )
         for ref in references
         if ref.kind == ReferenceKind.CALL and ref.target_name in targets
     ]
@@ -150,6 +176,7 @@ def _facts_for_suffixes(
     references: tuple[ReferenceFact, ...],
     import_keys: tuple[str, ...],
     suffixes: dict[str, str],
+    framework_hints: Mapping[str, Mapping[str, str]],
 ) -> list[FrameworkFact]:
     facts: list[FrameworkFact] = []
     for ref in references:
@@ -159,7 +186,14 @@ def _facts_for_suffixes(
             ReferenceKind.DECORATOR,
         ):
             facts.append(
-                _make_fact(document, framework, suffixes[suffix], ref, import_keys)
+                _make_fact(
+                    document,
+                    framework,
+                    suffixes[suffix],
+                    ref,
+                    import_keys,
+                    framework_hints,
+                )
             )
     return facts
 
@@ -172,13 +206,21 @@ def _facts_for_inheritance(
     import_keys: tuple[str, ...],
     bases: tuple[str, ...],
     fact_type: str,
+    framework_hints: Mapping[str, Mapping[str, str]],
 ) -> list[FrameworkFact]:
     declaration_names = {fact.fact_key: fact.name for fact in declarations}
     facts: list[FrameworkFact] = []
     for ref in references:
         if ref.kind != ReferenceKind.INHERITANCE or ref.target_name not in bases:
             continue
-        fact = _make_fact(document, framework, fact_type, ref, import_keys)
+        fact = _make_fact(
+            document,
+            framework,
+            fact_type,
+            ref,
+            import_keys,
+            framework_hints,
+        )
         name = declaration_names.get(ref.source_declaration_key or "", ref.target_name)
         facts.append(
             FrameworkFact(

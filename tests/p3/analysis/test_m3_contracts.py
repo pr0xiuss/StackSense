@@ -200,9 +200,15 @@ class TestIRContractFoundation:
         from backend.platform.analysis.ir.service import _REFERENCE_KIND_MAP
         from backend.platform.analysis.syntax.model import ReferenceKind
 
-        for rk in ReferenceKind:
+        relationship_kinds = set(ReferenceKind) - {
+            ReferenceKind.NAME,
+            ReferenceKind.ATTRIBUTE,
+        }
+        for rk in relationship_kinds:
             assert rk in _REFERENCE_KIND_MAP
             assert isinstance(_REFERENCE_KIND_MAP[rk], IRRelationshipKind)
+        assert ReferenceKind.NAME not in _REFERENCE_KIND_MAP
+        assert ReferenceKind.ATTRIBUTE not in _REFERENCE_KIND_MAP
 
     def test_records_are_frozen_immutable(self) -> None:
         ev = IREvidence(
@@ -236,7 +242,14 @@ class TestKeyGeneration:
         key = build_entity_key(
             IREntityKind.MODULE, "src\\nested\\module.py", "Class Item"
         )
-        assert key == "module::src/nested/module.py::Class_Item"
+        assert key == "module::src/nested/module.py::Class%20Item"
+
+    def test_entity_key_encoding_is_collision_safe(self) -> None:
+        spaced = build_entity_key(IREntityKind.ARTIFACT, "src/a b.py")
+        underscored = build_entity_key(IREntityKind.ARTIFACT, "src/a_b.py")
+        escaped = build_entity_key(IREntityKind.ARTIFACT, "src/a%20b.py")
+
+        assert len({spaced, underscored, escaped}) == 3
 
     def test_entity_key_empty_raises_validation_error(self) -> None:
         with pytest.raises(IRValidationError, match="Cannot build entity key"):
@@ -249,7 +262,7 @@ class TestKeyGeneration:
             "module::src/b.py",
             "sym::foo",
         )
-        assert key == "rel::imports::module::src/a.py::module::src/b.py::sym::foo"
+        assert key == ("rel::imports::module::src/a.py::module::src/b.py::sym%3A%3Afoo")
 
     def test_relationship_key_with_none_target(self) -> None:
         key = build_relationship_key(
@@ -259,7 +272,8 @@ class TestKeyGeneration:
             "dep::react",
         )
         expected = (
-            "rel::declares_dependency::artifact::package.json::unresolved::dep::react"
+            "rel::declares_dependency::artifact::package.json::unresolved::"
+            "dep%3A%3Areact"
         )
         assert key == expected
 

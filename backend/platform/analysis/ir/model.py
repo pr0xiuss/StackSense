@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum, StrEnum
 from types import MappingProxyType
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 from backend.platform.analysis.domain.constants import (
@@ -186,9 +187,19 @@ def _freeze_metadata(data: Mapping[str, Any]) -> MappingProxyType[str, Any]:
 # --- Deterministic Snapshot-Scoped Key Builders ---
 
 
+def _encode_key_component(value: str, *, normalize_path: bool = False) -> str:
+    """Encode one key component without lossy substitutions or delimiter collisions."""
+    normalized = value.replace("\\", "/")
+    if normalize_path:
+        normalized = normalized.strip("/")
+    return quote(normalized, safe="/._-~")
+
+
 def build_entity_key(kind: IREntityKind, *parts: str) -> str:
     """Build a deterministic snapshot-scoped entity key."""
-    norm_parts = [p.replace("\\", "/").strip("/").replace(" ", "_") for p in parts if p]
+    norm_parts = [
+        _encode_key_component(part, normalize_path=True) for part in parts if part
+    ]
     if not norm_parts:
         msg = (
             f"Cannot build entity key for {kind.value} without path or "
@@ -206,7 +217,7 @@ def build_relationship_key(
 ) -> str:
     """Build a deterministic snapshot-scoped relationship key."""
     if disambiguator:
-        norm_disc = disambiguator.replace("\\", "/").strip("/").replace(" ", "_")
+        norm_disc = _encode_key_component(disambiguator, normalize_path=True)
     else:
         norm_disc = "none"
     return f"rel::{kind.value}::{source_key}::{target_key or 'unresolved'}::{norm_disc}"
@@ -219,10 +230,11 @@ def build_evidence_key(
     disambiguator: str = "",
 ) -> str:
     """Build a deterministic evidence key."""
-    norm_path = path.replace("\\", "/").strip("/").replace(" ", "_") or "root"
-    norm_fk = fact_key.replace(" ", "_") if fact_key else "none"
-    norm_disc = disambiguator.replace(" ", "_") if disambiguator else "none"
-    return f"ev::{norm_path}::{source_record_type}::{norm_fk}::{norm_disc}"
+    norm_path = _encode_key_component(path, normalize_path=True) or "root"
+    norm_type = _encode_key_component(source_record_type)
+    norm_fk = _encode_key_component(fact_key) if fact_key else "none"
+    norm_disc = _encode_key_component(disambiguator) if disambiguator else "none"
+    return f"ev::{norm_path}::{norm_type}::{norm_fk}::{norm_disc}"
 
 
 def build_unresolved_key(
@@ -232,8 +244,8 @@ def build_unresolved_key(
     disambiguator: str = "",
 ) -> str:
     """Build a deterministic unresolved reference key."""
-    norm_target = target_name.replace(" ", "_").strip()
-    norm_disc = disambiguator.replace(" ", "_") if disambiguator else "none"
+    norm_target = _encode_key_component(target_name.strip())
+    norm_disc = _encode_key_component(disambiguator) if disambiguator else "none"
     return f"unres::{source_key}::{relationship_kind.value}::{norm_target}::{norm_disc}"
 
 
@@ -243,8 +255,8 @@ def build_conflict_key(
     disambiguator: str = "",
 ) -> str:
     """Build a deterministic conflict key."""
-    norm_type = conflict_type.replace(" ", "_").strip()
-    norm_disc = disambiguator.replace(" ", "_") if disambiguator else "none"
+    norm_type = _encode_key_component(conflict_type.strip())
+    norm_disc = _encode_key_component(disambiguator) if disambiguator else "none"
     return f"conflict::{norm_type}::{subject_key}::{norm_disc}"
 
 

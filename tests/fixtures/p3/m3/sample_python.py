@@ -22,4 +22,3 @@ class OrderProcessor:
     def process_order(self, order_id: str, amount: float) -> bool:
         """Execute payment charge."""
         return bool(self.gateway.charge(order_id, amount))
-

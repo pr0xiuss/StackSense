@@ -746,6 +746,17 @@ class ParserExecutor:
                 )
             )
 
+        framework_hints: dict[str, dict[str, str]] = {}
+        raw_hints = data.get("framework_hints", {})
+        if isinstance(raw_hints, dict):
+            for fact_key, raw_values in raw_hints.items():
+                if isinstance(fact_key, str) and isinstance(raw_values, dict):
+                    framework_hints[fact_key] = {
+                        str(key): str(value)
+                        for key, value in raw_values.items()
+                        if isinstance(key, str) and isinstance(value, str)
+                    }
+
         return ParserResult(
             success=data.get("success", True),
             document=document,
@@ -756,6 +767,7 @@ class ParserExecutor:
                 if data.get("error_message") is not None
                 else None
             ),
+            framework_hints=framework_hints,
         )
 
     def _deserialize_document(self, d: dict[str, Any]) -> SyntaxDocument:

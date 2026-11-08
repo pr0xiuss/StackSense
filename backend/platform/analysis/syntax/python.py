@@ -43,6 +43,25 @@ from backend.platform.analysis.syntax.model import (
 
 _SAFE_DOTTED_NAME = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")
 _MAX_SIGNATURE_CHARS = 2_048
+_HTTP_METHOD_BY_SUFFIX = {
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "patch": "PATCH",
+    "delete": "DELETE",
+    "options": "OPTIONS",
+    "head": "HEAD",
+    "websocket": "WEBSOCKET",
+    "route": "GET",
+}
+
+
+def _safe_route_path(value: object) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 2_048:
+        return None
+    if "://" in value or any(ord(char) < 32 for char in value):
+        return None
+    return value
 
 
 class PythonAstAdapter(ParserAdapter):
@@ -141,6 +160,7 @@ class PythonAstAdapter(ParserAdapter):
             )
 
         content_hash = hashlib.sha256(canonical_bytes).hexdigest()
+        framework_hints: dict[str, dict[str, str]] = {}
         try:
             tree = ast.parse(text, filename=request.path)
         except SyntaxError as exc:
@@ -259,6 +279,7 @@ class PythonAstAdapter(ParserAdapter):
                 )
             )
 
+            decorator_call_nodes: set[int] = set()
             stack: list[tuple[ast.AST, str, str, bool]] = [
                 (tree, module_key, module_name, False)
             ]
@@ -271,6 +292,11 @@ class PythonAstAdapter(ParserAdapter):
                 )
 
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    decorator_call_nodes.update(
+                        id(item)
+                        for item in node.decorator_list
+                        if isinstance(item, ast.Call)
+                    )
                     declaration_range = outer_declaration_range(
                         node, node.decorator_list
                     )
@@ -314,10 +340,16 @@ class PythonAstAdapter(ParserAdapter):
                         node.decorator_list,
                         key,
                         source_range,
+                        framework_hints,
                     )
                     next_key, next_qualified, next_in_class = key, qualified, False
 
                 elif isinstance(node, ast.ClassDef):
+                    decorator_call_nodes.update(
+                        id(item)
+                        for item in node.decorator_list
+                        if isinstance(item, ast.Call)
+                    )
                     declaration_range = outer_declaration_range(
                         node, node.decorator_list
                     )
@@ -365,6 +397,7 @@ class PythonAstAdapter(ParserAdapter):
                         node.decorator_list,
                         key,
                         source_range,
+                        framework_hints,
                     )
                     next_key, next_qualified, next_in_class = key, qualified, True
 
@@ -473,18 +506,26 @@ class PythonAstAdapter(ParserAdapter):
                                 )
 
                 elif isinstance(node, ast.Call):
+                    if id(node) in decorator_call_nodes:
+                        for child in reversed(list(ast.iter_child_nodes(node))):
+                            stack.append(
+                                (child, next_key, next_qualified, next_in_class)
+                            )
+                        continue
                     name = self._dotted_name(node.func)
                     if name and _SAFE_DOTTED_NAME.fullmatch(name):
                         rng = source_range(node.func)
+                        fact_key = build_fact_key(request.path, "call", name, rng)
                         accumulator.add(
                             ReferenceFact(
-                                build_fact_key(request.path, "call", name, rng),
+                                fact_key,
                                 ReferenceKind.CALL,
                                 container_key,
                                 name,
                                 rng,
                             )
                         )
+                        self._add_route_hint(framework_hints, fact_key, name, node)
 
                 elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
                     name = self._dotted_name(node)
@@ -555,6 +596,7 @@ class PythonAstAdapter(ParserAdapter):
                 request, content_hash, encoding_meta, ParseStatus.PARSED, facts, ()
             ),
             execution_time_seconds=time.perf_counter() - start_time,
+            framework_hints=framework_hints,
         )
 
     def _add_decorators(
@@ -564,20 +606,42 @@ class PythonAstAdapter(ParserAdapter):
         decorators: list[ast.expr],
         source_key: str,
         range_builder: Callable[[ast.AST], SourceRange],
+        framework_hints: dict[str, dict[str, str]],
     ) -> None:
         for decorator in decorators:
             name = self._dotted_name(decorator)
             if name:
                 rng = range_builder(decorator)
+                fact_key = build_fact_key(path, "decorator", name, rng)
                 accumulator.add(
                     ReferenceFact(
-                        build_fact_key(path, "decorator", name, rng),
+                        fact_key,
                         ReferenceKind.DECORATOR,
                         source_key,
                         name,
                         rng,
                     )
                 )
+                if isinstance(decorator, ast.Call):
+                    self._add_route_hint(framework_hints, fact_key, name, decorator)
+
+    @staticmethod
+    def _add_route_hint(
+        framework_hints: dict[str, dict[str, str]],
+        fact_key: str,
+        name: str,
+        call: ast.Call,
+    ) -> None:
+        suffix = name.rsplit(".", 1)[-1]
+        method = _HTTP_METHOD_BY_SUFFIX.get(suffix)
+        if method is None or not call.args:
+            return
+        first = call.args[0]
+        path = (
+            _safe_route_path(first.value) if isinstance(first, ast.Constant) else None
+        )
+        if path is not None:
+            framework_hints[fact_key] = {"method": method, "path": path}
 
     def _document(
         self,

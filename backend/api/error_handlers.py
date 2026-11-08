@@ -76,6 +76,7 @@ def register_exception_handlers(application: FastAPI) -> None:
             "analysis_configuration_invalid": 422,
             "analysis_access_denied": 403,
             "analysis_queue_unavailable": 503,
+            "architecture_result_not_found": 404,
         }
 
         status_code = status_codes.get(

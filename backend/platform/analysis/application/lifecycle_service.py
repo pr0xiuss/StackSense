@@ -281,7 +281,6 @@ class AnalysisLifecycleService:
             AnalysisStageName.IR_CONSTRUCTION,
             AnalysisStageName.IDENTITY_RESOLUTION,
             AnalysisStageName.ARCHITECTURE_BUILD,
-            AnalysisStageName.PROJECTION,
         ]
 
         stages = [

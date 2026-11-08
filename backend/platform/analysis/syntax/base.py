@@ -6,7 +6,7 @@ import io
 import re
 import tokenize
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID, uuid5
@@ -62,6 +62,9 @@ class ParserResult:
     execution_time_seconds: float = 0.0
     peak_memory_bytes: int = 0
     error_message: str | None = None
+    # Internal, non-F2 transport for narrowly allowlisted framework literals.
+    # Keys are existing SyntaxFact keys; values never become generic syntax facts.
+    framework_hints: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
 
 @runtime_checkable

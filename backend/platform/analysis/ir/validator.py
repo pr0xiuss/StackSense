@@ -226,6 +226,18 @@ class IRValidator:
                     raise IRValidationError(msg)
 
         for e in doc.entities:
+            if e.module_key is not None and e.module_key not in entity_keys:
+                raise IRValidationError(
+                    f"Entity {e.ir_key} references unknown module_key: "
+                    f"{e.module_key}"
+                )
+            if e.container_key is not None and e.container_key not in entity_keys:
+                raise IRValidationError(
+                    f"Entity {e.ir_key} references unknown container_key: "
+                    f"{e.container_key}"
+                )
+            if e.container_key == e.ir_key:
+                raise IRValidationError(f"Entity {e.ir_key} cannot contain itself.")
             for k in e.evidence_keys:
                 if k not in ev_keys:
                     msg = f"Entity {e.ir_key} references unknown evidence_key: {k}"

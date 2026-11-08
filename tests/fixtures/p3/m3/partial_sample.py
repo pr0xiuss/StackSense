@@ -5,4 +5,3 @@ def valid_function():
 def broken_syntax(
     # Unclosed parentheses and invalid tokens
     return ???
-

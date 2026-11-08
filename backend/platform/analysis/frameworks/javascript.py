@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import PurePosixPath
 
 from backend.platform.analysis.syntax.model import (
@@ -26,6 +27,7 @@ class JavaScriptFrameworkEnricher:
         self,
         document: SyntaxDocument,
         frameworks: frozenset[str],
+        framework_hints: Mapping[str, Mapping[str, str]] | None = None,
     ) -> tuple[FrameworkFact, ...]:
         if document.language not in {"javascript", "typescript", "jsx", "tsx"}:
             return ()
@@ -37,6 +39,7 @@ class JavaScriptFrameworkEnricher:
             fact for fact in document.facts if isinstance(fact, DeclarationFact)
         )
         produced: list[FrameworkFact] = []
+        hints = framework_hints or {}
         for framework in sorted(frameworks):
             import_keys = tuple(
                 fact.fact_key
@@ -66,6 +69,7 @@ class JavaScriptFrameworkEnricher:
                                 ref.target_name,
                                 ref,
                                 import_keys,
+                                hints,
                             )
                         )
             elif framework == "nestjs":
@@ -93,6 +97,7 @@ class JavaScriptFrameworkEnricher:
                                 ref.target_name,
                                 ref,
                                 import_keys,
+                                hints,
                             )
                         )
             elif framework == "nextjs":
@@ -108,6 +113,7 @@ class JavaScriptFrameworkEnricher:
                                 "page",
                                 declaration,
                                 import_keys,
+                                hints,
                             )
                         )
                     elif (
@@ -135,6 +141,7 @@ class JavaScriptFrameworkEnricher:
                                 "route_handler",
                                 declaration,
                                 import_keys,
+                                hints,
                             )
                         )
         return tuple(
@@ -157,19 +164,25 @@ def _make_fact(
     name: str,
     reference: ReferenceFact,
     import_keys: tuple[str, ...],
+    framework_hints: Mapping[str, Mapping[str, str]],
 ) -> FrameworkFact:
+    details = {
+        "reference_kind": reference.kind.value,
+        **framework_hints.get(reference.fact_key, {}),
+    }
+    fact_name = details.get("path", name) if fact_type == "route" else name
     return FrameworkFact(
         fact_key=build_fact_key(
             document.path,
             f"framework_{framework}_{fact_type}",
-            name,
+            fact_name,
             reference.range,
         ),
         framework_name=framework,
         artifact_id=document.artifact_id,
         fact_type=fact_type,
-        name=name,
-        details={"reference_kind": reference.kind.value},
+        name=fact_name,
+        details=details,
         supporting_fact_keys=tuple(sorted((*import_keys, reference.fact_key))),
         range=reference.range,
     )
@@ -181,19 +194,46 @@ def _declaration_fact(
     fact_type: str,
     declaration: DeclarationFact,
     import_keys: tuple[str, ...],
+    framework_hints: Mapping[str, Mapping[str, str]],
 ) -> FrameworkFact:
+    details = {
+        "declaration_kind": declaration.kind.value,
+        **framework_hints.get(declaration.fact_key, {}),
+    }
+    if framework == "nextjs" and fact_type == "route_handler":
+        details.update(
+            {
+                "method": declaration.name.upper(),
+                "path": _nextjs_route_path(document.path),
+            }
+        )
+    fact_name = details.get("path", declaration.name)
     return FrameworkFact(
         fact_key=build_fact_key(
             document.path,
             f"framework_{framework}_{fact_type}",
-            declaration.name,
+            fact_name,
             declaration.declaration_range,
         ),
         framework_name=framework,
         artifact_id=document.artifact_id,
         fact_type=fact_type,
-        name=declaration.name,
-        details={"declaration_kind": declaration.kind.value},
+        name=fact_name,
+        details=details,
         supporting_fact_keys=tuple(sorted((*import_keys, declaration.fact_key))),
         range=declaration.declaration_range,
     )
+
+
+def _nextjs_route_path(path: str) -> str:
+    parts = list(PurePosixPath(path).parts)
+    if "app" in parts:
+        parts = parts[parts.index("app") + 1 :]
+    elif "pages" in parts:
+        parts = parts[parts.index("pages") + 1 :]
+    if parts:
+        parts.pop()
+    visible = [
+        part for part in parts if not (part.startswith("(") and part.endswith(")"))
+    ]
+    return "/" + "/".join(visible)

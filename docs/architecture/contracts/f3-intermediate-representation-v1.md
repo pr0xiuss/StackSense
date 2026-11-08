@@ -1,10 +1,10 @@
 # F3 — Intermediate Representation Contract v1.0.0
 
-Status: **FROZEN / IMPLEMENTED**  
-Owner: Phase 3 Module 3 (Intermediate Representation & Semantic Analysis)  
-Consumer: Phase 3 Module 4 (Architectural Identity & Architecture Model)  
-Version: `1.0.0`  
-Last Updated: 2026-11-07  
+Status: **FROZEN / IMPLEMENTED**
+Owner: Phase 3 Module 3 (Intermediate Representation & Semantic Analysis)
+Consumer: Phase 3 Module 4 (Architectural Identity & Architecture Model)
+Version: `1.0.0`
+Last Updated: 2026-11-07
 
 ---
 
@@ -18,6 +18,10 @@ This contract establishes the normative boundary between Phase 3 Module 3 (M3) a
 4. **Boundary Invariants:**
    - M3 never invokes M2 directly and does not reconstruct F2 inspection results.
    - M4 never invokes M3 directly and never inspects raw source code or ASTs.
+   - M1 alone rebuilds a lost F2 value and replays the stateless M3 constructor
+     with the same immutable `AnalysisInput`, configuration fingerprint,
+     analyzer version, and IR schema version. Recovery does not reopen completed
+     stages or emit new public lifecycle events.
    - F3 contains no raw AST/CST nodes, no source bytes, no unallowlisted literals, no secrets/tokens, and no absolute host filesystem paths.
    - All provenance is strictly traceable to F2 syntax facts, manifest entries, or framework detections. No fabricated provenance is permitted.
 
@@ -45,12 +49,19 @@ All IR identifiers use deterministic, snapshot-scoped keys formatted as follows:
 - **Conflicts:** `build_conflict_key(conflict_type, subject_key, disambiguator)`
   -> `conflict::<conflict_type>::<subject_key>::<disambiguator>`
 
+Every caller-supplied key component is normalized to forward slashes where
+applicable and percent-encoded as canonical UTF-8 with only `/._-~` left
+unescaped. This encoding is lossless: spaces, underscores, percent signs, and
+the `::` structural delimiter remain distinct and cannot collapse to one key.
+
 ### 2.3 Referential Integrity
 1. Every relationship `source_key` MUST resolve to an entity in `IRDocument.entities`.
 2. Every relationship `target_key` (when provided) MUST resolve to an entity in `IRDocument.entities`.
 3. If `target_key` is None, the relationship MUST specify `unresolved_reference_key` resolving to an item in `IRDocument.unresolved_references` (unless kind is `DECLARES_DEPENDENCY` or `USES_FRAMEWORK`).
 4. Every evidence key cited in `IREntity.evidence_keys`, `IRRelationship.evidence_keys`, or `IRUnresolvedReference.evidence_keys` MUST exist in `IRDocument.evidence`.
 5. Duplicate entity keys or duplicate relationship keys are strictly prohibited and rejected during document validation.
+6. Every entity `module_key` and `container_key` (when present) MUST resolve to
+   another entity in the same document; an entity cannot contain itself.
 
 ### 2.4 Path & Metadata Safety
 1. All file paths MUST be repository-relative and use forward slashes (`/`).
@@ -204,11 +215,17 @@ class IRCompleteness:
 - `DECLARES_DEPENDENCY`: Project declares manifest dependency package.
 - `SOURCE_REFERENCES_DEPENDENCY`: Source code references third-party dependency.
 
+F2 `NAME` and `ATTRIBUTE` reference facts are preserved as direct evidence but
+do not by themselves prove a call or any other F3 relationship.
+
 ### 4.3 Fact Status (`IRFactStatus`)
-- `CONFIRMED`: Explicitly verified fact directly backed by source AST or manifest.
-- `INFERRED`: Derived via framework structural conventions or heuristic analysis.
-- `UNRESOLVED`: Reference cannot be resolved to an internal entity in current scope.
-- `CONFLICTING`: Contradictory evidence signals detected across sources.
+- `CONFIRMED`: Directly established by deterministic evidence.
+- `INFERRED`: Derived through an explicit deterministic rule.
+- `UNRESOLVED`: Available evidence is insufficient to resolve the static finding.
+- `CONFLICTING`: Competing evidence remains unreconciled.
+
+These statuses describe static IR findings only. They never assert runtime truth
+or authoritative Architecture Model status.
 
 ### 4.4 Evidence Strength (`IREvidenceStrength`)
 Ordered by descending verification strength:
@@ -229,7 +246,8 @@ Ordered by descending verification strength:
 
 ## 5. Resource Bounds & Capacity Limits
 
-The following capacity limits are adopted pending formal sign-off based on empirical worst-case benchmark workloads (250,000 facts / 50 MiB F2 workload):
+The following owner-approved capacity limits are adopted from empirical
+worst-case benchmark workloads (250,000 facts / 50 MiB F2 workload):
 
 | Metric | Adopted Limit | Headroom vs Empirical Worst-Case |
 | :--- | :--- | :--- |
@@ -269,10 +287,17 @@ If any cap is exceeded during construction or validation:
 ## 7. Handoff Ports & Attempt Storage
 
 M1 provides decoupled stage-to-stage communication via protocol ports defined in `backend.platform.analysis.application.handoff`:
-- `F2ResultReader`: `read_f2_result(analysis_id, job_id) -> RepositoryInspectionResult`
+- `F2ResultReader`: `read_f2_result(analysis_id, job_id, analysis_input=None) -> RepositoryInspectionResult`
 - `F3ResultWriter`: `write_f3_result(analysis_id, job_id, result: IRDocument) -> None`
-- `F3ResultReader`: `read_f3_result(analysis_id, job_id) -> IRDocument`
-- `AnalysisAttemptStore`: In-memory thread-safe implementation of both readers and writer, with `release(analysis_id, job_id)` for deterministic resource cleanup.
+- `F3ResultReader`: `read_f3_result(analysis_id, job_id, analysis_input=None) -> IRDocument`
+- `AnalysisAttemptStore`: In-memory thread-safe implementation of both readers
+  and the writer. Writes are immutable and idempotent; non-equivalent
+  replacement is rejected. Supplying `AnalysisInput` permits M1-owned recovery
+  when a non-persisted value is missing. `release(analysis_id, job_id)` clears
+  F2/F3 and M2 attempt state after the job reaches a terminal state.
+
+The M3 handler publishes no stage-completed event itself. M1 orchestration emits
+the single canonical lifecycle event after it commits the stage transition.
 
 ---
 

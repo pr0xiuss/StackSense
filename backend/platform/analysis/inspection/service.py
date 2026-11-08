@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -38,6 +40,9 @@ from backend.platform.analysis.syntax.model import ParseStatus, SyntaxDocument
 
 if TYPE_CHECKING:
     from backend.platform.config import Settings
+
+
+_SHA256_HEX_RE = re.compile(r"[0-9a-fA-F]{64}")
 
 
 @dataclass(frozen=True)
@@ -129,6 +134,7 @@ class RepositoryInspectionService:
 
         entries = {entry.artifact_id: entry for entry in inventory}
         documents: list[SyntaxDocument] = list(prepared.manifest_documents)
+        framework_hints: dict[UUID, Mapping[str, Mapping[str, str]]] = {}
         diagnostics = list(prepared.diagnostics)
         total_facts = sum(len(document.facts) for document in documents)
         for manifest_document in prepared.manifest_documents:
@@ -173,6 +179,12 @@ class RepositoryInspectionService:
                     raise ValueError(
                         "artifact content size did not match immutable metadata"
                     )
+                if _SHA256_HEX_RE.fullmatch(artifact.content_hash):
+                    actual_hash = hashlib.sha256(content).hexdigest()
+                    if actual_hash.lower() != artifact.content_hash.lower():
+                        raise ValueError(
+                            "artifact content hash did not match immutable metadata"
+                        )
             except Exception as exc:
                 diagnostic = create_parsing_diagnostic(
                     analysis_input.analysis_id,
@@ -239,8 +251,6 @@ class RepositoryInspectionService:
 
             diagnostics.extend(parse_result.diagnostics)
             document = parse_result.document
-            if document is not None and document.content_hash != artifact.content_hash:
-                document = replace(document, content_hash=artifact.content_hash)
             if (
                 not parse_result.success
                 or document is None
@@ -300,6 +310,7 @@ class RepositoryInspectionService:
                 )
 
             documents.append(document)
+            framework_hints[artifact.id] = parse_result.framework_hints
             entries[artifact.id] = replace(
                 entry,
                 processing_outcome=(
@@ -335,6 +346,7 @@ class RepositoryInspectionService:
                 ordered_documents,
                 frameworks,
                 analysis_input.analysis_id,
+                framework_hints,
             )
         except Exception as exc:
             # Enrichment is degradable: generic facts remain complete and usable.

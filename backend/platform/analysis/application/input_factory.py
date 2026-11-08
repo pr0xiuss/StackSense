@@ -1,5 +1,6 @@
 """Factory and adapters constructing immutable AnalysisInput from Phase 2 contracts."""
 
+import re
 from io import BytesIO
 from typing import BinaryIO
 from uuid import UUID
@@ -29,6 +30,17 @@ from backend.platform.ingestion.repositories.revision_repo import RevisionReposi
 from backend.platform.repositories.repositories.repository_repo import (
     RepositoryRepository,
 )
+
+_SHA256_HEX_RE = re.compile(r"[0-9a-fA-F]{64}")
+
+
+def _require_sha256_content_hash(value: str, artifact_id: UUID) -> str:
+    if not _SHA256_HEX_RE.fullmatch(value):
+        raise AnalysisIntegrityError(
+            "Artifact content hash is not a valid SHA-256 digest.",
+            details={"artifact_id": str(artifact_id)},
+        )
+    return value.lower()
 
 
 def is_safe_relative_path(path: str) -> bool:
@@ -242,7 +254,9 @@ class AnalysisInputFactory:
                     revision_id=item.revision_id,
                     path=item.path,
                     size_bytes=item.size_bytes,
-                    content_hash=item.content_hash,
+                    content_hash=_require_sha256_content_hash(
+                        item.content_hash, item.id
+                    ),
                     category=item.category,
                     support_level=item.support_level,
                 )
@@ -385,7 +399,9 @@ class PlatformAnalysisInputFactory(AnalysisInputFactory):
                     revision_id=item.revision_id,
                     path=item.path,
                     size_bytes=item.size_bytes,
-                    content_hash=item.content_hash,
+                    content_hash=_require_sha256_content_hash(
+                        item.content_hash, item.id
+                    ),
                     category=item.category,
                     support_level=item.support_level,
                 )

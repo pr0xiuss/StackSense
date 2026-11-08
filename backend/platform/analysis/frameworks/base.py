@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
@@ -27,6 +27,7 @@ class FrameworkEnricher(Protocol):
         self,
         document: SyntaxDocument,
         frameworks: frozenset[str],
+        framework_hints: Mapping[str, Mapping[str, str]] | None = None,
     ) -> tuple[FrameworkFact, ...]: ...
 
 
@@ -52,6 +53,7 @@ class FrameworkEnrichmentService:
         documents: Iterable[SyntaxDocument],
         detections: Iterable[FrameworkDetection],
         analysis_id: UUID,
+        framework_hints: Mapping[UUID, Mapping[str, Mapping[str, str]]] | None = None,
     ) -> tuple[SyntaxDocument, ...]:
         """Return documents with framework facts appended deterministically.
 
@@ -60,6 +62,7 @@ class FrameworkEnrichmentService:
         current built-in enrichers are total functions over immutable facts.
         """
         del analysis_id
+        hints_by_artifact = framework_hints or {}
         confirmed = frozenset(
             item.framework for item in detections if item.status == "confirmed"
         )
@@ -69,7 +72,13 @@ class FrameworkEnrichmentService:
             for enricher in self._enrichers:
                 active = confirmed & enricher.supported_frameworks
                 if active:
-                    additions.extend(enricher.enrich(document, active))
+                    additions.extend(
+                        enricher.enrich(
+                            document,
+                            active,
+                            hints_by_artifact.get(document.artifact_id, {}),
+                        )
+                    )
             enriched.append(
                 replace(document, facts=sort_facts((*document.facts, *additions)))
                 if additions
