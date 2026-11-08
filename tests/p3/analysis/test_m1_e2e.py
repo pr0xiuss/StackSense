@@ -218,7 +218,7 @@ def test_m1_end_to_end_lifecycle_pipeline(
     assert get_res.status_code == 200
     final_data = get_res.json()
     assert final_data["status"] == "completed"
-    assert len(final_data["stages"]) == 9
+    assert len(final_data["stages"]) == 8
     for stg in final_data["stages"]:
         assert stg["status"] == "completed"
 

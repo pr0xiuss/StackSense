@@ -62,3 +62,21 @@ class AnalysisRepository(ABC):
     ) -> int:
         """Count analyses for a project with optional status filtering."""
         raise NotImplementedError
+
+
+class AnalysisPublicationLinker(ABC):
+    """M1-owned port for atomically linking a published Architecture Version."""
+
+    @abstractmethod
+    def link_published_version(
+        self,
+        analysis_id: UUID,
+        project_id: UUID,
+        version_id: UUID,
+    ) -> None:
+        """Assign the immutable version while Analysis is RUNNING.
+
+        The implementation must use the caller's transaction and be idempotent
+        for an identical already-linked version.
+        """
+        raise NotImplementedError

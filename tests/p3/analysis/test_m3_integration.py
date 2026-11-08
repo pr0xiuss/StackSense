@@ -6,7 +6,9 @@ cancellation checkpoints, error diagnostics, and M4 consumer projection stubs.
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import replace
+from types import SimpleNamespace
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -34,6 +36,7 @@ from backend.platform.analysis.domain.input import (
     ArtifactCatalog,
     ArtifactContentReader,
 )
+from backend.platform.analysis.inspection.handlers import M2ExecutionCoordinator
 from backend.platform.analysis.inspection.model import RepositoryInspectionResult
 from backend.platform.analysis.ir.handlers import (
     IRConstructionStageHandler,
@@ -50,12 +53,14 @@ from backend.platform.analysis.syntax.model import (
     DeclarationKind,
     ParseStatus,
 )
+from backend.platform.config import Settings
 from backend.platform.errors import AnalysisCancelledError
 from backend.platform.ingestion.domain.constants import (
     ArtifactCategory,
     SupportLevel,
 )
 from backend.worker.tasks import (
+    build_ir_construction_service,
     get_attempt_store,
     get_worker_registry,
     set_worker_registry,
@@ -288,10 +293,8 @@ class TestIRStageExecution:
         assert ctx.progress[0][0] == 0  # Initial progress
         assert ctx.progress[-1][0] == result.processed_items  # Final progress
 
-        # Verify event recorded
-        assert any(
-            evt[0] == AnalysisEventType.ANALYSIS_STAGE_COMPLETED for evt in ctx.events
-        )
+        # M1 orchestration owns the single public stage-completed event.
+        assert ctx.events == []
 
     def test_missing_f2_result_fails_gracefully(self) -> None:
         """Verify LookupError during F2 read generates diagnostic and FAILED status."""
@@ -318,9 +321,20 @@ class TestIRStageExecution:
             snapshot_id=ctx.input.snapshot_id,
         )
 
+        class _MismatchedReader:
+            def read_f2_result(
+                self,
+                analysis_id: UUID,
+                job_id: UUID,
+                analysis_input: AnalysisInput | None = None,
+            ) -> RepositoryInspectionResult:
+                return f2_result
+
         store = AnalysisAttemptStore()
-        store.set_f2_result(ctx.analysis_id, ctx.job_id, f2_result)
-        handler = IRConstructionStageHandler(f2_reader=store, f3_writer=store)
+        handler = IRConstructionStageHandler(
+            f2_reader=_MismatchedReader(),
+            f3_writer=store,
+        )
 
         result = handler.execute(ctx)
 
@@ -362,6 +376,8 @@ class TestIRStageExecution:
         ctx = _create_test_context()
         f2_result = create_mock_inspection_result(
             analysis_id=ctx.analysis_id,
+            project_id=ctx.project_id,
+            repository_id=ctx.input.repository_id,
             snapshot_id=ctx.input.snapshot_id,
         )
         store = AnalysisAttemptStore()
@@ -394,6 +410,8 @@ class TestIRStageExecution:
         ctx = _create_test_context()
         f2_result = create_mock_inspection_result(
             analysis_id=ctx.analysis_id,
+            project_id=ctx.project_id,
+            repository_id=ctx.input.repository_id,
             snapshot_id=ctx.input.snapshot_id,
         )
         store = AnalysisAttemptStore()
@@ -443,6 +461,7 @@ class TestAttemptStoreLifecycleAndReplay:
         f2_result = create_mock_inspection_result(
             analysis_id=ctx.analysis_id,
             project_id=ctx.project_id,
+            repository_id=ctx.input.repository_id,
             snapshot_id=ctx.input.snapshot_id,
             inventory=(inv,),
             syntax_documents=(sdoc,),
@@ -501,6 +520,83 @@ class TestAttemptStoreLifecycleAndReplay:
         with pytest.raises(LookupError):
             store.read_f3_result(a, j)
 
+    def test_attempt_store_rejects_non_equivalent_f3_replacement(self) -> None:
+        store = AnalysisAttemptStore()
+        analysis_id, job_id = uuid4(), uuid4()
+        original = IRConstructionService().construct(
+            create_mock_inspection_result(analysis_id=analysis_id)
+        )
+        conflicting = replace(original, project_id=uuid4())
+
+        store.write_f3_result(analysis_id, job_id, original)
+        with pytest.raises(ValueError, match="immutable F3"):
+            store.write_f3_result(analysis_id, job_id, conflicting)
+
+    def test_m1_store_recovers_lost_f2_and_f3_with_same_input(self) -> None:
+        """M1-owned recovery rebuilds non-persisted handoffs without M3 ownership."""
+        ctx = _create_test_context()
+        f2 = create_mock_inspection_result(
+            analysis_id=ctx.analysis_id,
+            project_id=ctx.project_id,
+            repository_id=ctx.input.repository_id,
+            snapshot_id=ctx.input.snapshot_id,
+            analyzer_version=ctx.input.analyzer_version,
+        )
+
+        class _MissingHandoff:
+            def require_result(self, analysis_id: UUID, job_id: UUID) -> None:
+                raise LookupError("lost")
+
+        class _RecoveryCoordinator:
+            handoff = _MissingHandoff()
+
+            def __init__(self) -> None:
+                self.rebuilds = 0
+                self.releases = 0
+
+            def signature(self, analysis_input: AnalysisInput) -> SimpleNamespace:
+                return SimpleNamespace(
+                    configuration_fingerprint=f2.configuration_fingerprint
+                )
+
+            def rebuild_lost_result(
+                self,
+                analysis_input: AnalysisInput,
+                *,
+                job_id: UUID,
+                expected_signature: object,
+            ) -> SimpleNamespace:
+                self.rebuilds += 1
+                return SimpleNamespace(result=f2)
+
+            def release_attempt(self, analysis_id: UUID, job_id: UUID) -> None:
+                self.releases += 1
+
+        recovery = _RecoveryCoordinator()
+        store = AnalysisAttemptStore(
+            m2_coordinator=cast(M2ExecutionCoordinator, recovery),
+            ir_service=IRConstructionService(),
+        )
+
+        recovered = store.read_f3_result(
+            ctx.analysis_id,
+            ctx.job_id,
+            ctx.input,
+        )
+        assert recovered.analysis_id == ctx.analysis_id
+        assert recovery.rebuilds == 1
+        assert store.read_f3_result(ctx.analysis_id, ctx.job_id) is recovered
+
+        store.release(ctx.analysis_id, ctx.job_id)
+        assert recovery.releases == 1
+
+    def test_configured_ir_capacity_limits_are_wired(self) -> None:
+        settings = Settings(ir_max_entities=1)
+        service = build_ir_construction_service(settings)
+
+        with pytest.raises(IRCapacityLimitError, match="Entity count"):
+            service.construct(create_mock_inspection_result())
+
 
 class TestM4ConsumerStub:
     """Simulates Phase 3 Module 4 architecture projection consumption."""
@@ -526,6 +622,7 @@ class TestM4ConsumerStub:
         f2 = create_mock_inspection_result(
             analysis_id=ctx.analysis_id,
             project_id=ctx.project_id,
+            repository_id=ctx.input.repository_id,
             snapshot_id=ctx.input.snapshot_id,
             inventory=(inv,),
             syntax_documents=(sdoc,),

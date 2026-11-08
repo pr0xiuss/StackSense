@@ -25,7 +25,6 @@ from backend.platform.analysis.domain.constants import (
     StageStatus,
 )
 from backend.platform.analysis.domain.diagnostic import AnalysisDiagnostic
-from backend.platform.analysis.domain.event import AnalysisEventType
 from backend.platform.analysis.ir.model import (
     IRCapacityLimitError,
     IRConstructionError,
@@ -75,7 +74,9 @@ class IRConstructionStageHandler(AnalysisStageHandler):
         # 1. Retrieve F2 inspection result from attempt handoff
         try:
             f2_result = self._f2_reader.read_f2_result(
-                context.analysis_id, context.job_id
+                context.analysis_id,
+                context.job_id,
+                context.input,
             )
         except LookupError as err:
             logger.warning(
@@ -157,11 +158,51 @@ class IRConstructionStageHandler(AnalysisStageHandler):
                 error_message=msg,
             )
 
+        identity_mismatches = (
+            ("project_id", f2_result.project_id, context.input.project_id),
+            ("repository_id", f2_result.repository_id, context.input.repository_id),
+            (
+                "analyzer_version",
+                f2_result.analyzer_version,
+                context.input.analyzer_version,
+            ),
+        )
+        for field_name, actual, expected in identity_mismatches:
+            if actual == expected:
+                continue
+            msg = (
+                f"F2 {field_name} ({actual}) does not match input "
+                f"{field_name} ({expected})"
+            )
+            diag = AnalysisDiagnostic(
+                id=uuid4(),
+                analysis_id=context.analysis_id,
+                job_id=context.job_id,
+                stage=self.stage_name,
+                code="F2_IDENTITY_MISMATCH",
+                category=DiagnosticCategory.ORCHESTRATION,
+                severity=DiagnosticSeverity.ERROR,
+                scope=DiagnosticScope.STAGE,
+                message=msg,
+                retryability=FailureRetryability.NON_RETRYABLE,
+                created_at=datetime.now(UTC),
+            )
+            context.record_diagnostic(diag)
+            return StageExecutionResult(
+                stage_name=self.stage_name,
+                status=StageStatus.FAILED,
+                error_code="F2_IDENTITY_MISMATCH",
+                error_message=msg,
+            )
+
         context.check_cancellation()
 
         # 3. Construct and validate F3 IRDocument
         try:
-            ir_doc = self._service.construct(f2_result)
+            ir_doc = self._service.construct(
+                f2_result,
+                expected_schema_version=context.input.ir_schema_version,
+            )
         except AnalysisCancelledError:
             raise
         except IRCapacityLimitError as err:
@@ -225,16 +266,6 @@ class IRConstructionStageHandler(AnalysisStageHandler):
             entity_count,
             f"Constructed {entity_count} Intermediate Representation entities",
         )
-        context.record_event(
-            AnalysisEventType.ANALYSIS_STAGE_COMPLETED,
-            {
-                "stage": self.stage_name,
-                "entities_count": entity_count,
-                "relationships_count": len(ir_doc.relationships),
-                "is_partial": ir_doc.completeness.is_partial,
-            },
-        )
-
         return StageExecutionResult(
             stage_name=self.stage_name,
             status=StageStatus.COMPLETED,

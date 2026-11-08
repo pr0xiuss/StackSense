@@ -83,6 +83,67 @@ class TestContainerAndScopeSemantics:
         )
         assert contains_rel.target_key == module_key
 
+    def test_same_name_members_resolve_in_nearest_lexical_container(self) -> None:
+        service = IRConstructionService()
+        class_a = create_mock_declaration_fact(
+            fact_key="decl::class::a",
+            name="A",
+            kind=DeclarationKind.CLASS,
+            declaration_range=create_mock_source_range(0, 100),
+        )
+        class_b = create_mock_declaration_fact(
+            fact_key="decl::class::b",
+            name="B",
+            kind=DeclarationKind.CLASS,
+            declaration_range=create_mock_source_range(110, 210),
+        )
+        method_a = create_mock_declaration_fact(
+            fact_key="decl::method::a",
+            name="work",
+            kind=DeclarationKind.METHOD,
+            container_key=class_a.fact_key,
+            declaration_range=create_mock_source_range(10, 40),
+        )
+        method_b = create_mock_declaration_fact(
+            fact_key="decl::method::b",
+            name="work",
+            kind=DeclarationKind.METHOD,
+            container_key=class_b.fact_key,
+            declaration_range=create_mock_source_range(120, 150),
+        )
+        caller = create_mock_declaration_fact(
+            fact_key="decl::method::caller",
+            name="run",
+            kind=DeclarationKind.METHOD,
+            container_key=class_a.fact_key,
+            declaration_range=create_mock_source_range(50, 90),
+        )
+        reference = create_mock_reference_fact(
+            fact_key="ref::call::work",
+            target_name="work",
+            kind=ReferenceKind.CALL,
+            source_declaration_key=caller.fact_key,
+        )
+        syntax_doc = create_mock_syntax_document(
+            path="src/scopes.py",
+            declarations=[class_a, class_b, method_a, method_b, caller],
+            references=[reference],
+        )
+        inspection = create_mock_inspection_result(
+            inventory=[create_mock_inventory_entry(path="src/scopes.py")],
+            syntax_documents=[syntax_doc],
+        )
+
+        document = service.construct(inspection)
+
+        relationship = next(
+            item
+            for item in document.relationships
+            if item.kind == IRRelationshipKind.STATIC_CALL_REFERENCE
+        )
+        assert relationship.target_key == "symbol::src/scopes.py::work::10_40"
+        assert relationship.status == IRFactStatus.CONFIRMED
+
 
 class TestAliasAndExportSemantics:
     """Tests aliasing, re-exports, and export resolution."""
@@ -141,6 +202,7 @@ class TestAliasAndExportSemantics:
         )
         assert exp_rel.target_key is None
         assert exp_rel.unresolved_reference_key is not None
+        assert exp_rel.status == IRFactStatus.UNRESOLVED
 
         unres = next(
             u
@@ -235,6 +297,7 @@ class TestInheritanceAndCompositionSemantics:
         assert compose_rel.source_key == comp_key
         assert compose_rel.target_key is None  # External Avatar component unresolved
         assert compose_rel.unresolved_reference_key is not None
+        assert compose_rel.status == IRFactStatus.UNRESOLVED
 
 
 class TestCyclesAndRecursionTolerance:

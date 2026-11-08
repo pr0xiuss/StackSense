@@ -739,3 +739,19 @@ class AnalysisConfigurationError(AnalysisError):
             severity=ErrorSeverity.ERROR,
             details=details,
         )
+
+
+class ArchitectureResultNotFoundError(AnalysisError):
+    """Raised when no published Architecture Model exists in project scope."""
+
+    def __init__(
+        self,
+        message: str = "Published Architecture Model not found.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="architecture_result_not_found",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            details=details,
+        )

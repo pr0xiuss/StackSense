@@ -20,4 +20,3 @@ export const Dashboard: React.FC<DashboardProps> = ({ title }) => {
     </div>
   );
 };
-

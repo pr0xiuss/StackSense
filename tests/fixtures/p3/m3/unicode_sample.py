@@ -10,4 +10,3 @@ def calculer_coût(quantité: int, prix_unitaire: float) -> float:
     "имя": "Алексей",
     "город": "Москва",
 }
-

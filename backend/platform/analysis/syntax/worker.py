@@ -124,6 +124,7 @@ def main() -> None:
             "diagnostics": diag_dicts,
             "execution_time_seconds": result.execution_time_seconds,
             "error_message": result.error_message,
+            "framework_hints": result.framework_hints,
         }
         sys.stdout.write(json.dumps(output))
 

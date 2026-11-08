@@ -1,5 +1,6 @@
 """Tests for AnalysisInput construction, lazy reads, and pagination."""
 
+import hashlib
 import io
 from datetime import UTC, datetime
 from typing import BinaryIO
@@ -186,7 +187,7 @@ def _setup_test_data() -> tuple[
             revision_id=revision_id,
             path="src/index.js",
             size_bytes=len(files_content["storage/key/2"]),
-            content_hash="hash2",
+            content_hash=hashlib.sha256(files_content["storage/key/2"]).hexdigest(),
             category=ArtifactCategory.SOURCE_CODE,
             support_level=SupportLevel.FULL,
             storage_key="storage/key/2",
@@ -199,7 +200,7 @@ def _setup_test_data() -> tuple[
             revision_id=revision_id,
             path="src/app.py",
             size_bytes=len(files_content["storage/key/1"]),
-            content_hash="hash1",
+            content_hash=hashlib.sha256(files_content["storage/key/1"]).hexdigest(),
             category=ArtifactCategory.SOURCE_CODE,
             support_level=SupportLevel.FULL,
             storage_key="storage/key/1",
@@ -212,7 +213,7 @@ def _setup_test_data() -> tuple[
             revision_id=revision_id,
             path="README.md",
             size_bytes=len(files_content["storage/key/3"]),
-            content_hash="hash3",
+            content_hash=hashlib.sha256(files_content["storage/key/3"]).hexdigest(),
             category=ArtifactCategory.DOCUMENTATION,
             support_level=SupportLevel.METADATA,
             storage_key="storage/key/3",
@@ -604,7 +605,7 @@ def test_artifact_paging_across_multiple_pages() -> None:
                 revision_id=revision_id,
                 path=f"file_{i}.txt",
                 size_bytes=len(files_content[key]),
-                content_hash=f"hash_{i}",
+                content_hash=hashlib.sha256(files_content[key]).hexdigest(),
                 category=ArtifactCategory.SOURCE_CODE,
                 support_level=SupportLevel.FULL,
                 storage_key=key,
@@ -679,7 +680,7 @@ def test_platform_factory_preserves_immutable_input_and_bounded_content() -> Non
                 revision_id=revision_id,
                 path="src/main.py",
                 size_bytes=4,
-                content_hash="hash",
+                content_hash=hashlib.sha256(b"data").hexdigest(),
                 category=ArtifactCategory.SOURCE_CODE,
                 support_level=SupportLevel.FULL,
             )

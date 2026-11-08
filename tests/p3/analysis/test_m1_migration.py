@@ -58,9 +58,13 @@ def test_analysis_table_schema() -> None:
     for col in expected_cols:
         assert col in cols, f"Column '{col}' missing from analyses table"
 
-    # Express/Mongo owns these platform identities. PostgreSQL stores immutable
-    # references but must never create cross-database foreign-key coupling.
-    assert not table.foreign_keys
+    # Express/Mongo owns platform identities, so their UUID references remain
+    # free of cross-database foreign keys.  The published Architecture Version
+    # is Python/PostgreSQL-owned and must be protected by a local FK.
+    foreign_keys = {fk.parent.name: fk.target_fullname for fk in table.foreign_keys}
+    assert foreign_keys == {
+        "published_version_id": "architecture_versions.id",
+    }
 
 
 def test_analysis_jobs_table_schema() -> None:

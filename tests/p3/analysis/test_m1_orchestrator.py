@@ -2,7 +2,7 @@
 
 import time
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -238,7 +238,7 @@ def test_orchestrator_successful_execution_all_stages(
     # Verify all 9 stages are COMPLETED
     stage_repo = SqlAlchemyStageRepository(session)
     stages = stage_repo.list_by_analysis(created.id)
-    assert len(stages) == 9
+    assert len(stages) == 8
     for s in stages:
         assert s.status == StageStatus.COMPLETED
         assert s.completed_at is not None
@@ -490,6 +490,41 @@ def test_orchestrator_timeout_triggers_failed(session: Session, tmp_path: str) -
     assert analysis.error_code == "analysis_timeout"
 
 
+def test_retry_does_not_reset_analysis_timeout_budget(
+    session: Session, tmp_path: str
+) -> None:
+    project, repo, rev = _setup_fixtures(session)
+    orchestrator, lifecycle_service = _build_orchestrator(
+        session, tmp_path, max_duration_seconds=1
+    )
+    created = lifecycle_service.create_analysis(
+        CreateAnalysisRequest(
+            project_id=project.id,
+            repository_id=repo.id,
+            revision_id=rev.id,
+        )
+    )
+    assert created.active_job is not None
+    old_start = datetime.now(UTC) - timedelta(seconds=5)
+    analysis_model = session.get(AnalysisModel, created.id)
+    job_model = session.get(AnalysisJobModel, created.active_job.id)
+    assert analysis_model is not None and job_model is not None
+    analysis_model.status = AnalysisStatus.RUNNING.value
+    analysis_model.started_at = old_start
+    job_model.status = JobStatus.RETRYING.value
+    job_model.started_at = old_start
+    session.commit()
+
+    orchestrator.execute(created.id, created.active_job.id, project.id)
+
+    analysis = SqlAlchemyAnalysisRepository(session).get_by_id(created.id, project.id)
+    job = SqlAlchemyJobRepository(session).get_by_id(created.active_job.id)
+    assert analysis is not None and job is not None
+    assert analysis.status is AnalysisStatus.FAILED
+    assert analysis.error_code == "analysis_timeout"
+    assert job.started_at == old_start
+
+
 def test_stage_deadline_interrupts_blocking_handler(
     session: Session, tmp_path: str
 ) -> None:
@@ -567,3 +602,93 @@ def test_orchestrator_duplicate_terminal_job_call_is_idempotent(
     second_analysis = analysis_repo.get_by_id(created.id, project.id)
     assert second_analysis is not None
     assert second_analysis.version == first_version
+
+
+def test_orchestrator_rejects_success_without_required_publication_pointer(
+    session: Session, tmp_path: str
+) -> None:
+    class PublicationRequiringFake(FakeStageHandler):
+        @property
+        def requires_published_architecture(self) -> bool:
+            return True
+
+    project, repo, rev = _setup_fixtures(session)
+    registry = create_fake_handler_registry(
+        override_handlers={
+            AnalysisStageName.ARCHITECTURE_BUILD.value: PublicationRequiringFake(
+                AnalysisStageName.ARCHITECTURE_BUILD.value
+            )
+        }
+    )
+    orchestrator, lifecycle_service = _build_orchestrator(
+        session, tmp_path, registry=registry
+    )
+    created = lifecycle_service.create_analysis(
+        CreateAnalysisRequest(
+            project_id=project.id,
+            repository_id=repo.id,
+            revision_id=rev.id,
+        )
+    )
+    assert created.active_job is not None
+
+    orchestrator.execute(created.id, created.active_job.id, project.id)
+
+    analysis = SqlAlchemyAnalysisRepository(session).get_by_id(created.id, project.id)
+    assert analysis is not None
+    assert analysis.status is AnalysisStatus.FAILED
+    assert analysis.error_code == "architecture_publication_missing"
+
+
+def test_legacy_pending_projection_is_deferred_after_publication_without_warning(
+    session: Session, tmp_path: str
+) -> None:
+    project, repo, rev = _setup_fixtures(session)
+    orchestrator, lifecycle_service = _build_orchestrator(session, tmp_path)
+    created = lifecycle_service.create_analysis(
+        CreateAnalysisRequest(
+            project_id=project.id,
+            repository_id=repo.id,
+            revision_id=rev.id,
+        )
+    )
+    assert created.active_job is not None
+    now = datetime.now(UTC)
+    analysis_model = session.get(AnalysisModel, created.id)
+    assert analysis_model is not None
+    analysis_model.published_version_id = uuid4()
+    session.add(
+        AnalysisStageModel(
+            id=uuid4(),
+            analysis_id=created.id,
+            job_id=None,
+            stage_name=AnalysisStageName.PROJECTION.value,
+            status=StageStatus.PENDING.value,
+            stage_order=9,
+            is_mandatory=True,
+            processed_items=0,
+            total_items=0,
+            started_at=None,
+            completed_at=None,
+            error_code=None,
+            error_message=None,
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    session.commit()
+
+    orchestrator.execute(created.id, created.active_job.id, project.id)
+
+    analysis = SqlAlchemyAnalysisRepository(session).get_by_id(created.id, project.id)
+    projection = session.scalar(
+        select(AnalysisStageModel).where(
+            AnalysisStageModel.analysis_id == created.id,
+            AnalysisStageModel.stage_name == AnalysisStageName.PROJECTION.value,
+        )
+    )
+    assert analysis is not None
+    assert analysis.status is AnalysisStatus.COMPLETED
+    assert projection is not None
+    assert projection.status == StageStatus.SKIPPED.value

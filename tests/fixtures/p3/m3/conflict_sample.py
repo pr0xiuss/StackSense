@@ -11,4 +11,3 @@ class TaskRunner:
 def execute_task():
     # Duplicate definition in the same file scope
     return "second_version"
-

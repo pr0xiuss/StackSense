@@ -52,6 +52,28 @@ _DECLARATION_NODE_TYPES = {
     "interface_declaration": DeclarationKind.INTERFACE,
     "type_alias_declaration": DeclarationKind.TYPE_ALIAS,
 }
+_HTTP_METHOD_BY_SUFFIX = {
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "patch": "PATCH",
+    "delete": "DELETE",
+    "options": "OPTIONS",
+    "head": "HEAD",
+    "Get": "GET",
+    "Post": "POST",
+    "Put": "PUT",
+    "Patch": "PATCH",
+    "Delete": "DELETE",
+}
+
+
+def _safe_route_path(value: str) -> str | None:
+    if not value or len(value) > 2_048:
+        return None
+    if "://" in value or any(ord(char) < 32 for char in value):
+        return None
+    return value
 
 
 class TreeSitterJsTsAdapter(ParserAdapter):
@@ -176,6 +198,7 @@ class TreeSitterJsTsAdapter(ParserAdapter):
             )
 
         content_hash = hashlib.sha256(canonical_bytes).hexdigest()
+        framework_hints: dict[str, dict[str, str]] = {}
         try:
             tree = self._get_parser(request.language).parse(canonical_bytes)
         except Exception as exc:
@@ -245,7 +268,7 @@ class TreeSitterJsTsAdapter(ParserAdapter):
                         )
                     )
                     self._add_decorator_and_heritage_facts(
-                        accumulator, request.path, node, key
+                        accumulator, request.path, node, key, framework_hints
                     )
                     next_key, next_name = key, qualified
 
@@ -313,7 +336,7 @@ class TreeSitterJsTsAdapter(ParserAdapter):
                         )
                     )
                     self._add_decorator_and_heritage_facts(
-                        accumulator, request.path, node, key
+                        accumulator, request.path, node, key, framework_hints
                     )
                     next_key, next_name = key, qualified
 
@@ -385,15 +408,17 @@ class TreeSitterJsTsAdapter(ParserAdapter):
                         name = ""
                     if name and _SAFE_REFERENCE_NAME.fullmatch(name):
                         rng = self._range(target or node)
+                        fact_key = build_fact_key(request.path, "call", name, rng)
                         accumulator.add(
                             ReferenceFact(
-                                build_fact_key(request.path, "call", name, rng),
+                                fact_key,
                                 ReferenceKind.CALL,
                                 container_key,
                                 name,
                                 rng,
                             )
                         )
+                        self._add_route_hint(framework_hints, fact_key, name, node)
                     self._add_commonjs_import(
                         accumulator, request.path, node, container_key
                     )
@@ -490,6 +515,7 @@ class TreeSitterJsTsAdapter(ParserAdapter):
             ),
             tuple(diagnostics),
             time.perf_counter() - start_time,
+            framework_hints=framework_hints,
         )
 
     def _add_decorator_and_heritage_facts(
@@ -498,20 +524,27 @@ class TreeSitterJsTsAdapter(ParserAdapter):
         path: str,
         node: Node,
         source_key: str,
+        framework_hints: dict[str, dict[str, str]],
     ) -> None:
         for item in self._decorator_nodes(node):
             name = self._decorator_name(item)
             if name:
                 rng = self._range(item)
+                fact_key = build_fact_key(
+                    path, ReferenceKind.DECORATOR.value, name, rng
+                )
                 accumulator.add(
                     ReferenceFact(
-                        build_fact_key(path, ReferenceKind.DECORATOR.value, name, rng),
+                        fact_key,
                         ReferenceKind.DECORATOR,
                         source_key,
                         name,
                         rng,
                     )
                 )
+                call = self._first(item, "call_expression")
+                if call is not None:
+                    self._add_route_hint(framework_hints, fact_key, name, call)
         heritage_roots = tuple(
             child
             for child in node.children
@@ -545,6 +578,25 @@ class TreeSitterJsTsAdapter(ParserAdapter):
                                 rng,
                             )
                         )
+
+    @classmethod
+    def _add_route_hint(
+        cls,
+        framework_hints: dict[str, dict[str, str]],
+        fact_key: str,
+        name: str,
+        call: Node,
+    ) -> None:
+        method = _HTTP_METHOD_BY_SUFFIX.get(name.rsplit(".", 1)[-1])
+        arguments = call.child_by_field_name("arguments")
+        first = (
+            arguments.named_children[0]
+            if arguments and arguments.named_children
+            else None
+        )
+        path = _safe_route_path(cls._string_value(first))
+        if method is not None and path is not None:
+            framework_hints[fact_key] = {"method": method, "path": path}
 
     def _add_import_facts(
         self, accumulator: FactAccumulator, path: str, node: Node

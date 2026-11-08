@@ -70,6 +70,17 @@ class Settings(BaseSettings):
     ir_max_conflicts: int = Field(default=25_000, ge=1)
     ir_max_serialized_bytes: int = Field(default=512 * 1024 * 1024, ge=1024)
 
+    # Architecture Model construction (Phase 3 Module 4)
+    architecture_max_entities: int = Field(default=25_000, ge=1)
+    architecture_max_relationships: int = Field(default=50_000, ge=1)
+    architecture_max_evidence: int = Field(default=75_000, ge=1)
+    architecture_max_unresolved_relationships: int = Field(default=10_000, ge=1)
+    architecture_max_conflicts: int = Field(default=5_000, ge=1)
+    architecture_max_serialized_bytes: int = Field(
+        default=128 * 1024 * 1024,
+        ge=1024,
+    )
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )

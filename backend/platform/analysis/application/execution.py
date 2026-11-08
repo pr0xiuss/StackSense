@@ -123,6 +123,11 @@ class AnalysisStageHandler(ABC):
         """Whether this stage is mandatory for analysis completion."""
         return True
 
+    @property
+    def requires_published_architecture(self) -> bool:
+        """Whether successful execution requires the durable M4 publication link."""
+        return False
+
     @abstractmethod
     def execute(self, context: ExecutionContext) -> StageExecutionResult:
         """Execute stage processing logic against the provided ExecutionContext."""

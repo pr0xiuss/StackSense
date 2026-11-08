@@ -85,13 +85,17 @@ def test_framework_enrichment_uses_generic_facts_once(
         (parsed.document,),
         (FrameworkDetection(framework, "confirmed"),),
         uuid4(),
+        {parsed.document.artifact_id: parsed.framework_hints},
     )
 
     facts = [fact for fact in documents[0].facts if isinstance(fact, FrameworkFact)]
     assert any(fact.fact_type == expected_type for fact in facts)
     assert len(documents[0].facts) > generic_count
     assert all(fact.supporting_fact_keys for fact in facts)
-    assert "/hidden" not in str(facts)
+    if expected_type == "route":
+        route = next(fact for fact in facts if fact.fact_type == "route")
+        assert route.details["path"] == "/hidden"
+        assert route.details["method"] == "GET"
 
 
 def test_supported_or_unrelated_framework_does_not_fabricate_facts() -> None:

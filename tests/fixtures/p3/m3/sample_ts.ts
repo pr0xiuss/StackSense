@@ -15,4 +15,3 @@ export class AuthService {
     return this.repo.findByUsername(username);
   }
 }
-
