@@ -4,6 +4,7 @@ import RepositoryHeader from '../components/repository/RepositoryHeader.jsx';
 import IngestionTab from '../components/repository/IngestionTab.jsx';
 import RevisionsTab from '../components/repository/RevisionsTab.jsx';
 import ArtifactsTab from '../components/repository/ArtifactsTab.jsx';
+import AnalysesTab from '../components/analysis/AnalysesTab.jsx';
 import NewIngestionModal from '../components/repository/NewIngestionModal.jsx';
 import UploadArchiveModal from '../components/repository/UploadArchiveModal.jsx';
 import TriggerIngestionModal from '../components/repository/TriggerIngestionModal.jsx';
@@ -271,6 +272,19 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
                 </svg>
                 <span>Artifacts</span>
               </button>
+
+              <button
+                type="button"
+                className={`repo-tab-btn ${activeTab === 'analyses' ? 'active' : ''}`}
+                onClick={() => setActiveTab('analyses')}
+                aria-selected={activeTab === 'analyses'}
+                role="tab"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                </svg>
+                <span>Analyses</span>
+              </button>
             </nav>
 
             {/* Tab Viewport */}
@@ -309,6 +323,13 @@ export default function RepositoryDetailPage({ projectId, repositoryId }) {
                   repositoryId={repositoryId}
                   selectedRevision={selectedRevisionForArtifacts}
                   onSelectRevision={setSelectedRevisionForArtifacts}
+                />
+              )}
+
+              {activeTab === 'analyses' && (
+                <AnalysesTab
+                  projectId={projectId}
+                  repositoryId={repositoryId}
                 />
               )}
             </div>

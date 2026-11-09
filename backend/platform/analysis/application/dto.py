@@ -173,3 +173,13 @@ class AnalysisListResponse:
     total: int
     limit: int
     offset: int
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisDiagnosticListResponse:
+    """Paginated collection of analysis diagnostics."""
+
+    items: list[AnalysisDiagnosticResponse]
+    total: int
+    limit: int
+    offset: int

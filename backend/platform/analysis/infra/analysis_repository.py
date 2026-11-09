@@ -219,6 +219,7 @@ class SqlAlchemyAnalysisRepository(AnalysisRepository, AnalysisPublicationLinker
         limit: int,
         offset: int,
         status: AnalysisStatus | None = None,
+        repository_id: UUID | None = None,
     ) -> list[Analysis]:
         """List analyses for a project with deterministic pagination."""
         stmt = (
@@ -228,6 +229,8 @@ class SqlAlchemyAnalysisRepository(AnalysisRepository, AnalysisPublicationLinker
             .offset(offset)
             .limit(limit)
         )
+        if repository_id is not None:
+            stmt = stmt.where(AnalysisModel.repository_id == repository_id)
         if status is not None:
             stmt = stmt.where(AnalysisModel.status == status.value)
 
@@ -238,11 +241,14 @@ class SqlAlchemyAnalysisRepository(AnalysisRepository, AnalysisPublicationLinker
         self,
         project_id: UUID,
         status: AnalysisStatus | None = None,
+        repository_id: UUID | None = None,
     ) -> int:
         """Count analyses for a project with optional status filtering."""
         stmt = select(func.count(AnalysisModel.id)).where(
             AnalysisModel.project_id == project_id,
         )
+        if repository_id is not None:
+            stmt = stmt.where(AnalysisModel.repository_id == repository_id)
         if status is not None:
             stmt = stmt.where(AnalysisModel.status == status.value)
         return self._session.scalar(stmt) or 0

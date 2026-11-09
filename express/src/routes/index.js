@@ -3,6 +3,8 @@ const projectRoutes = require('./projectRoutes');
 const authRoutes = require('./authRoutes');
 const userDirectoryRoutes = require('./userDirectoryRoutes');
 const internalAnalysisSourceRoutes = require('./internalAnalysisSourceRoutes');
+const analysisRoutes = require('./analysisRoutes');
+const architectureRoutes = require('./architectureRoutes');
 
 const router = express.Router();
 
@@ -27,6 +29,12 @@ router.use('/internal', internalAnalysisSourceRoutes);
  * Project resource endpoints.
  */
 router.use('/projects', projectRoutes);
+
+/**
+ * Analysis lifecycle and Architecture Model endpoints.
+ */
+router.use('/analyses', analysisRoutes);
+router.use('/architecture-versions', architectureRoutes);
 
 module.exports = router;
 

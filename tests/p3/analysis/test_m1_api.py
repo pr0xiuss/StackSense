@@ -2,7 +2,7 @@
 
 from collections.abc import Generator
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -403,3 +403,144 @@ def test_api_create_analysis_idempotency_replay(
     assert res2.status_code == 202
     assert res2.json()["id"] == first_id
     assert len(queue_publisher.published_jobs) == 1
+
+
+def test_api_list_analyses_filtered_by_repository_id(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    project, repo1, rev1 = _setup_fixtures(db_session)
+    now = datetime.now(UTC)
+    repo2 = Repository(
+        id=uuid4(),
+        project_id=project.id,
+        name="second-repo",
+        description="Second repo",
+        status="registered",
+        created_at=now,
+        updated_at=now,
+    )
+    SqlAlchemyRepositoryRepository(db_session).save(repo2)
+    rev2 = RevisionModel(
+        id=uuid4(),
+        project_id=project.id,
+        repository_id=repo2.id,
+        revision_identifier="v2.0.0",
+        source_hash="b" * 64,
+        total_files=2,
+        total_bytes=200,
+        created_at=now,
+    )
+    db_session.add(rev2)
+    db_session.commit()
+
+    # Create analysis for repo1
+    res1 = client.post(
+        "/api/v1/analyses",
+        headers=_delegated_headers(project.id),
+        json={
+            "project_id": str(project.id),
+            "repository_id": str(repo1.id),
+            "revision_id": str(rev1.id),
+        },
+    )
+    assert res1.status_code == 202
+
+    # Create analysis for repo2
+    res2 = client.post(
+        "/api/v1/analyses",
+        headers=_delegated_headers(project.id),
+        json={
+            "project_id": str(project.id),
+            "repository_id": str(repo2.id),
+            "revision_id": str(rev2.id),
+        },
+    )
+    assert res2.status_code == 202
+
+    # Filter by repo1
+    list_res1 = client.get(
+        f"/api/v1/analyses?project_id={project.id}&repository_id={repo1.id}",
+        headers=_delegated_headers(project.id),
+    )
+    assert list_res1.status_code == 200
+    assert list_res1.json()["total"] == 1
+    assert list_res1.json()["items"][0]["repository_id"] == str(repo1.id)
+
+    # Filter by repo2
+    list_res2 = client.get(
+        f"/api/v1/analyses?project_id={project.id}&repository_id={repo2.id}",
+        headers=_delegated_headers(project.id),
+    )
+    assert list_res2.status_code == 200
+    assert list_res2.json()["total"] == 1
+    assert list_res2.json()["items"][0]["repository_id"] == str(repo2.id)
+
+
+def test_api_list_analysis_diagnostics_pagination_and_filters(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    project, repo, rev = _setup_fixtures(db_session)
+    create_res = client.post(
+        "/api/v1/analyses",
+        headers=_delegated_headers(project.id),
+        json={
+            "project_id": str(project.id),
+            "repository_id": str(repo.id),
+            "revision_id": str(rev.id),
+        },
+    )
+    assert create_res.status_code == 202
+    analysis_id = UUID(create_res.json()["id"])
+    now = datetime.now(UTC)
+
+    # Insert two diagnostics directly
+    diag1 = AnalysisDiagnosticModel(
+        id=uuid4(),
+        analysis_id=analysis_id,
+        stage="inventory",
+        code="warn_ignored_file",
+        category="analysis",
+        severity="warning",
+        scope="artifact",
+        message="File was ignored.",
+        retryability="non_retryable",
+        details={"path": "temp.tmp"},
+        created_at=now,
+    )
+    diag2 = AnalysisDiagnosticModel(
+        id=uuid4(),
+        analysis_id=analysis_id,
+        stage="syntax_extraction",
+        code="err_syntax",
+        category="parsing",
+        severity="error",
+        scope="artifact",
+        message="Syntax parse failed.",
+        retryability="non_retryable",
+        details={"path": "bad.py"},
+        created_at=now,
+    )
+    db_session.add_all([diag1, diag2])
+    db_session.commit()
+
+    # Query all diagnostics
+    res_all = client.get(
+        f"/api/v1/analyses/{analysis_id}/diagnostics?project_id={project.id}",
+        headers=_delegated_headers(project.id),
+    )
+    assert res_all.status_code == 200
+    assert res_all.json()["total"] == 2
+    assert len(res_all.json()["items"]) == 2
+
+    # Filter by severity and stage
+    res_filtered = client.get(
+        f"/api/v1/analyses/{analysis_id}/diagnostics?project_id={project.id}&severity=warning&stage=inventory",
+        headers=_delegated_headers(project.id),
+    )
+    assert res_filtered.status_code == 200
+    assert res_filtered.json()["total"] == 1
+    assert res_filtered.json()["items"][0]["code"] == "warn_ignored_file"
+    assert res_filtered.json()["items"][0]["severity"] == "warning"
+    assert res_filtered.json()["items"][0]["stage"] == "inventory"

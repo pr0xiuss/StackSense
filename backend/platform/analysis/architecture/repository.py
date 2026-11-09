@@ -173,7 +173,13 @@ class ArchitecturePublicationRepository(ABC):
 
     @abstractmethod
     def list_published_evidence(
-        self, version_id: UUID, project_id: UUID, *, limit: int, offset: int
+        self,
+        version_id: UUID,
+        project_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        entity_id: UUID | None = None,
     ) -> ArchitecturePage[ArchitectureEvidence]:
         raise NotImplementedError
 

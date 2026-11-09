@@ -50,6 +50,7 @@ class AnalysisRepository(ABC):
         limit: int,
         offset: int,
         status: AnalysisStatus | None = None,
+        repository_id: UUID | None = None,
     ) -> list[Analysis]:
         """List analyses for a project with deterministic pagination."""
         raise NotImplementedError
@@ -59,6 +60,7 @@ class AnalysisRepository(ABC):
         self,
         project_id: UUID,
         status: AnalysisStatus | None = None,
+        repository_id: UUID | None = None,
     ) -> int:
         """Count analyses for a project with optional status filtering."""
         raise NotImplementedError
