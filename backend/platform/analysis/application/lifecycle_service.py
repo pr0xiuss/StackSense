@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 from backend.platform.analysis.application.dto import (
     AnalysisCompletenessResponse,
+    AnalysisDiagnosticListResponse,
+    AnalysisDiagnosticResponse,
     AnalysisJobResponse,
     AnalysisListResponse,
     AnalysisResponse,
@@ -349,6 +351,7 @@ class AnalysisLifecycleService:
         limit: int = 20,
         offset: int = 0,
         status: AnalysisStatus | None = None,
+        repository_id: UUID | None = None,
     ) -> AnalysisListResponse:
         """List analyses for a project with deterministic pagination."""
         safe_limit = max(1, min(limit, 100))
@@ -359,11 +362,76 @@ class AnalysisLifecycleService:
             limit=safe_limit,
             offset=safe_offset,
             status=status,
+            repository_id=repository_id,
         )
-        total = self._analysis_repo.count_by_project(project_id, status)
+        total = self._analysis_repo.count_by_project(
+            project_id,
+            status=status,
+            repository_id=repository_id,
+        )
 
         responses = [self._to_analysis_response(a) for a in items]
         return AnalysisListResponse(
+            items=responses,
+            total=total,
+            limit=safe_limit,
+            offset=safe_offset,
+        )
+
+    def list_diagnostics(
+        self,
+        analysis_id: UUID,
+        project_id: UUID,
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        severity: DiagnosticSeverity | None = None,
+        stage: str | None = None,
+    ) -> AnalysisDiagnosticListResponse:
+        """List diagnostics for an analysis with filtering and pagination."""
+        analysis = self._analysis_repo.get_by_id(analysis_id, project_id)
+        if analysis is None:
+            raise AnalysisNotFoundError(
+                message=f"Analysis '{analysis_id}' not found.",
+                details={"analysis_id": str(analysis_id)},
+            )
+        safe_limit = max(1, min(limit, 100))
+        safe_offset = max(0, offset)
+
+        diagnostics = self._diagnostic_repo.list_by_analysis(
+            analysis_id,
+            limit=safe_limit,
+            offset=safe_offset,
+            severity=severity,
+            stage=stage,
+        )
+        total = self._diagnostic_repo.count_by_analysis(
+            analysis_id,
+            severity=severity,
+            stage=stage,
+        )
+
+        responses = [
+            AnalysisDiagnosticResponse(
+                id=d.id,
+                analysis_id=d.analysis_id,
+                code=d.code,
+                category=d.category.value,
+                severity=d.severity.value,
+                scope=d.scope.value,
+                message=d.message,
+                retryability=d.retryability.value,
+                created_at=d.created_at,
+                stage=d.stage,
+                details=dict(d.details),
+                artifact_id=d.artifact_id,
+                artifact_path=d.artifact_path,
+                source_line=d.source_line,
+                source_column=d.source_column,
+            )
+            for d in diagnostics
+        ]
+        return AnalysisDiagnosticListResponse(
             items=responses,
             total=total,
             limit=safe_limit,

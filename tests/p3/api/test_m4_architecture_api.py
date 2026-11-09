@@ -12,6 +12,7 @@ from backend.platform.analysis.application.dependencies import (
 from backend.platform.analysis.architecture.dto import (
     ArchitectureCollectionResponse,
     ArchitectureEntityResponse,
+    ArchitectureEvidenceResponse,
     ArchitectureVersionResponse,
 )
 from backend.platform.config import get_settings
@@ -87,6 +88,33 @@ class _QueryStub:
             items=[entity], total=3, limit=limit, offset=offset
         )
 
+    def list_evidence(
+        self,
+        version_id: UUID,
+        project_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        entity_id: UUID | None = None,
+    ) -> ArchitectureCollectionResponse:
+        evidence = ArchitectureEvidenceResponse(
+            id=uuid4(),
+            logical_id="architecture://safe/evidence/1",
+            source_record_type="source",
+            path="src/api.py",
+            artifact_id=uuid4(),
+            source_fact_key="fact",
+            source_range={"start_line": 1, "end_line": 10},
+            producer_id="ast",
+            producer_version="1.0.0",
+            strength="high",
+            polarity="positive",
+            metadata={"entity_id": str(entity_id)} if entity_id else {},
+        )
+        return ArchitectureCollectionResponse(
+            items=[evidence], total=1, limit=limit, offset=offset
+        )
+
 
 def test_version_route_requires_service_auth_and_project_scope() -> None:
     app.dependency_overrides[get_architecture_query_service] = lambda: _QueryStub()
@@ -131,6 +159,29 @@ def test_published_routes_return_bounded_pagination_and_structured_404() -> None
         )
         assert missing.status_code == 404
         assert missing.json()["error"]["code"] == "architecture_result_not_found"
+    finally:
+        client.close()
+        app.dependency_overrides.clear()
+
+
+def test_evidence_route_supports_entity_id_filter() -> None:
+    app.dependency_overrides[get_architecture_query_service] = lambda: _QueryStub()
+    client = TestClient(app)
+    try:
+        entity_id = uuid4()
+        response = client.get(
+            f"/api/v1/architecture-versions/{VERSION_ID}/evidence",
+            params={
+                "project_id": str(PROJECT_ID),
+                "limit": 5,
+                "offset": 0,
+                "entity_id": str(entity_id),
+            },
+            headers=_headers(),
+        )
+        assert response.status_code == 200
+        assert response.json()["total"] == 1
+        assert response.json()["items"][0]["metadata"]["entity_id"] == str(entity_id)
     finally:
         client.close()
         app.dependency_overrides.clear()

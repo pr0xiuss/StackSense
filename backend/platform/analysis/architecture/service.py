@@ -239,10 +239,16 @@ class ArchitectureQueryService:
         return _collection(items, page.total, limit, offset)
 
     def list_evidence(
-        self, version_id: UUID, project_id: UUID, *, limit: int, offset: int
+        self,
+        version_id: UUID,
+        project_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        entity_id: UUID | None = None,
     ) -> ArchitectureCollectionResponse:
         page = self._repository.list_published_evidence(
-            version_id, project_id, limit=limit, offset=offset
+            version_id, project_id, limit=limit, offset=offset, entity_id=entity_id
         )
         self._require_page_version(version_id, project_id)
         items = [

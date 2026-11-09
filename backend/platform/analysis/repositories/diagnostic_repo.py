@@ -33,6 +33,7 @@ class DiagnosticRepository(ABC):
         self,
         analysis_id: UUID,
         severity: DiagnosticSeverity | None = None,
+        stage: str | None = None,
     ) -> int:
-        """Count diagnostics for an analysis with optional severity filter."""
+        """Count diagnostics with optional severity and stage filters."""
         raise NotImplementedError

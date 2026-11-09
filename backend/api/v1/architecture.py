@@ -142,9 +142,12 @@ def list_architecture_evidence(
     ],
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    entity_id: Annotated[UUID | None, Query()] = None,
 ) -> ArchitectureCollectionResponse:
     _authorize(context, project_id)
-    return service.list_evidence(version_id, project_id, limit=limit, offset=offset)
+    return service.list_evidence(
+        version_id, project_id, limit=limit, offset=offset, entity_id=entity_id
+    )
 
 
 @router.get(

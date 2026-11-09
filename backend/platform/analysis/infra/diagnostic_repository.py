@@ -111,11 +111,14 @@ class SqlAlchemyDiagnosticRepository(DiagnosticRepository):
         self,
         analysis_id: UUID,
         severity: DiagnosticSeverity | None = None,
+        stage: str | None = None,
     ) -> int:
-        """Count diagnostics for an analysis with optional severity filter."""
+        """Count diagnostics for an analysis with optional severity and stage filter."""
         stmt = select(func.count(AnalysisDiagnosticModel.id)).where(
             AnalysisDiagnosticModel.analysis_id == analysis_id,
         )
         if severity is not None:
             stmt = stmt.where(AnalysisDiagnosticModel.severity == severity.value)
+        if stage is not None:
+            stmt = stmt.where(AnalysisDiagnosticModel.stage == stage)
         return self._session.scalar(stmt) or 0

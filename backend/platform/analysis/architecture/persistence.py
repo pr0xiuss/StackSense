@@ -661,12 +661,47 @@ class SqlAlchemyArchitectureRepository(ArchitecturePublicationRepository):
         )
 
     def list_published_evidence(
-        self, version_id: UUID, project_id: UUID, *, limit: int, offset: int
+        self,
+        version_id: UUID,
+        project_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        entity_id: UUID | None = None,
     ) -> ArchitecturePage[ArchitectureEvidence]:
         if not self._is_published(version_id, project_id):
             return ArchitecturePage((), 0)
-        total, models = self._paged_models(
-            ArchitectureEvidenceModel, version_id, limit, offset
+        if entity_id is None:
+            total, models = self._paged_models(
+                ArchitectureEvidenceModel, version_id, limit, offset
+            )
+            return ArchitecturePage(
+                tuple(self._evidence(item) for item in models), total
+            )
+
+        evidence_subq = select(ArchitectureEntityEvidenceModel.evidence_id).where(
+            ArchitectureEntityEvidenceModel.entity_id == entity_id
+        )
+        filters = [
+            ArchitectureEvidenceModel.version_id == version_id,
+            ArchitectureEvidenceModel.id.in_(evidence_subq),
+        ]
+        total = int(
+            self._session.scalar(
+                select(func.count())
+                .select_from(ArchitectureEvidenceModel)
+                .where(*filters)
+            )
+            or 0
+        )
+        models = tuple(
+            self._session.scalars(
+                select(ArchitectureEvidenceModel)
+                .where(*filters)
+                .order_by(ArchitectureEvidenceModel.logical_id)
+                .offset(offset)
+                .limit(limit)
+            )
         )
         return ArchitecturePage(tuple(self._evidence(item) for item in models), total)
 

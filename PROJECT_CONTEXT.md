@@ -716,11 +716,12 @@ M5 is complete only when:
 | M2 | **FROZEN / COMPLETE** | No M5 change planned. |
 | M3 | **FROZEN / COMPLETE** | No M5 change planned. |
 | M4 | **FROZEN / COMPLETE** | Existing API verified; owner-approved additive entity-evidence query filter is queued for B1. |
-| M5 B1 | Not started | Secure Express gateway and approved query additions. |
-| M5 B2 | Not started | Frontend contracts/services and Repository Analyses tab. |
-| M5 B3 | Not started | Analysis lifecycle/progress/findings page. |
-| M5 B4 | Not started | Architecture page/basic visualization and closure. |
-| M6 | Not started | Blocked on verified M5. |
+| M5 B1 | **COMPLETE / VERIFIED** | Implemented Express analysisConfig, analysisGatewayService, analysisValidate, analysisController, architectureController, analysisRoutes, architectureRoutes. Implemented FastAPI optional repository_id filter, diagnostics list endpoint, and M4 entity_id evidence filter. 29 Express tests passed (11 unit, 18 integration). 15 FastAPI M1/M4 API tests passed. |
+| M5 B2 | **COMPLETE / VERIFIED** | Implemented frontend contracts (analysisContracts, architectureContracts), API services (analysisService, architectureService), apiClient streaming extension (apiStream), dark theme styling (analysis.css), AnalysesTab with pagination/status filtering, StartAnalysisModal with revision inspection, idempotency key generation and advanced options, RepositoryDetailPage tab integration, and App route precedence. Verified with clean `npm run build` (vite v8.3.1), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and clean static checks (black, ruff, mypy --strict). |
+| M5 B3 | **COMPLETE / VERIFIED** | Implemented `useAnalysisLiveStatus` hook (authoritative REST polling with SSE invalidation, 15s reconnect backoff, 3s serialized polling fallback, terminal state teardown), `AnalysisDetailPage`, `AnalysisHeader` (breadcrumbs, cancellation modal, architecture link, streaming indicator), `AnalysisProgress` (8-stage progress rail, metrics cards, indeterminate/percentage progress), `AnalysisFindings` (diagnostics, unresolved relationships, architecture conflicts with independent pagination and severity filters), `AnalysisExecution` (active worker job telemetry and stage execution table), App route mounting, and dark theme CSS. Verified with clean `npm run build` (75 modules, 2.15s), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and static checks (black, ruff, mypy --strict). |
+| M5 B4 | **COMPLETE / VERIFIED** | Implemented `ArchitectureModelPage`, `ArchitectureCanvas` (bounded partial window of max 100 entities, deterministic tier layout by kind, stable logical-ID ordering, static SVG connectors with arrowheads, keyboard selection), `ArchitectureInspector` (safe structured metadata key-values, evidence counts, namespace, IR tags), `ArchitectureCollectionTable` (typed paginated table shell for Entities, Relationships, Evidence with entity filtering, Unresolved, Conflicts), `architecture.css` dark theme design token styling, and App route integration. Verified with clean `npm run build` (81 modules, 3.96s), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and static checks (black, ruff, mypy --strict). |
+| M5 | **FROZEN / COMPLETE** | All 4 batches completed and verified. Express delegation boundary, streaming client, history, lifecycle, diagnostics, bounded model visualization, and published architecture collections verified. |
+| M6 | Not started | Ready to begin following verified M5 completion. |
 
 ## 6. Decisions, Risks and Required Approvals
 
@@ -758,12 +759,11 @@ No architectural decision currently blocks implementation.
 
 ## 7. Current Handoff
 
-M1–M4 are frozen and verified. The complete four-batch M5 plan, its two new
-pages, one modified page, API contracts, security boundary, bounded
-visualization, test tooling and narrow query change control are owner-approved
-and frozen. Every M5 batch remains not started. No application source,
-dependency or test file was changed during planning or approval recording.
+M1–M5 are frozen and verified. Module 5 has achieved Definition of Done across all
+four batches:
+- Batch 1: Express security boundary, token isolation, upstream delegation, and query change control.
+- Batch 2: Frontend contracts, streaming API client, repository Analyses history tab, and StartAnalysisModal.
+- Batch 3: Analysis detail page, live SSE invalidation hook, stage rail, diagnostics, and cancellation.
+- Batch 4: Architecture Model page, deterministic bounded SVG canvas, inspector, and five paginated data tabs.
 
-**Next action:** the assigned collaborator may implement M5 Batch 1 against this
-frozen baseline. Do not begin B2 until B1 acceptance criteria and verification
-are recorded.
+**Next action:** Implement Module 6 (or next phase module) against this verified baseline.

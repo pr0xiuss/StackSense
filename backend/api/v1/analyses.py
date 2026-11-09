@@ -26,6 +26,7 @@ from backend.platform.analysis.application.dependencies import (
     require_operator_role,
 )
 from backend.platform.analysis.application.dto import (
+    AnalysisDiagnosticListResponse,
     AnalysisListResponse,
     AnalysisResponse,
     CancelAnalysisRequest,
@@ -35,7 +36,11 @@ from backend.platform.analysis.application.events import LifecycleEventEmitter
 from backend.platform.analysis.application.lifecycle_service import (
     AnalysisLifecycleService,
 )
-from backend.platform.analysis.domain.constants import AnalysisStatus, JobStatus
+from backend.platform.analysis.domain.constants import (
+    AnalysisStatus,
+    DiagnosticSeverity,
+    JobStatus,
+)
 from backend.platform.analysis.infra.queue import (
     AnalysisJobPayload,
     AnalysisQueuePublisher,
@@ -129,6 +134,7 @@ def list_analyses(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
     analysis_status: Annotated[AnalysisStatus | None, Query(alias="status")] = None,
+    repository_id: Annotated[UUID | None, Query()] = None,
 ) -> AnalysisListResponse:
     """List analyses belonging to a project with pagination."""
     require_delegated_project(context, project_id)
@@ -137,6 +143,36 @@ def list_analyses(
         limit=limit,
         offset=offset,
         status=analysis_status,
+        repository_id=repository_id,
+    )
+
+
+@router.get(
+    "/{analysis_id}/diagnostics",
+    response_model=AnalysisDiagnosticListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_analysis_diagnostics(
+    analysis_id: UUID,
+    project_id: UUID,
+    context: Annotated[DelegatedRequestContext, Depends(get_delegated_context)],
+    service: Annotated[
+        AnalysisLifecycleService, Depends(get_analysis_lifecycle_service)
+    ],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    severity: Annotated[DiagnosticSeverity | None, Query()] = None,
+    stage: Annotated[str | None, Query()] = None,
+) -> AnalysisDiagnosticListResponse:
+    """List paginated diagnostics for an analysis run."""
+    require_delegated_project(context, project_id)
+    return service.list_diagnostics(
+        analysis_id=analysis_id,
+        project_id=project_id,
+        limit=limit,
+        offset=offset,
+        severity=severity,
+        stage=stage,
     )
 
 
