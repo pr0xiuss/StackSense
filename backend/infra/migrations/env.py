@@ -5,6 +5,25 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from backend.platform.analysis.architecture.persistence import (
+    ArchitectureConflictEvidenceModel,
+    ArchitectureConflictModel,
+    ArchitectureEntityEvidenceModel,
+    ArchitectureEntityModel,
+    ArchitectureEvidenceModel,
+    ArchitectureRelationshipEvidenceModel,
+    ArchitectureRelationshipModel,
+    ArchitectureUnresolvedEvidenceModel,
+    ArchitectureUnresolvedRelationshipModel,
+    ArchitectureVersionModel,
+)
+from backend.platform.analysis.infra.lifecycle_model import (
+    AnalysisDiagnosticModel,
+    AnalysisEventModel,
+    AnalysisJobModel,
+    AnalysisModel,
+    AnalysisStageModel,
+)
 from backend.platform.dependency_injection import get_database_settings
 from backend.platform.identity.infra.user_model import (
     UserCredentialModel,
@@ -28,6 +47,21 @@ _ = (
     RepositoryModel,
     UserModel,
     UserCredentialModel,
+    AnalysisModel,
+    AnalysisJobModel,
+    AnalysisStageModel,
+    AnalysisEventModel,
+    AnalysisDiagnosticModel,
+    ArchitectureVersionModel,
+    ArchitectureEntityModel,
+    ArchitectureRelationshipModel,
+    ArchitectureEvidenceModel,
+    ArchitectureUnresolvedRelationshipModel,
+    ArchitectureConflictModel,
+    ArchitectureEntityEvidenceModel,
+    ArchitectureRelationshipEvidenceModel,
+    ArchitectureUnresolvedEvidenceModel,
+    ArchitectureConflictEvidenceModel,
 )
 
 target_metadata = Base.metadata

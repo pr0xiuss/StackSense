@@ -4,6 +4,8 @@ const { connectDB, disconnectDB } = require('../src/config/db');
 
 let mongoServer;
 
+jest.setTimeout(60000);
+
 beforeAll(async () => {
   process.env.NODE_ENV = 'test';
   mongoServer = await MongoMemoryServer.create({

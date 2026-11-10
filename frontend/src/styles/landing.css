@@ -309,7 +309,7 @@
 }
 
 /* Nodes */
-.arch-node {
+.arch-preview-wrapper .arch-node {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -325,13 +325,13 @@
   box-sizing: border-box;
 }
 
-.arch-node:hover {
+.arch-preview-wrapper .arch-node:hover {
   border-color: var(--border-medium);
   transform: translateY(-2px);
   background: var(--surface-elevated);
 }
 
-.arch-node-name {
+.arch-preview-wrapper .arch-node-name {
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-primary);
@@ -339,7 +339,7 @@
   white-space: nowrap;
 }
 
-.arch-node-tech {
+.arch-preview-wrapper .arch-node-tech {
   font-family: var(--font-mono);
   font-size: 0.65rem;
   color: var(--text-muted);

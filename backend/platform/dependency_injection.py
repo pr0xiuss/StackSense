@@ -3,6 +3,7 @@
 from collections.abc import Generator
 from functools import lru_cache
 
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from backend.infra.postgres import Database
@@ -26,6 +27,11 @@ def get_database_settings() -> DatabaseSettings:
 def get_database() -> Database:
     """Provide the PostgreSQL database infrastructure."""
     return Database(get_database_settings())
+
+
+def get_database_engine() -> Engine:
+    """Provide the SQLAlchemy engine from the database infrastructure."""
+    return get_database()._engine
 
 
 def get_database_session() -> Generator[Session]:

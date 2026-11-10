@@ -1,11 +1,84 @@
 """Shared pytest configuration for StackSense tests."""
 
+# ruff: noqa: E402 - backend imports must follow the Python 3.14 client shim.
+
+import asyncio
 from collections.abc import Callable, Generator
 from datetime import UTC, datetime
 from uuid import UUID
 
+import anyio.to_thread
+import fastapi.testclient
+import httpx
 import pytest
-from fastapi.testclient import TestClient
+
+
+async def _run_sync_inline_for_python314(
+    function: Callable[..., object], *args: object, **kwargs: object
+) -> object:
+    """Avoid AnyIO's CPython 3.14 worker-thread deadlock in ASGI tests."""
+    kwargs.pop("abandon_on_cancel", None)
+    kwargs.pop("cancellable", None)
+    kwargs.pop("limiter", None)
+    return function(*args)
+
+
+class _Python314TestClient:
+    """Synchronous facade over HTTPX's ASGI transport for CPython 3.14 tests.
+
+    Starlette 1.10's blocking-portal TestClient can deadlock on CPython 3.14
+    with both httpx and httpx2. These tests use ordinary buffered HTTP requests,
+    so running the supported async ASGI transport to completion is sufficient.
+    """
+
+    __test__ = False
+
+    def __init__(self, application: object, **_: object) -> None:
+        self.app = application
+        self.cookies = httpx.Cookies()
+
+    def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+        async def send() -> httpx.Response:
+            transport = httpx.ASGITransport(app=self.app)  # type: ignore[arg-type]
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+                cookies=self.cookies,
+            ) as client:
+                response = await client.request(method, url, **kwargs)  # type: ignore[arg-type]
+                self.cookies.update(client.cookies)
+                return response
+
+        return asyncio.run(send())
+
+    def get(self, url: str, **kwargs: object) -> httpx.Response:
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs: object) -> httpx.Response:
+        return self.request("POST", url, **kwargs)
+
+    def put(self, url: str, **kwargs: object) -> httpx.Response:
+        return self.request("PUT", url, **kwargs)
+
+    def patch(self, url: str, **kwargs: object) -> httpx.Response:
+        return self.request("PATCH", url, **kwargs)
+
+    def delete(self, url: str, **kwargs: object) -> httpx.Response:
+        return self.request("DELETE", url, **kwargs)
+
+    def close(self) -> None:
+        return None
+
+    def __enter__(self) -> _Python314TestClient:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+anyio.to_thread.run_sync = _run_sync_inline_for_python314  # type: ignore[assignment]
+fastapi.testclient.TestClient = _Python314TestClient  # type: ignore[misc]
+TestClient = _Python314TestClient
 
 from backend.api.app import app
 from backend.platform.dependency_injection import get_database

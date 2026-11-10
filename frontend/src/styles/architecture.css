@@ -1,0 +1,414 @@
+/* ==========================================================================
+   StackSense Architecture Model Page & Canvas Styling
+   Matches dark theme design tokens from index.css & analysis.css
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Model Header & Summary
+   -------------------------------------------------------------------------- */
+.arch-header-card {
+  margin-bottom: 1.5rem;
+}
+
+.arch-banner-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.arch-banner-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+  flex: 1;
+  min-width: 280px;
+}
+
+.arch-model-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary, #F8FAFC);
+  letter-spacing: -0.02em;
+}
+
+.arch-model-subtitle {
+  font-size: 0.825rem;
+  color: var(--text-muted, #64748B);
+  margin-top: 0.25rem;
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.arch-counts-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.arch-count-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface-card, #111927);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm, 6px);
+  padding: 0.4rem 0.85rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary, #94A3B8);
+}
+
+.arch-count-num {
+  font-weight: 700;
+  color: var(--text-primary, #F8FAFC);
+  font-family: var(--font-mono, monospace);
+}
+
+/* --------------------------------------------------------------------------
+   Overview Layout: Bounded Canvas & Inspector Split
+   -------------------------------------------------------------------------- */
+.arch-overview-split {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .arch-overview-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.arch-canvas-container {
+  background: var(--surface-card, #111927);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 10px);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-card, 0 10px 30px -5px rgba(0, 0, 0, 0.5));
+}
+
+.arch-canvas-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.arch-canvas-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.arch-canvas-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  min-width: 0;
+  color: var(--text-secondary, #94A3B8);
+  font-size: 0.775rem;
+}
+
+.arch-focus-controls,
+.arch-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.arch-focus-controls {
+  flex: 1 1 18rem;
+  justify-content: flex-end;
+}
+
+.arch-zoom-controls {
+  flex: 0 0 auto;
+}
+
+.arch-connector-count {
+  display: block;
+  min-width: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.arch-canvas-controls button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border-medium, rgba(255, 255, 255, 0.14));
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-elevated, #162032);
+  color: var(--text-primary, #F8FAFC);
+  cursor: pointer;
+}
+
+.arch-canvas-controls button:hover,
+.arch-canvas-controls button:focus-visible {
+  border-color: var(--accent-secondary, #38BDF8);
+  outline: none;
+}
+
+.arch-canvas-controls .arch-focus-reset {
+  flex: 0 0 4.5rem;
+  width: 4.5rem;
+  padding-inline: 0.7rem;
+  border-color: rgba(56, 189, 248, 0.45);
+  color: var(--accent-secondary, #38BDF8);
+}
+
+.arch-canvas-controls .arch-focus-reset:disabled {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.arch-zoom-value {
+  min-width: 2.8rem;
+  text-align: center;
+  font-family: var(--font-mono, monospace);
+}
+
+.arch-window-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-full, 9999px);
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #A5B4FC;
+}
+
+.arch-canvas-viewport {
+  width: 100%;
+  height: min(68vh, 720px);
+  min-height: 540px;
+  background: radial-gradient(circle at 50% 50%, #0d1420 0%, #080c14 100%);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  border-radius: var(--radius-sm, 6px);
+  overflow: auto;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+  position: relative;
+  contain: layout paint;
+}
+
+@media (max-width: 1280px) {
+  .arch-canvas-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .arch-canvas-controls {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 720px) {
+  .arch-canvas-controls {
+    justify-content: flex-start;
+    padding-bottom: 0.2rem;
+  }
+
+  .arch-focus-controls {
+    flex-basis: 100%;
+    justify-content: space-between;
+  }
+
+  .arch-connector-count {
+    text-align: left;
+  }
+}
+
+.arch-svg-canvas {
+  min-width: 600px;
+  min-height: 520px;
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Deterministic SVG Nodes & Connectors
+   -------------------------------------------------------------------------- */
+.arch-map-node {
+  cursor: pointer;
+  outline: none;
+  opacity: 1;
+  transition: opacity 120ms ease;
+}
+
+.arch-map-node:focus-visible rect {
+  stroke: var(--accent-secondary, #38BDF8);
+  stroke-width: 2.5px;
+}
+
+.arch-map-node rect {
+  transition: fill 120ms ease, stroke 120ms ease;
+}
+
+.arch-map-node:hover rect {
+  filter: brightness(1.15);
+}
+
+.arch-map-node.selected rect {
+  stroke: var(--accent-secondary, #38BDF8);
+  stroke-width: 2.5px;
+}
+
+.arch-map-node.muted {
+  opacity: 0.2;
+}
+
+.arch-map-node-title {
+  fill: #F8FAFC;
+  font-family: var(--font-sans, sans-serif);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.arch-map-node-subtitle {
+  fill: #94A3B8;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+
+.arch-map-node-content {
+  pointer-events: none;
+}
+
+.arch-connector {
+  stroke: rgba(148, 163, 184, 0.35);
+  stroke-width: 1.5px;
+  fill: none;
+  opacity: 1;
+  transition: stroke 120ms ease, opacity 120ms ease;
+}
+
+.arch-connector.active {
+  stroke: #38BDF8;
+  stroke-width: 2px;
+}
+
+.arch-connector.muted {
+  opacity: 0.06;
+}
+
+/* --------------------------------------------------------------------------
+   Inspector Panel
+   -------------------------------------------------------------------------- */
+.arch-inspector-panel {
+  background: var(--surface-card, #111927);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 10px);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  box-shadow: var(--shadow-card, 0 10px 30px -5px rgba(0, 0, 0, 0.5));
+}
+
+.arch-inspector-header {
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  padding-bottom: 1rem;
+}
+
+.arch-inspector-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary, #F8FAFC);
+  margin-bottom: 0.4rem;
+  word-break: break-word;
+}
+
+.arch-inspector-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.arch-inspector-section-label {
+  font-size: 0.75rem;
+  color: var(--text-muted, #64748B);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.arch-metadata-box {
+  background: var(--surface-elevated, #162032);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  border-radius: var(--radius-sm, 6px);
+  padding: 0.75rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.775rem;
+  color: var(--text-secondary, #94A3B8);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.arch-metadata-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.arch-metadata-row:last-child {
+  border-bottom: none;
+}
+
+.arch-metadata-key {
+  color: #94A3B8;
+  word-break: break-all;
+}
+
+.arch-metadata-value {
+  color: #F8FAFC;
+  text-align: right;
+  word-break: break-all;
+}
+
+/* --------------------------------------------------------------------------
+   Collection Tables
+   -------------------------------------------------------------------------- */
+.arch-table-card {
+  background: var(--surface-card, #111927);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 10px);
+  padding: 1.5rem;
+}
+
+.arch-search-input {
+  background: var(--surface-elevated, #162032);
+  border: 1px solid var(--border-medium, rgba(255, 255, 255, 0.14));
+  color: var(--text-primary, #F8FAFC);
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 0.85rem;
+  outline: none;
+  min-width: 220px;
+  transition: border-color var(--transition-fast, 150ms ease);
+}
+
+.arch-search-input:focus {
+  border-color: var(--accent-secondary, #38BDF8);
+}
+

@@ -1,0 +1,8 @@
+[
+  {"framework": "django", "entity_kind": "application"},
+  {"framework": "flask", "entity_kind": "application"},
+  {"framework": "fastapi", "entity_kind": "application"},
+  {"framework": "express", "entity_kind": "application"},
+  {"framework": "nestjs", "entity_kind": "application"},
+  {"framework": "nextjs", "entity_kind": "frontend_application"}
+]

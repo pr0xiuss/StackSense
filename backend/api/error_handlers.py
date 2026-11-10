@@ -62,6 +62,21 @@ def register_exception_handlers(application: FastAPI) -> None:
             "server_path_not_allowed": 403,
             "server_path_not_found": 404,
             "max_file_count_exceeded": 422,
+            # Phase 3 Module 1 Analysis Lifecycle Errors
+            "analysis_not_found": 404,
+            "analysis_already_exists": 409,
+            "analysis_state_conflict": 409,
+            "analysis_cancel_not_allowed": 409,
+            "analysis_cancelled": 409,
+            "analysis_input_invalid": 422,
+            "analysis_integrity_violation": 500,
+            "analysis_timeout": 504,
+            "artifact_content_unavailable": 500,
+            "unsupported_capability": 422,
+            "analysis_configuration_invalid": 422,
+            "analysis_access_denied": 403,
+            "analysis_queue_unavailable": 503,
+            "architecture_result_not_found": 404,
         }
 
         status_code = status_codes.get(

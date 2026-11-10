@@ -1,0 +1,20 @@
+[Unit]
+Description=StackSense analysis recovery scheduler
+Documentation=file://%h/dev/projects/StackSense/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/projects/StackSense
+EnvironmentFile=-%h/dev/projects/StackSense/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/stacksense
+ExecStart=%h/dev/projects/StackSense/venv/bin/celery -A backend.worker.celery_app:celery_app beat --loglevel=info --schedule=%h/.local/state/stacksense/celerybeat-schedule
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target

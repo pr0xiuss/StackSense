@@ -122,6 +122,44 @@ API documentation:
 http://127.0.0.1:8000/docs
 ```
 
+## 7. Run Analysis Workers
+
+Analysis requests are persisted and queued by FastAPI, but execution requires a
+Celery worker. Celery Beat runs the M1 recovery schedule that republishes jobs
+whose initial broker delivery was lost. For a foreground development session:
+
+```bash
+./venv/bin/celery -A backend.worker.celery_app:celery_app worker --loglevel=info
+./venv/bin/celery -A backend.worker.celery_app:celery_app beat --loglevel=info
+```
+
+On Linux with systemd, the repository provides user services that keep both
+processes running and restart them after failures:
+
+```bash
+systemctl --user link "$PWD/ops/systemd/stacksense-celery-worker.service"
+systemctl --user link "$PWD/ops/systemd/stacksense-celery-beat.service"
+systemctl --user daemon-reload
+systemctl --user enable --now stacksense-celery-worker.service stacksense-celery-beat.service
+```
+
+Do not also run foreground workers after enabling these services. Check them
+with `systemctl --user status stacksense-celery-worker.service` and follow logs
+with `journalctl --user -u stacksense-celery-worker.service -f`.
+
+Syntax extraction uses a bounded pool of reusable, OS-isolated parser children.
+The defaults are four parser children per active analysis and 64 files before a
+child is recycled. Smaller worker hosts can lower `PARSER_WORKER_COUNT`; capacity
+planning should account for `PARSER_MAX_MEMORY_MB` per concurrent parser child
+and `ANALYSIS_WORKER_CONCURRENCY` simultaneous analyses. Reducing the pool size
+changes throughput only—it does not reduce extraction coverage.
+
+Artifact content is fetched from the authorized Express internal API through a
+reused HTTP connection pool. `PLATFORM_ARTIFACT_FETCH_CONCURRENCY` defaults to
+eight bounded concurrent reads per active analysis. Lower it when the Express
+service or object store has a tighter connection budget; content size and hash
+validation remain mandatory regardless of the concurrency setting.
+
 ---
 
 ### Frontend

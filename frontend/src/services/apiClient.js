@@ -253,6 +253,205 @@ export async function apiRequest(endpoint, options = {}) {
   return data;
 }
 
+/**
+ * Stream SSE events using authenticated fetch + ReadableStream.
+ *
+ * @param {string} endpoint - API path, e.g. '/analyses/:id/events?project_id=...'
+ * @param {object} options
+ * @param {AbortSignal} [options.signal]
+ * @param {HeadersInit} [options.headers]
+ * @param {boolean} [options.skipAuth]
+ * @param {function(Response): void} [options.onOpen]
+ * @param {function({ event: string, id: string|null, data: any }): void} [options.onMessage]
+ * @param {function(Error): void} [options.onError]
+ * @param {function(): void} [options.onClose]
+ * @returns {{ abort: (reason?: any) => void }}
+ */
+export function apiStream(endpoint, options = {}) {
+  const url = endpoint.startsWith('http')
+    ? endpoint
+    : endpoint.startsWith('/api/')
+      ? endpoint
+      : endpoint.startsWith('/')
+        ? `/api/v1${endpoint}`
+        : `/api/v1/${endpoint}`;
+
+  const controller = new AbortController();
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      controller.abort(options.signal.reason);
+    } else {
+      options.signal.addEventListener('abort', () => controller.abort(options.signal.reason), { once: true });
+    }
+  }
+
+  const run = async (retry = false) => {
+    if (controller.signal.aborted) return;
+
+    const headers = new Headers(options.headers || {});
+    if (!options.skipAuth) {
+      const token = tokenStorage.getAccessToken();
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+    }
+    if (!headers.has('Accept')) {
+      headers.set('Accept', 'text/event-stream');
+    }
+
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      });
+    } catch (netErr) {
+      if (controller.signal.aborted) return;
+      const error = new ApiError(
+        'Network error connecting to event stream.',
+        0,
+        'network_error'
+      );
+      options.onError?.(error);
+      return;
+    }
+
+    // 401 retry with token rotation
+    if (response.status === 401 && !retry && !options.skipAuth) {
+      try {
+        await refreshAccessToken();
+        return run(true);
+      } catch (refreshErr) {
+        if (!controller.signal.aborted) {
+          options.onError?.(refreshErr);
+        }
+        return;
+      }
+    }
+
+    if (!response.ok) {
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        try {
+          data = await response.text();
+        } catch {
+          data = null;
+        }
+      }
+      const errorPayload = data?.error;
+      const message =
+        errorPayload?.message ||
+        data?.detail ||
+        `Stream failed with status ${response.status}`;
+      const code =
+        errorPayload?.code ||
+        (response.status === 403 ? 'forbidden' : response.status === 404 ? 'not_found' : 'api_error');
+      const details = errorPayload?.details || data?.detail || null;
+      const apiErr = new ApiError(message, response.status, code, details);
+      if (!controller.signal.aborted) {
+        options.onError?.(apiErr);
+      }
+      return;
+    }
+
+    options.onOpen?.(response);
+
+    if (!response.body) {
+      options.onClose?.();
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    const processBlock = (block) => {
+      if (!block.trim()) return;
+      const lines = block.split(/\r?\n/);
+      let event = 'message';
+      let id = null;
+      const dataLines = [];
+
+      for (const line of lines) {
+        if (line.startsWith(':')) {
+          // SSE comment/heartbeat
+          continue;
+        }
+        if (line.startsWith('event:')) {
+          event = line.slice(6).trim();
+        } else if (line.startsWith('id:')) {
+          id = line.slice(3).trim();
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+
+      if (dataLines.length > 0) {
+        const rawData = dataLines.join('\n');
+        let parsed = rawData;
+        try {
+          parsed = JSON.parse(rawData);
+        } catch {
+          // Keep raw string
+        }
+        options.onMessage?.({ event, id, data: parsed });
+      }
+    };
+
+    try {
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split(/\r?\n\r?\n/);
+        buffer = parts.pop() || '';
+
+        for (const block of parts) {
+          processBlock(block);
+        }
+      }
+
+      // Flush remainder if any
+      if (buffer.trim()) {
+        processBlock(buffer);
+      }
+
+      options.onClose?.();
+    } catch (readErr) {
+      if (!controller.signal.aborted) {
+        options.onError?.(readErr);
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Ignored
+      }
+    }
+  };
+
+  run().catch((err) => {
+    if (!controller.signal.aborted) {
+      options.onError?.(err);
+    }
+  });
+
+  return {
+    abort: (reason) => {
+      try {
+        controller.abort(reason);
+      } catch {
+        // Ignored
+      }
+    },
+  };
+}
+
 export const apiClient = {
   get(endpoint, options = {}) {
     return apiRequest(endpoint, { ...options, method: 'GET' });
@@ -272,5 +471,9 @@ export const apiClient = {
 
   delete(endpoint, options = {}) {
     return apiRequest(endpoint, { ...options, method: 'DELETE' });
+  },
+
+  stream(endpoint, options = {}) {
+    return apiStream(endpoint, options);
   },
 };

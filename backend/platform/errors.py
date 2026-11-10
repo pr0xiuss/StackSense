@@ -490,3 +490,268 @@ class ServerPathNotFoundError(StackSenseError):
             message=message,
             category=ErrorCategory.VALIDATION,
         )
+
+
+# --- Analysis Lifecycle and Execution Errors (Phase 3 Module 1) ---
+
+
+class AnalysisError(StackSenseError):
+    """Base exception for analysis execution and lifecycle failures."""
+
+    def __init__(
+        self,
+        *,
+        code: str = "analysis_error",
+        message: str = "An analysis error occurred.",
+        category: ErrorCategory = ErrorCategory.INTERNAL,
+        severity: ErrorSeverity = ErrorSeverity.ERROR,
+        scope: ErrorScope = ErrorScope.REQUEST,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code=code,
+            message=message,
+            category=category,
+            severity=severity,
+            scope=scope,
+            details=details,
+        )
+
+
+class AnalysisNotFoundError(AnalysisError):
+    """Raised when an analysis record does not exist or is not accessible."""
+
+    def __init__(
+        self,
+        message: str = "Analysis not found in the specified project.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_not_found",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class AnalysisAlreadyExistsError(AnalysisError):
+    """Raised when an analysis with the same identifier already exists."""
+
+    def __init__(
+        self,
+        message: str = (
+            "An analysis with this identifier or idempotency key already exists."
+        ),
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_already_exists",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class AnalysisStateConflictError(AnalysisError):
+    """Raised when an invalid state transition or concurrent state mutation occurs."""
+
+    def __init__(
+        self,
+        message: str = "Invalid analysis state transition.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_state_conflict",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class AnalysisInputError(AnalysisError):
+    """Raised when analysis input data or prerequisites are missing or invalid."""
+
+    def __init__(
+        self,
+        message: str = "Analysis input specification is invalid or incomplete.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_input_invalid",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class AnalysisAccessDeniedError(AnalysisError):
+    """Raised when delegated analysis access does not match request scope."""
+
+    def __init__(
+        self,
+        message: str = "Delegated analysis access is not permitted.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_access_denied",
+            message=message,
+            category=ErrorCategory.AUTHORIZATION,
+            details=details,
+        )
+
+
+class AnalysisQueueUnavailableError(AnalysisError):
+    """Raised when a durable analysis cannot be dispatched to the worker queue."""
+
+    def __init__(
+        self,
+        message: str = "Analysis was saved but could not be dispatched.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_queue_unavailable",
+            message=message,
+            category=ErrorCategory.INTERNAL,
+            details=details,
+        )
+
+
+class AnalysisIntegrityError(AnalysisError):
+    """Raised when ownership chain or snapshot verification fails."""
+
+    def __init__(
+        self,
+        message: str = (
+            "Analysis snapshot ownership chain or integrity verification failed."
+        ),
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_integrity_violation",
+            message=message,
+            category=ErrorCategory.INTERNAL,
+            severity=ErrorSeverity.CRITICAL,
+            details=details,
+        )
+
+
+class AnalysisCancellationNotAllowedError(AnalysisError):
+    """Raised when cancellation is requested for an uncancellable analysis."""
+
+    def __init__(
+        self,
+        message: str = "Analysis cannot be cancelled in its current state.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_cancel_not_allowed",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class AnalysisCancelledError(AnalysisError):
+    """Raised during cooperative cancellation at an execution checkpoint."""
+
+    def __init__(
+        self,
+        message: str = "Analysis execution was cancelled.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_cancelled",
+            message=message,
+            category=ErrorCategory.INTERNAL,
+            severity=ErrorSeverity.WARNING,
+            details=details,
+        )
+
+
+class AnalysisTimeoutError(AnalysisError):
+    """Raised when analysis or stage execution duration exceeds configured limits."""
+
+    def __init__(
+        self,
+        message: str = "Analysis execution exceeded duration limit.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_timeout",
+            message=message,
+            category=ErrorCategory.INTERNAL,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class ArtifactContentUnavailableError(AnalysisError):
+    """Raised when required artifact content cannot be retrieved from storage."""
+
+    def __init__(
+        self,
+        message: str = "Artifact content unavailable from storage.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="artifact_content_unavailable",
+            message=message,
+            category=ErrorCategory.INTERNAL,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class UnsupportedCapabilityError(AnalysisError):
+    """Raised when a requested analysis capability is not supported."""
+
+    def __init__(
+        self,
+        message: str = "Requested analysis capability is not supported.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="unsupported_capability",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class AnalysisConfigurationError(AnalysisError):
+    """Raised when analysis configuration parameters are invalid."""
+
+    def __init__(
+        self,
+        message: str = "Analysis configuration is invalid.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="analysis_configuration_invalid",
+            message=message,
+            category=ErrorCategory.CONFIGURATION,
+            severity=ErrorSeverity.ERROR,
+            details=details,
+        )
+
+
+class ArchitectureResultNotFoundError(AnalysisError):
+    """Raised when no published Architecture Model exists in project scope."""
+
+    def __init__(
+        self,
+        message: str = "Published Architecture Model not found.",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            code="architecture_result_not_found",
+            message=message,
+            category=ErrorCategory.VALIDATION,
+            details=details,
+        )

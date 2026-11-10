@@ -1,439 +1,788 @@
-# PROJECT_CONTEXT.md — StackSense Engineering & Migration Context
+# PROJECT_CONTEXT.md — StackSense Engineering Context
 
-> **Authoritative Handoff Document**  
-> *Maintained under `.agents/skills/planning/SKILL.md` and `.agents/skills/implementing/SKILL.md`*  
-> *Last Updated: 2026-10-25*
-
----
+Last reconciled: 2026-11-10
+Current branch: `feature_mannan`
 
 ## 1. Project Overview
 
-StackSense is an enterprise-grade PostgreSQL workload intelligence and repository analysis platform.  
-The current engineering milestone is **Phase 2: Project & Repository Platform (MERN Backend Migration)**.
+StackSense is a software repository intelligence and architecture analysis
+platform. Express/MongoDB owns the platform plane: users, JWT authentication,
+projects, project RBAC, repository registration, immutable revisions and
+artifact metadata. Python/FastAPI/PostgreSQL owns the analysis plane: lifecycle,
+execution, deterministic inspection/IR, canonical Architecture Models and
+published analysis results. The services communicate only through authenticated
+internal APIs and never read each other's databases.
 
-The reference implementation of Phase 2 was initially constructed and verified in Python/FastAPI (`backend/`). A complete JavaScript/Express/MongoDB migration is being implemented in `express/` to deliver the MERN architecture stack, alongside the existing React frontend (`frontend/`).
+Phase 3 M1/F1 through M4/Architecture Model v1 and M5 frontend integration are
+implemented, independently reviewed, corrected, verified and frozen. M6
+cross-service validation, security checks, performance verification and phase
+closeout are complete. Phase 3 is **FROZEN / COMPLETE**.
 
-### Authoritative Architecture References
-- **`master.txt` (Section 0)**: Current Architectural Baseline & Superseding Decisions.
-  - Project is the primary product, domain, ownership, and authorization boundary (`User -> Project -> Repository -> Ingestion`).
-  - No `Organization` entity exists as a domain boundary.
-  - Resource identities are strictly UUID v4.
-  - Role-Based Access Control (RBAC) operates at the Project scope (`OWNER`, `ADMIN`, `DEVELOPER`, `VIEWER`).
-- **`master.txt` (Section 25.11)**: Phase 2 — Project & Repository Platform specifications.
-- **Reference Implementation**: `backend/platform/identity/`, `backend/platform/projects/`, `backend/platform/repository/`, `backend/api/v1/`.
+### 1.1 Authoritative sources
 
----
+- `master.txt`, especially Sections 9–12, 25.13, Appendices C/E/F/H.
+- `docs/architecture/adr/0001-express-python-integration.md`.
+- Frozen F1, F2, F3 and Architecture Model v1 contracts under
+  `docs/architecture/contracts/`.
+- Actual Express, FastAPI and React source and tests.
 
-## 2. Global Constraints & Architectural Invariants
+### 1.2 Verified repository state
 
-1. **Identifier Standard**: All entity IDs (`id` / `_id`, `project_id`, `repository_id`, `ingestion_id`, `user_id`, `token_id`) MUST be valid RFC 4122 UUID v4 strings. Serialized JSON outputs must expose `id` (never expose raw MongoDB ObjectId or unformatted `_id`).
-2. **Project-First Isolation**: Projects are independent authorization boundaries. Access to one project never implicitly grants access to another project or its repositories.
-3. **No Organization Entity**: No `Organization` or `organization_id` models, routes, or fields may be introduced.
-4. **Ownership Model**: Project ownership is determined strictly via `ProjectAccess` records (`role = 'OWNER'`), not an `owner_id` column on the `Project` model.
-5. **No Python Backend Modifications**: The Python backend (`backend/`) is complete, frozen, and serves strictly as an immutable reference implementation.
-6. **Error Contract**: Express endpoints must return structured JSON error payloads matching:
-   ```json
-   {
-     "error": {
-       "code": "error_code_snake_case",
-       "message": "Human readable message",
-       "details": {}
-     }
-   }
-   ```
-7. **Canonical Ingestion Route**: The canonical ingestion endpoint hierarchy is strictly nested:
-   `/api/v1/projects/:projectId/repositories/:repositoryId/ingestions`
-   Shorthand un-nested routes (e.g. `/repositories/:repositoryId/ingestions`) are prohibited.
-8. **Authentication Security Boundary**: Production authentication is exclusively `Authorization: Bearer <access_token>`. Any test-only authentication seams (such as `x-user-id` header injection) are strictly guarded and prohibited in production environments (`NODE_ENV === 'production'`).
-9. **No Silent Password Truncation**: Passwords must not be silently truncated. Passwords exceeding the supported bcrypt byte length (72 UTF-8 bytes) must be explicitly rejected with a 422 error.
+- Branch: `feature_mannan`.
+- The worktree contains the verified Phase 3 implementation and final remediation
+  awaiting its completion commit. All existing changes must be preserved.
+- React 18/Vite uses JavaScript/JSX, a small hash/path router in `App.jsx`, the
+  central `apiClient.js`, `AuthContext`, feature services, and focused Vitest /
+  React Testing Library coverage. There is no React Router, global state
+  library, visualization dependency, ESLint or TypeScript configuration.
+- Existing route pages are Landing, Auth, Projects Dashboard and Repository
+  Detail. Repository Detail already exposes Ingestion, Revisions and Artifacts.
+- The existing design is a responsive dark interface using tokens in
+  `styles/index.css`, a 1200–1240px content width, `DashboardHeader`, dark
+  elevated cards, cyan/indigo accents, status pills, tables, tabs, modals and
+  shared accessible action menus.
+- Vite sends `/api` only to Express on port 5000. Browser JWTs are Express
+  credentials and cannot authenticate directly to FastAPI.
+- FastAPI analysis and Architecture Model routes require `X-Service-Token` plus
+  delegated actor, role and project headers. ADR-0001 requires Express to
+  authenticate/RBAC-check users and relay those calls; browsers must never see
+  the service credential.
 
----
+## 2. Global Constraints
+
+1. Preserve frozen `master.txt`, F1, F2, F3 and Architecture Model semantics.
+2. Express remains the only browser-facing API and JWT/RBAC authority. FastAPI
+   remains analysis authority. M5 may add the ADR-approved proxy/relay, not move
+   analysis persistence or logic into Express.
+3. Never expose internal service tokens, storage keys, raw source, tracebacks,
+   credentials or unrestricted diagnostic details to the browser.
+4. OWNER, ADMIN and DEVELOPER may create/cancel analyses; VIEWER is read-only.
+   UI visibility is convenience only; Express and FastAPI both enforce access.
+5. Frontend lifecycle state is derived from canonical backend states. It must
+   retain `partial`, `timeout`, `cancel_requested` and
+   `completed_with_warnings`; it must not invent backend state.
+6. M5 displays the canonical relational Architecture Model. It must not create
+   a graph projection, traversal API, Neo4j model, editable architecture truth,
+   AI interpretation or Phase 4 dependency explorer.
+7. Preserve the existing UI language and CSS system. Extend existing cards,
+   tabs, tables, buttons, feedback, loading, empty and error patterns; do not
+   redesign Landing, Auth, Dashboard or Repository workflows.
+8. Reuse `apiClient.js`; add streaming capability without regressing its JWT
+   refresh concurrency, 401 retry or session-invalidity behavior.
+9. Collections use backend `limit`/`offset`; never fetch all Architecture Model
+   rows to simulate pagination or a complete graph in browser memory.
+10. M5 is JavaScript/JSX with centralized JSDoc contracts. A repository-wide
+    TypeScript migration is out of scope.
 
 ## 3. Phase Index
 
-| Phase | Description | Status | Reference / Location |
-| :--- | :--- | :--- | :--- |
-| **Phase 1** | Engineering Foundation & Architecture Invariants | Completed | `master.txt` §25.10 |
-| **Phase 2** | Project & Repository Platform (Python Reference) | Completed | `backend/` |
-| **Phase 2 (MERN)** | Project & Repository Platform (Express/Mongo Migration) | **Core migration complete; frontend capability completion planned** | `express/`, `frontend/` |
-| **Phase 3** | Source Understanding & AST Parsing Pipeline | Planned | `master.txt` §25.12+ |
+| Module | Status | Concise retained outcome |
+|---|---|---|
+| M1/F1 | **FROZEN / COMPLETE v1.0.0** | PostgreSQL analysis/job/stage/event/diagnostic lifecycle, Celery execution, REST/SSE, cancellation and M1-owned recovery. |
+| M2/F2 | **FROZEN / COMPLETE v1.0.0** | Deterministic inventory, detection, isolated Python/JS/TS/JSX/TSX parsing, framework enrichment and immutable non-persisted F2. |
+| M3/F3 | **FROZEN / COMPLETE v1.0.0** | Deterministic parser-neutral IR, document-local lexical semantics, diagnostics, validation and immutable non-persisted F3. |
+| M4 | **FROZEN / COMPLETE v1.0.0** | Canonical identity/model construction, validation, approved capacity limits, atomic publication and published-only query APIs. |
+| M5 | **FROZEN / COMPLETE** | Express analysis gateway plus React initiation, lifecycle, findings, result exploration and bounded Architecture Model visualization; final UI remediation is verified. |
+| M6 | **FROZEN / COMPLETE** | Cross-service/E2E, regression, security, production-build and performance validation completed; Phase 3 closed on 2026-11-10. |
 
----
+### 3.1 M1–M4 verification retained
 
-## 4. Current Phase Plan: Phase 2 MERN Migration
+The 2026-11-09 independent review corrected artifact integrity, manifest
+credential sanitization, static route semantics, retry timeout accounting, M3
+lexical resolution and bounded M4 result queries. Verification: full non-slow
+repository `731 passed, 3 skipped, 2 deselected`; real PostgreSQL integration
+`3 passed`; M3/M4 capacity benchmarks `6 passed in 366.88s`; focused Ruff,
+Black, Mypy, pip integrity and diff whitespace passed. The three skips are
+Windows-only parser isolation checks on Linux. Frozen public vocabularies did
+not change. Detailed normative behavior remains in the frozen contracts and
+tests rather than being duplicated here.
 
-### 4.1 Objectives
-Deliver an enterprise-grade Express/MongoDB implementation of Phase 2 satisfying all requirements of `master.txt` §25.11 and §0, transition the React frontend to proxy the Express backend on port 5000, and verify the complete vertical slice end-to-end.
+## 4. Current Phase Plan — Phase 3 Module 5
 
-### 4.2 Module Breakdown & Status
+**Status: FROZEN / COMPLETE.**
 
-```mermaid
-graph TD
-    M1[M1: Project Domain Foundation] --> M2[M2: Project Access & RBAC]
-    M2 --> M3[M3: Repository Domain & Registration]
-    M3 --> M4[M4: Ingestion, Validation & Storage]
-    M4 --> M5[M5: Identity & Authentication]
-    M5 --> M6[M6: Frontend API Transition & E2E Verification]
+The owner approved the complete four-batch plan and all four decisions in §6.1
+on 2026-11-09. The plan is now the implementation baseline. Material scope,
+contract, page-count or batch changes require explicit change control; routine
+execution evidence belongs in the ledger.
 
-    style M1 fill:#1e3a5f,stroke:#3b82f6,color:#fff
-    style M2 fill:#1e3a5f,stroke:#3b82f6,color:#fff
-    style M3 fill:#1e3a5f,stroke:#3b82f6,color:#fff
-    style M4 fill:#1e3a5f,stroke:#3b82f6,color:#fff
-    style M5 fill:#1e3a5f,stroke:#3b82f6,color:#fff
-    style M6 fill:#4c1d95,stroke:#a855f7,color:#fff,stroke-width:2px
+### 4.1 Objective and exact scope
+
+M5 completes the Phase 3 user-visible vertical slice:
+
+```text
+Authenticated user
+  -> repository revision
+  -> start analysis
+  -> lifecycle/status/progress/history
+  -> deterministic diagnostics and completeness
+  -> published Architecture Model summary
+  -> bounded entity/relationship/evidence/conflict exploration
 ```
 
-- **M1: Project Domain Foundation** — **STATUS: COMPLETED & VERIFIED** (15 tests passing)
-- **M2: Project Access & Resource Boundary (RBAC)** — **STATUS: COMPLETED & VERIFIED** (PR #20 merged)
-- **M3: Repository Domain & Registration** — **STATUS: COMPLETED & VERIFIED** (PR #22 reviewed)
-- **M4: Repository Ingestion, Validation & Storage** — **STATUS: COMPLETED & VERIFIED** (PR #22 reviewed, 22 suites / 268 tests passing)
-- **M5: Main Identity & Authentication** — **STATUS: COMPLETED & VERIFIED** (active-user correction verified; 28 suites / 372 tests passing)
-- **M6: Frontend API Transition & Verification** — **STATUS: COMPLETED & VERIFIED** (M6-B1 and M6-B2 complete; Phase 2 closeout remains separate)
+M5 owns the browser-facing Express-to-FastAPI delegation adapter, frontend API
+contracts/services, analysis UI, basic canonical-model visualization and M5
+tests. It does not own analysis execution, F2/F3 persistence, architecture
+identity, graph projection, arbitrary graph traversal, diagrams, AI, reports or
+editing published results.
 
-### 4.2.1 Current planning focus — frontend API coverage completion
+### 4.2 Verified reuse and gaps
 
-On 2026-10-25, a route-to-UI audit verified that the Express Phase 2 API is broader than the currently exposed React product surface. Authentication, project creation/listing/deletion, repository registration/listing/detail/deletion, ingestion creation/history, revision listing, and artifact listing are wired. The remaining planned frontend work is:
+Reusable frontend:
 
-1. Project metadata editing and truthful unsupported-auth affordances.
-2. Project collaborator listing/grant/role-change/revocation and correct role-derived action visibility.
-3. Repository metadata editing plus permission-aware create/update/delete actions.
-4. Single-ingestion status use, correct pending/processing polling, and complete pagination.
-5. Single-revision detail use and complete revision/artifact pagination.
-6. Consistent inline errors, success feedback, accessibility, and behavioral regression coverage.
+- `App.jsx` route parsing/protected views.
+- `DashboardHeader`, repository breadcrumb/header, tab and table patterns.
+- `apiClient.js` token attachment, refresh rotation and structured `ApiError`.
+- `useProjectRole` for role-derived visibility.
+- `repositoryService`, `ingestionService.listRevisions/getRevision`, existing
+  pagination, skeleton, retry, empty-state, feedback and modal styling.
+- Global design tokens and responsive patterns in existing CSS.
 
-Important verified constraints:
+Reusable backend:
 
-- Project responses contain no caller role. `ProjectCard.jsx` currently defaults a missing role to `OWNER`; the frontend must instead resolve the caller's role from `GET /projects/:projectId/access` using the authenticated user's UUID before exposing privileged actions.
-- Project-access responses now include the minimal related `username` alongside `project_id`, `user_id`, and `role`. The authenticated `GET /api/v1/users/lookup` endpoint supports validated active-user prefix search and returns only `id` and `username`; access mutations continue to use the established `user_id` contract.
-- Repository, ingestion, revision, and artifact collection endpoints are offset-paginated, while several current screens request only the first 50 records.
-- `GET .../ingestions/:ingestionId` and `GET .../revisions/:revisionId` have service methods but no runtime UI caller.
-- `/api/v1/health` is intentionally infrastructure-facing and does not require a product UI.
+- Express JWT authentication and `projectAuthorization` policy methods.
+- FastAPI create/list/get/cancel/SSE lifecycle routes and frozen DTOs.
+- M4 published version/entity/relationship/evidence/unresolved/conflict APIs.
+- Structured `{error:{code,message,details}}` contract on both services.
 
-Focused verification for this audit:
+Verified missing integration:
 
-- `cd frontend && npm test` — passed all configured frontend suites.
-- `cd express && npx jest --runInBand --detectOpenHandles tests/integration/projectAccessApi.test.js tests/integration/repositoryApi.test.js tests/integration/ingestionApi.test.js tests/integration/e2eVerticalSlice.test.js` — 4 suites and 66 tests passed. The first sandboxed attempt could not bind MongoMemoryServer (`listen EPERM`); the identical command passed with local-port permission.
+1. Express has no user-facing analysis proxy or SSE relay.
+2. React has no analysis or architecture services, routes or pages.
+3. FastAPI analysis history is project-scoped but cannot filter by repository,
+   which makes correct repository history pagination impossible.
+4. Diagnostics are persisted but have no public paginated query endpoint.
+5. Architecture evidence is pageable, but selected-entity evidence cannot be
+   queried directly without scanning evidence pages. The owner-approved
+   additive `entity_id` filter closes this gap in B1.
 
-### 4.2.2 Execution ledger — frontend API coverage completion
+### 4.3 Route/page inventory and page count
 
-- **Module:** Frontend API Coverage Completion
-- **Status:** Verified (implementation and automated checks complete; seeded browser visual smoke remains recommended)
-- **Completed work:** Added authoritative caller-role resolution from project access records; permission-aware project/repository/ingestion actions; project and repository metadata editing; UUID-based collaborator listing/grant/role-change/revocation; a shared portal-based keyboard action menu; repository batch loading; single-ingestion pending/processing polling; ingestion, revision, and artifact offset pagination; single-revision detail loading; retry/error/success states.
-- **Files created:** `frontend/src/services/projectAccessService.js`, `frontend/src/hooks/useProjectRole.js`, `frontend/src/components/common/ActionMenu.jsx`, `frontend/src/components/common/MetadataEditModal.jsx`, `frontend/src/components/dashboard/ProjectMembersModal.jsx`, and `frontend/tests/coverageCompletion.test.js`.
-- **Files modified:** Project/repository dashboard and detail components, ingestion/revision/artifact tabs, project service, dashboard/repository styles, frontend test script, and repository-management regression assertions. No Express or Python source changed.
-- **Tests added or updated:** Project-access and project-update service contracts; unresolved-role safety and role-gated actions; collaborator mutations; shared menu portal/keyboard/dismissal contracts; serialized active-ingestion polling; revision-detail integration; offset pagination and retry-state contracts; existing repository menu regression updated for the shared component.
-- **Verification:** `cd frontend && npm test` passed all four configured suites; `cd frontend && npm run build` passed; focused Express project-access/repository/ingestion/E2E command passed 4 suites and 66 tests; `git diff --check` passed. No lint, formatter, or type-check scripts are defined in `frontend/package.json`.
-- **Deviations:** Collaborators remain UUID-only because the backend exposes no user directory or identity-enriched access representation. Pagination infers `hasMore` from a full page because collection responses contain no total/count field. The shared action menu uses a body portal with viewport-aware fixed positioning to avoid table/card clipping.
-- **Outstanding work:** Run a seeded browser smoke test for visual placement and responsive behavior when a suitable authenticated local dataset is available. Human-readable collaborator lookup requires a separately approved backend contract and is not part of this module.
-- **Blockers:** None for the implemented frontend contract.
-- **Next action:** Perform the seeded browser smoke test, then proceed to Phase 2 closeout if accepted.
+M5 creates **exactly two new route-level pages**, modifies one existing page,
+and retains four existing pages. After M5 the application has **six route-level
+pages total**.
 
-### 4.2.3 Execution ledger — username-based collaborator resolution
+| Route | Page | Action |
+|---|---|---|
+| `#/` | `LandingPage` | Retain. |
+| `#/login`, `#/signup` | `AuthPage` | Retain. |
+| `#/projects` | `ProjectsDashboardPage` | Retain; no M5 redesign. |
+| `#/projects/:projectId/repositories/:repositoryId` | `RepositoryDetailPage` | Modify: add Analyses tab. |
+| `#/projects/:projectId/repositories/:repositoryId/analyses/:analysisId` | `AnalysisDetailPage` | **Create.** |
+| `#/projects/:projectId/repositories/:repositoryId/analyses/:analysisId/architecture` | `ArchitectureModelPage` | **Create.** |
 
-- **Module:** Username-Based Project Collaborator Resolution
-- **Status:** Verified (implementation and automated checks complete; seeded browser visual smoke remains recommended)
-- **Completed work:** Added an authenticated active-user username-prefix lookup with structured query validation and minimal `id`/`username` representations; enriched project access listings with usernames without changing grant, role-change, revoke, or RBAC behavior; replaced UUID entry/display in the collaborator modal with debounced username autocomplete, stale-response protection, explicit result selection, duplicate-member indication, and username-based rows while retaining resolved UUIDs internally for access mutations.
-- **Files created:** `express/src/services/userDirectoryService.js`, `express/src/middleware/userDirectoryValidate.js`, `express/src/controllers/userDirectoryController.js`, `express/src/routes/userDirectoryRoutes.js`, `express/tests/integration/userDirectoryApi.test.js`, and `frontend/src/services/userDirectoryService.js`.
-- **Files modified:** `express/src/routes/index.js`, `express/src/controllers/projectAccessController.js`, `express/tests/integration/projectAccessApi.test.js`, `frontend/src/components/dashboard/ProjectMembersModal.jsx`, `frontend/src/styles/dashboard.css`, and `frontend/tests/coverageCompletion.test.js`.
-- **Tests added or updated:** Authentication enforcement; active, case-insensitive prefix matching; minimal-field serialization; username and limit validation; username enrichment without email exposure; frontend lookup route encoding; selected-user UUID submission; and removal of UUID input/display contracts.
-- **Verification:** `cd frontend && npm test` passed all four configured suites; `cd frontend && npm run build` passed (63 modules); focused Express user-directory/project-access tests passed 2 suites and 40 tests; full Express regression passed 30 suites and 385 tests; `git diff --check` passed. The first sandboxed Express attempt could not bind MongoMemoryServer (`listen EPERM`); rerunning with local-port permission passed.
-- **Deviations:** The access-list representation was backward-compatibly enriched with nullable `username` because autocomplete alone cannot display existing collaborators by username. Existing access mutation request and response contracts remain unchanged.
-- **Outstanding work:** Seeded browser visual smoke for autocomplete placement and responsive behavior remains recommended.
-- **Blockers:** None.
-- **Next action:** Run the seeded browser smoke test when an authenticated local dataset is available, then proceed to Phase 2 closeout if accepted.
+`App.jsx` must match architecture and analysis routes before the existing broad
+repository route so nested URLs are not swallowed by the repository match.
+Start Analysis is a modal, not a third page.
 
-### 4.2.4 Execution ledger — collaborator self-management prevention
+### 4.4 Page layouts
 
-- **Module:** Project Collaborator Self-Management Prevention
-- **Status:** Verified
-- **Completed work:** Added a target-aware project authorization guard that preserves owner/admin management of other collaborators while rejecting self role changes and self revocation with the existing `403 project_access_denied` contract. The collaborator modal now renders the authenticated user's role as a read-only badge and omits both the role selector and Revoke action from the row marked `You`.
-- **Files modified:** `express/src/services/projectAuthorization.js`, `express/src/controllers/projectAccessController.js`, `express/tests/unit/projectAuthorization.test.js`, `express/tests/integration/projectAccessApi.test.js`, `frontend/src/components/dashboard/ProjectMembersModal.jsx`, and `frontend/tests/coverageCompletion.test.js`.
-- **Tests added or updated:** Target-aware authorization permits managing other members and rejects owner/admin self-management; API tests verify self role change and self revocation return 403 without mutating access; frontend contract coverage verifies self-management controls are not rendered.
-- **Verification:** `cd frontend && npm test` passed all four configured scripts; `cd frontend && npm run build` passed (63 modules); targeted Express authorization/project-access tests passed 2 suites and 48 tests; `git diff --check` passed.
-- **Deviations:** None.
-- **Outstanding work:** None for this safeguard.
-- **Blockers:** None.
-- **Next action:** Proceed with the existing seeded browser smoke recommendation or Phase 2 closeout.
+All layouts reuse `DashboardHeader`, `.container`, repository breadcrumbs,
+existing typography, cards, pills, buttons, tabs, tables and responsive rules.
 
----
+#### A. Existing Repository Detail — new Analyses tab
 
-### 4.3 Detailed Plan: Module 5 (Main Identity & Auth)
+```text
+DashboardHeader
+Projects > Project > Repository                         repository actions
+Repository title / description / repository status
+--------------------------------------------------------------------------
+Ingestion | Revisions | Artifacts | Analyses
 
-#### 4.3.1 Objectives & Invariants
-Implement a robust, cryptographically secure Identity & Authentication subsystem in Express matching the verified Python reference implementation:
-1. **Public self-registration** (`POST /api/v1/auth/register`): Returns 201 Created. Normalizes email and username (lowercase, trim). Enforces unique database indexes and translates MongoDB duplicate key errors (code 11000) into structured 409 conflict responses.
-2. **User authentication** (`POST /api/v1/auth/login`): Supports identifier (email OR username). Uses constant-time dummy verification on nonexistent users to prevent timing-based user enumeration. Returns 200 OK with access and refresh tokens.
-3. **Atomic refresh-token rotation** (`POST /api/v1/auth/refresh`): Uses atomic conditional update with query filter `{ token_hash: tokenHash, revoked_at: null, expires_at: { $gt: now } }` and update `$set: { revoked_at: now, replaced_by_token_id: newTokenId }`. Ensures strictly ONE concurrent request can consume an active token. Replay attempts on already-revoked tokens return 401. If replacement creation fails, compensating rollback restores the token.
-4. **Session revocation / logout** (`POST /api/v1/auth/logout`): Revokes refresh token session and returns 204 No Content.
-5. **Current user profile** (`GET /api/v1/auth/me`): Requires Bearer JWT authentication and returns current user details.
-6. **Token Contract & Lifetimes**: Matches Python reference (`backend/platform/config.py`):
-   - Access token lifetime: 60 minutes (`expires_in: 3600`).
-   - Refresh token lifetime: 30 days (`refresh_expires_in: 2592000`).
-   - Canonical user claim: `sub` containing user UUID string. Middleware derives `req.user.id` from `payload.sub`. Tested explicitly against claim mismatch.
-7. **Bcrypt Password Policy (No Silent Truncation)**:
-   - Validates character length: 8–128 characters.
-   - Validates UTF-8 byte length: maximum 72 bytes. Passwords exceeding 72 UTF-8 bytes are rejected with 422 `PasswordPolicyError` (never silently truncated).
-   - Bcrypt rounds: 12 (production default), 4 (test mode).
-   - Validated against both ASCII and multibyte Unicode strings.
-8. **Runtime secret validation**: Fail server startup in production if `JWT_SECRET` or `REFRESH_TOKEN_HMAC_KEY` is missing or shorter than 32 characters. Distinct secrets are enforced for signing and hashing.
-9. **Strict production authentication**: In production (`NODE_ENV === 'production'`), only `Authorization: Bearer <access_token>` is recognized. The `x-user-id` header is strictly ignored/rejected outside of test environments (`NODE_ENV === 'test'`).
-10. **Preservation of M2 RBAC**: Authentication establishes who the user is (`req.user = { id: payload.sub, email: payload.email }`). M2's `projectAuthorization.js` continues to govern project-scoped capabilities. M5 does not duplicate or bypass M2 logic.
+[ Analysis runs                                      (Start Analysis) ]
+[ latest status ] [ revision ] [ architecture available ] [ last run ]
 
-#### 4.3.2 Batch Breakdown for M5
+Filters: status                    Search analysis/revision
+--------------------------------------------------------------------------
+Status | Revision | Progress | Started | Completed | Architecture | Action
+... paginated history rows ...                                  View ->
+--------------------------------------------------------------------------
+Previous                                                        Next
+```
 
-##### M5 — Batch 1: User & RefreshToken Models, Password & Token Services, Runtime Configuration
-- **Scope**: Data persistence models, runtime secret validation, and cryptographic services with verified Python parity.
-- **Dependencies**: `bcryptjs` (^3.0.3), `jsonwebtoken` (^9.0.3).
-- **Files**:
-  - `express/package.json`: Add runtime dependencies `bcryptjs` and `jsonwebtoken`.
-  - `express/src/config/authConfig.js`: Validate `JWT_SECRET` and `REFRESH_TOKEN_HMAC_KEY` (minimum 32 chars). Enforce strict failure on startup in production if missing. Export token lifetimes (access: 60 min, refresh: 30 days) and bcrypt rounds (12 production, 4 test).
-  - `express/src/models/User.js`: Mongoose User schema with UUID v4 primary key, unique indexes on `email` and `username`, `password_hash` with `{ select: false }`, `is_active: true`, timestamps, and JSON transform stripping sensitive fields.
-  - `express/src/models/RefreshToken.js`: Mongoose RefreshToken schema with UUID v4 primary key, `user_id`, indexed `token_hash` (HMAC-SHA256), `expires_at`, `revoked_at`, `replaced_by_token_id`, and `isActive` / `isExpired` / `isRevoked` helpers.
-  - `express/src/services/auth/passwordService.js`: Bcrypt hashing, 8–128 character policy validation, strict 72-byte UTF-8 ceiling rejection (no silent truncation), constant-time dummy verification for timing attack mitigation.
-  - `express/src/services/auth/tokenService.js`: HS256 JWT access token signing (`sub`, `email`, `iat`, `exp`, `jti`, `token_type: "access"`), verification exposing `sub`, and cryptographically secure refresh token generation and HMAC-SHA256 hashing.
-  - `express/src/errors/authErrors.js`: Structured domain error classes (`InvalidCredentialsError`, `UserAlreadyExistsError`, `UsernameAlreadyExistsError`, `UserInactiveError`, `InvalidRefreshTokenError`, `RefreshTokenExpiredError`, `RefreshTokenRevokedError`, `InvalidTokenError`, `TokenExpiredError`, `PasswordPolicyError`).
-- **Testing**:
-  - `express/tests/unit/authConfig.test.js`: Validates configuration requirements and startup failure on missing production secrets.
-  - `express/tests/unit/userModel.test.js`: Validates schema, normalization, unique constraints, and JSON serialization.
-  - `express/tests/unit/refreshTokenModel.test.js`: Validates model invariants (active, expired, revoked).
-  - `express/tests/unit/passwordService.test.js`: Validates policy (8–128 chars, max 72 UTF-8 bytes), rejection of > 72 bytes without silent truncation, multibyte Unicode handling, hashing, verify, and dummy comparison.
-  - `express/tests/unit/tokenService.test.js`: Validates HS256 JWT `sub` claim encoding/decoding, expiry (3600s), tampered signature rejection, and deterministic HMAC hashing.
+- Start button appears only for OWNER/ADMIN/DEVELOPER after role resolution.
+- Start modal loads revisions, defaults to the latest revision, shows revision
+  identifier/hash/file count, and has an optional collapsed Advanced section
+  for include paths, exclude paths, max file size and timeout.
+- VIEWER sees history and an explanatory read-only badge, never mutation UI.
+- Empty state links users back to Revisions/Ingestion when no revision exists.
 
-##### M5 — Batch 2: AuthService, Auth Controller & Routes, Atomic Rotation Concurrency
-- **Scope**: Application service coordinating auth flows, atomic rotation, HTTP controller, validation, and route mounting.
-- **Files**:
-  - `express/src/services/auth/authService.js`:
-    - `register`: Validates policy, checks duplicate email/username, catches MongoDB duplicate-key errors (code 11000) and maps to structured 409 conflict, saves user with hashed password.
-    - `login`: Selects `+password_hash`, executes dummy bcrypt compare on nonexistent user, returns tokens with standard response structure (`access_token`, `refresh_token`, `token_type`, `expires_in: 3600`, `refresh_expires_in: 2592000`).
-    - `refreshToken`: Executes **atomic conditional update** with query filter `{ token_hash: tokenHash, revoked_at: null, expires_at: { $gt: now } }` and update `$set: { revoked_at: now, replaced_by_token_id: newTokenId }`. Distinguishes nonexistent (401 `invalid_refresh_token`), revoked (401 `refresh_token_revoked`), and expired (401 `refresh_token_expired`). Implements compensating rollback if replacement insertion fails.
-    - `logout`: Revokes token session cleanly.
-    - `getCurrentUser`: Resolves active user profile.
-  - `express/src/middleware/authValidate.js`: Express validation middleware for auth requests (returns 422 with structured error details).
-  - `express/src/controllers/authController.js`: HTTP controller handling endpoints.
-  - `express/src/routes/authRoutes.js`: Router mounting `/register`, `/login`, `/refresh`, `/logout`, `/me`.
-  - `express/src/routes/index.js`: Mount `authRoutes` under `/api/v1/auth`.
-- **Testing**:
-  - `express/tests/integration/authApi.test.js`: Integration tests covering:
-    - User registration 201 and concurrent duplicate registration 409 (email & username).
-    - Login 200 with email and username, 401 on invalid password, 401 on nonexistent user, 403 on inactive account.
-    - **Concurrent token rotation test**: Fire two simultaneous refresh requests against the same refresh token (`Promise.all`), verify exactly ONE succeeds with 200 and the other is rejected with 401 (`refresh_token_revoked`).
-    - Logout 204 and immediate token invalidation.
-    - Profile `/me` 200 with Bearer JWT.
+#### B. New Analysis Detail page
 
-##### M5 — Batch 3: Authenticate Middleware Upgrade, Production Security Guard & Regression
-- **Scope**: Upgrade `authenticate.js` to parse and verify Bearer JWT access tokens, derive `req.user.id` from `payload.sub`, enforce production security guard, and verify M2 RBAC integration.
-- **Files**:
-  - `express/src/middleware/authenticate.js`:
-    - Extracts `Authorization: Bearer <token>`. Decodes and verifies signature, expiration, and UUID v4 claims via `tokenService`. Sets `req.user = { id: payload.sub, email: payload.email }`.
-    - **Security Guard**: If `process.env.NODE_ENV === 'production'`, `x-user-id` header is strictly ignored/rejected with 401.
-    - In test environments (`NODE_ENV === 'test'`), allows `x-user-id` header fallback to support isolated unit/integration suites.
-  - `express/src/middleware/errorHandler.js`: Ensure all auth domain errors map to standard status codes.
-- **Testing**:
-  - `express/tests/unit/authenticate.test.js`: Bearer token verification, `payload.sub` mapping to `req.user.id` test, expired token 401, malformed token 401, test-mode `x-user-id` fallback, and **production rejection test** verifying `x-user-id` is rejected when `NODE_ENV === 'production'`.
-  - **M2 RBAC Integration Verification**: Verify that authenticated user identity flows into `projectAuthorization.js` and correctly enforces `OWNER`, `ADMIN`, `DEVELOPER`, and `VIEWER` permissions.
-  - **Full Regression**: Execute all 22 existing test suites (268 tests) confirming zero regressions across M1–M4.
+```text
+DashboardHeader
+Projects > Project > Repository > Analysis
 
----
+[ status icon ] Analysis run <short id> [canonical status pill]   [Cancel]
+Revision / created / elapsed / attempt                [View Architecture]
 
-### 4.4 Current Detailed Plan: M6-B1 Frontend API Integration and Contract Alignment
+[ overall progress ] [ files analyzed ] [ warnings ] [ model version ]
 
-**Plan status:** Approved and implemented on 2026-10-20. This plan covers M6-B1 only.
+Stage progress rail (8 ordered cards)
+Input -> Inventory -> Language -> Framework -> Syntax -> IR -> Identity -> Model
 
-#### 4.4.1 Objective, scope, and verified baseline
+Overview | Findings | Execution
+Overview: configuration, completeness, timestamps, failure/partial explanation
+Findings: diagnostics + published unresolved/conflict summaries with pagination
+Execution: active job/attempt details and stage table
+```
 
-Connect the existing React UI to the completed Express API without redesigning the UI or changing backend contracts. The runtime frontend already centralizes requests through `frontend/src/services/apiClient.js` and `frontend/src/services/authService.js`; it correctly attaches Bearer tokens, performs one retry after a shared refresh promise, clears credentials only for definitive refresh rejection, preserves Express error codes, and avoids setting JSON content type for `FormData`.
+- REST is authoritative. SSE invalidates/refetches state; serialized polling is
+  the fallback when streaming disconnects. Both stop at terminal state.
+- Cancel is enabled only while queued/running and only for operator roles.
+  `cancel_requested` shows a disabled "Cancellation requested" state, so a
+  duplicate cancel request cannot be submitted.
+- `timeout` and `partial` are shown as transitional canonical states, not
+  terminal aliases. Completed-with-warnings remains visually distinct.
+- Architecture CTA appears only when `published_version_id` exists; a completed
+  analysis without a published pointer is displayed as an integrity error.
 
-Verified contract gaps:
+#### C. New Architecture Model page
 
-1. `frontend/vite.config.js` proxies `/api` to Python port 8000, while `express/src/server.js` defaults to port 5000.
-2. `frontend/src/services/ingestionService.js` sends GitHub inputs as `repository_url` and `ref`, plus a redundant body `repository_id`. Express `validateStartIngestion` and `ingestionController.triggerIngestion` require only path-scoped identity plus `source_type`, `source_reference`, and optional `revision_identifier`. The existing GitHub handler represents an optional ref as `https://github.com/owner/repo@ref` inside `source_reference`.
-3. `AuthContext.restoreSession()` clears stored credentials on every `/auth/me` error, undoing `apiClient`'s intended preservation for network and 5xx failures.
-4. Existing frontend tests pass but encode the incompatible GitHub payload and do not verify the Vite target, generic Express error details, or multipart field/header behavior.
+```text
+DashboardHeader
+Projects > Project > Repository > Analysis > Architecture
 
-Verified as already compatible and therefore reused without application changes: auth endpoint paths and login/register/logout/me payloads; project and repository paths/payloads; ingestion/revision/artifact paths; raw array response consumption; 204 handling; Express structured errors; refresh rotation fields; multipart endpoint and `file`/`revision_identifier` field names; Bearer attachment; refresh deduplication; retry-loop prevention; and the existing Express CORS behavior. No Express source change is planned because the Vite proxy is same-origin in development and the inspected frontend contracts can conform to Express.
+Architecture Model v<sequence> [published]       digest / schema / published at
+[ entities ] [ relationships ] [ evidence ] [ unresolved ] [ conflicts ]
 
-#### 4.4.2 M6-B1 implementation batches
+Overview | Entities | Relationships | Evidence | Unresolved | Conflicts
 
-##### M6-B1.1 — Development routing and ingestion request alignment
+Overview:
+  Kind/status filters
+  +-----------------------------------+-------------------------------+
+  | bounded deterministic SVG map    | selected entity inspector     |
+  | loaded entities/relationships    | name/kind/status/namespace    |
+  | explicit "partial window" label  | metadata/evidence/source keys |
+  +-----------------------------------+-------------------------------+
 
-- Modify `frontend/vite.config.js`: point only the existing `/api` proxy from `http://localhost:8000` to `http://localhost:5000`; retain `changeOrigin` and the current frontend port/host settings.
-- Modify `frontend/src/services/ingestionService.js`:
-  - keep every canonical nested endpoint unchanged;
-  - emit only `source_type`, `source_reference`, and optional `revision_identifier` for JSON ingestion requests;
-  - map GitHub URL plus optional ref into Express's canonical `source_reference` representation (`URL` or `URL@ref`);
-  - remove redundant `repository_id`, `repository_url`, and `ref` wire fields;
-  - keep multipart upload as `FormData` with `file` and optional `revision_identifier`, allowing the browser to set the boundary.
+Data tabs:
+Search/filter controls
+paginated dark table
+loading / empty / error / retry
+Previous                                                     Next
+```
 
-##### M6-B1.2 — Session restoration consistency
+- The SVG overview loads at most 100 entities and 100 relationships at once,
+  draws only relationships whose endpoints are in the loaded entity window,
+  and prominently labels the view as a bounded model window. It must never
+  imply that omitted rows do not exist.
+- Layout is deterministic: architectural tiers by kind, stable logical-ID
+  ordering within each tier, static connectors, keyboard-selectable nodes and
+  no force simulation. This is a direct visualization of canonical API rows,
+  not a graph projection or Phase 4 traversal engine.
+- Tables remain the complete paginated exploration surface. Unknown metadata is
+  rendered only through a safe allowlist/structured key-value component; no
+  `dangerouslySetInnerHTML`.
+- On narrow screens the inspector stacks below the canvas and tables remain in
+  an existing horizontal overflow wrapper.
 
-- Modify `frontend/src/auth/AuthContext.jsx`: during initial `/auth/me` restoration, clear the session only for definitive session failures: any 401 response, or the explicit 403 `user_inactive` contract. Preserve stored tokens for unrelated 403 authorization failures, status `0` network failures, and 5xx/transient failures; record the error and finish loading without dispatching a second expiry path. Do not change login, registration, logout, routing, or refresh ownership.
-- Modify `frontend/src/services/authService.js`: expose the small, testable definitive-session-failure policy consumed by `AuthContext`; leave endpoint behavior unchanged.
-- Reuse `frontend/src/services/apiClient.js` unchanged unless implementation proves a test-visible defect; current code already satisfies Bearer, refresh concurrency, retry, network preservation, and structured-error contracts.
+### 4.5 Cross-service request flow and security
 
-##### M6-B1.3 — Frontend contract regression coverage
+```text
+React apiClient + Express JWT
+  -> Express authenticate
+  -> projectAuthorization.requireAccess/requireCreateAccess
+  -> analysisGatewayService
+       X-Service-Token      (server secret only)
+       X-Actor-Id           (req.user.id)
+       X-Actor-Role         (authoritative membership record)
+       X-Project-Id         (validated request project)
+       X-Correlation-Id     (generated/forwarded safe request ID)
+  -> FastAPI delegated endpoint
+  -> PostgreSQL analysis/model authority
+```
 
-- Modify `frontend/tests/m6Flows.test.js` using its existing Node/assert harness:
-  - assert the Vite proxy targets port 5000;
-  - update GitHub ingestion expectations to the canonical `source_reference` body and verify optional ref composition;
-  - assert JSON ingestion omits redundant path identity fields;
-  - exercise remaining get/update/delete service paths where needed to cover the actual route table;
-  - assert multipart upload uses `/ingestions/upload`, includes `file` and optional `revision_identifier`, carries Bearer auth, and does not manually set `Content-Type`;
-  - assert generic Express `{ error: { code, message, details } }` becomes `ApiError` without losing details;
-  - add restoration-policy assertions proving 401 and `403 user_inactive` are definitive, while unrelated 403, network, and 5xx failures preserve credentials;
-  - retain the existing concurrent-401, one-refresh, one-retry, refresh-failure, and transient-failure tests.
-- Reuse `frontend/tests/authApi.test.js` as an unchanged regression suite. `frontend/src/api/authApi.js` has no runtime imports; deleting or consolidating this legacy client is not necessary for M6-B1 and is deferred rather than mixed into contract migration.
+Express must construct delegated headers; it never accepts them from the
+browser. It validates UUIDs, repository/revision ownership for create, request
+body size, pagination and supported filter values. Upstream structured 4xx
+errors pass through after safe parsing. Network/timeout/invalid-upstream errors
+become structured `502 analysis_service_error`, `503
+analysis_service_unavailable`, or `504 analysis_service_timeout`; upstream HTML,
+stack traces and secrets are never relayed.
 
-#### 4.4.3 File-level specifications
+The JSON gateway uses Node's existing runtime `fetch`/`AbortController` with a
+bounded configurable timeout, so no HTTP-client package is required. SSE has a
+separate connection timeout/idle policy, forwards only `text/event-stream`,
+honors backpressure, and aborts the Python request when the browser disconnects.
 
-| Path | Action | Responsibility and rationale | Verification |
-| :--- | :--- | :--- | :--- |
-| `frontend/vite.config.js` | Modify | Route development `/api` traffic to the actual Express default port 5000. | Proxy-target assertion; development smoke check if practical. |
-| `frontend/src/services/ingestionService.js` | Modify | Translate existing UI inputs into the established Express ingestion DTO and retain canonical nested routes/multipart behavior. | JSON body/path assertions, GitHub ref cases, multipart assertions. |
-| `frontend/src/auth/AuthContext.jsx` | Modify | Make initial session restoration follow the same definitive-versus-transient failure policy as `apiClient`. | 401/403 clearing and network/5xx preservation assertions. |
-| `frontend/tests/m6Flows.test.js` | Modify | Extend the existing runtime-client/service contract suite; replace the currently incorrect GitHub expectation. | `npm test`. |
-| `frontend/src/services/apiClient.js` | Reuse | Existing centralized transport already implements required auth, retry, FormData, and error behavior. | Existing and extended `m6Flows` tests. |
-| `frontend/src/services/authService.js` | Modify | Keep the compatible M5 endpoint behavior and expose the definitive restoration-failure policy used by `AuthContext`. | Direct policy assertions in `m6Flows.test.js`. |
-| `frontend/src/services/projectService.js` | Reuse | Project paths and request bodies match Express. | Expanded path/payload assertions. |
-| `frontend/src/services/repositoryService.js` | Reuse | Repository paths and request bodies match Express. | Expanded path/payload assertions. |
-| `express/src/app.js` and Express route/controller files | Reuse | Backend contract is authoritative and already compatible after frontend translation; same-origin Vite proxy does not require a CORS change. | Existing Express suite; no source diff expected. |
+### 4.6 Browser-facing API matrix
 
-No files are created or deleted, and no dependency change is planned.
+Express exposes the same resource shapes as FastAPI under the existing
+`/api/v1` prefix. The browser never calls port 8000.
 
-#### 4.4.4 Testing and quality gates
+| Method and endpoint | Permission | Request/query | Response |
+|---|---|---|---|
+| `POST /analyses` | OWNER/ADMIN/DEVELOPER | `CreateAnalysisRequest` | `202 AnalysisResponse` |
+| `GET /analyses` | Any member | `project_id`, approved `repository_id`, `limit`, `offset`, optional `status` | `AnalysisListResponse` |
+| `GET /analyses/:analysisId` | Any member | `project_id` | `AnalysisResponse` |
+| `POST /analyses/:analysisId/cancel` | OWNER/ADMIN/DEVELOPER | `project_id`; `CancelAnalysisRequest` | `AnalysisResponse` |
+| `GET /analyses/:analysisId/events` | Any member | `project_id`, `after_sequence`; optional `Last-Event-ID` | SSE stream |
+| `GET /analyses/:analysisId/diagnostics` | Any member | `project_id`, `limit`, `offset`, optional `severity`, `stage` | approved `AnalysisDiagnosticListResponse` |
+| `GET /analyses/:analysisId/architecture` | Any member | `project_id` | `ArchitectureVersionResponse` |
+| `GET /architecture-versions/:versionId` | Any member | `project_id` | `ArchitectureVersionResponse` |
+| `GET /architecture-versions/:versionId/entities` | Any member | `project_id`, `limit`, `offset`, optional `kind`, `status` | `ArchitectureCollectionResponse<Entity>` |
+| `GET /architecture-versions/:versionId/entities/:entityId` | Any member | `project_id` | `ArchitectureEntityResponse` |
+| `GET /architecture-versions/:versionId/relationships` | Any member | `project_id`, `limit`, `offset`, optional `kind`, `status` | `ArchitectureCollectionResponse<Relationship>` |
+| `GET /architecture-versions/:versionId/evidence` | Any member | `project_id`, `limit`, `offset`; approved optional `entity_id` | `ArchitectureCollectionResponse<Evidence>` |
+| `GET /architecture-versions/:versionId/unresolved` | Any member | `project_id`, `limit`, `offset` | `ArchitectureCollectionResponse<Unresolved>` |
+| `GET /architecture-versions/:versionId/conflicts` | Any member | `project_id`, `limit`, `offset` | `ArchitectureCollectionResponse<Conflict>` |
 
-1. Baseline already executed during planning: `cd frontend && npm test` — passed both configured scripts; this proves only the current mocked expectations, not Express compatibility.
-2. After implementation: `cd frontend && npm test` — all existing and new contract assertions pass.
-3. After implementation: `cd frontend && npm run build` — Vite production build completes cleanly.
-4. After implementation: targeted Express contract regression, at minimum `authApi.test.js`, `projectApi.test.js`, `repositoryApi.test.js`, and `ingestionApi.test.js`; then `cd express && npm test` if practical.
-5. Optional manual development smoke check (not a substitute for M6-B2): run Express on 5000 and Vite on 3000, confirm `/api/v1/health` traverses the proxy and one login/current-user request reaches Express. Do not execute the complete vertical slice in M6-B1.
+Existing supporting calls are reused unchanged:
 
-#### 4.4.5 Acceptance criteria
+- `GET /projects/:projectId`
+- `GET /projects/:projectId/access`
+- `GET /projects/:projectId/repositories/:repositoryId`
+- `GET /projects/:projectId/repositories/:repositoryId/revisions?limit&offset`
+- `GET /projects/:projectId/repositories/:repositoryId/revisions/:revisionId`
 
-1. Vite development `/api` requests target Express on port 5000; no active frontend API configuration targets port 8000.
-2. Existing registration, login, logout, current-user, project, repository, ingestion, revision, and artifact screens continue using the existing UI and canonical `/api/v1` routes.
-3. Protected requests carry the access token; concurrent 401s cause exactly one refresh; each original request retries at most once.
-4. Refresh 401/403 clears tokens and emits `auth:expired`; refresh network/5xx failures preserve tokens and semantic Express errors remain available to callers.
-5. Initial session restoration preserves credentials on unrelated 403, network, and 5xx failures; it clears them only for 401 responses or explicit `403 user_inactive`.
-6. GitHub ingestion sends Express-compatible `source_reference`, including optional ref encoding; server-path ingestion remains compatible.
-7. Archive upload sends `file` and optional `revision_identifier` as multipart data without a manually supplied content type.
-8. Express structured errors retain status, code, message, and details in frontend `ApiError` objects.
-9. Frontend tests and production build pass; relevant Express contract tests remain green.
-10. No Express contract, Python file, React visual design, dependency, M6-B2 E2E workflow, or Phase 2 closeout work is changed.
+### 4.7 Request and response contracts
 
-#### 4.4.6 Risks and unresolved items
+Contracts remain snake_case on the wire and are declared once with JSDoc in
+`frontend/src/contracts/`. UUIDs and datetimes are JSON strings.
 
-- `frontend/src/api/authApi.js` duplicates part of the runtime auth stack but is not imported by application code. Consolidation is a maintenance improvement, not required for M6-B1, and is explicitly deferred.
-- `ProjectCard` defaults absent `project.role` to `OWNER`, while both Python and Express `ProjectResponse` omit a role field. This can display inaccurate role badges/actions for non-owners, although Express still enforces M2 RBAC. Adding a role to the backend response is not authorized by the current contract; record this for a separate contract/product decision rather than silently changing Express during M6-B1.
-- The Node-based frontend harness mocks transport and does not prove a live browser-to-Express journey. That limitation is intentionally closed by M6-B2, not by expanding this batch.
+#### Analysis requests
 
-#### 4.4.7 M6-B1 execution record
+```text
+CreateAnalysisRequest {
+  project_id: UUID
+  repository_id: UUID
+  revision_id: UUID
+  include_paths?: string[]          // max 1000; each 1..4096 chars
+  exclude_paths?: string[]          // max 1000; each 1..4096 chars
+  max_file_size_bytes?: integer     // 1..50 MiB; default 5 MiB
+  timeout_seconds?: integer         // 1..1800; default 1800
+  idempotency_key?: string          // nonblank, max 255
+}
 
-- **Status:** Complete (2026-10-20).
-- **Completed work:** Vite now proxies `/api` to Express port 5000. JSON ingestion requests match Express's validated DTO for all three canonical sources: GitHub uses `URL` or `URL@ref`; archive and server-path modes pass their server-side path as `source_reference`; path identity remains in the route. Multipart upload remains on `/ingestions/upload`. Session restoration now evicts credentials only for 401 or `403 user_inactive`, preserving them for unrelated authorization, network, and transient server failures.
-- **Files changed:** `frontend/vite.config.js`, `frontend/src/services/ingestionService.js`, `frontend/src/services/authService.js`, `frontend/src/auth/AuthContext.jsx`, and `frontend/tests/m6Flows.test.js`.
-- **Tests updated:** Added proxy, canonical ingestion DTO, all canonical source modes, multipart boundary/auth, structured-error detail, and session-failure policy assertions. Existing Bearer, refresh deduplication, one-retry, and transient-refresh tests remain intact.
-- **Verification:** `cd frontend && npm test` passed; `cd frontend && npm run build` passed (56 modules); targeted Express suites `authApi.test.js`, `projectApi.test.js`, `repositoryApi.test.js`, and `ingestionApi.test.js` passed (4 suites / 100 tests). The first sandboxed Express attempt could not bind the MongoMemoryServer port (`EPERM`); rerunning with local-port permission passed.
-- **Deviation:** The approved clarification required a minimal `authService.js` policy export so the distinction between `403 user_inactive` and unrelated 403 responses is directly testable. No endpoint behavior or `apiClient.js` behavior changed.
-- **Outstanding work:** None for M6-B1. M6-B2 and live end-to-end verification remain explicitly separate.
+CancelAnalysisRequest { reason?: string | null } // max 1000
+```
 
-### 4.5 M6-B2 End-to-End Product Flow Verification
+The modal generates one UUID idempotency key per user submission and reuses it
+for transport retries. A deliberate second analysis creates a new key.
 
-- **Status:** Complete (2026-10-21).
-- **Implementation:** Added `express/tests/integration/e2eVerticalSlice.test.js`, using the real Express app, MongoMemoryServer database, Bearer authentication middleware, project-scoped RBAC, archive acquisition/extraction, artifact classification, content-addressable storage, and canonical nested routes.
-- **Verified journey:** Register (201) → login (200) → authenticated project creation (201) → nested repository registration (201) → archive ingestion trigger (201) → bounded polling of the canonical ingestion status endpoint → terminal `completed` → revision listing → classified artifact listing → refresh-token rotation (200) → `/auth/me` with the rotated access token (200) → logout (204) → rejected replay of the revoked refresh token (401 `refresh_token_revoked`).
-- **Polling behavior:** Polls at a bounded interval with a finite timeout; returns only on `completed`, fails immediately with `error_code` and `error_message` on `failed`, and reports the ingestion ID plus last observed status on timeout.
-- **Fixture isolation:** Uses a unique temporary archive and temporary storage root, removed after the suite. External GitHub access is not required or mocked; the supported archive source exercises the complete ingestion pipeline deterministically.
-- **Verification:** Targeted E2E passed (1 suite / 1 test). Full Express regression passed (29 suites / 373 tests). Frontend tests passed. Frontend production build passed (56 modules).
-- **Limitations:** This is an HTTP-level end-to-end integration test through the real Express application, not browser automation. Existing frontend service-contract tests verify the React API boundary; no UI redesign or browser harness was introduced.
-- **Outstanding work:** None for M6-B2. Phase 2 closeout and architecture-compliance review remain separate and unstarted.
+#### Analysis responses
 
----
+```text
+AnalysisListResponse {
+  items: AnalysisResponse[]; total: integer; limit: integer; offset: integer
+}
 
-## 5. File-by-File Specifications
+AnalysisResponse {
+  id; project_id; repository_id; snapshot_id: UUID
+  status: created|queued|running|partial|completed|
+          completed_with_warnings|failed|cancel_requested|cancelled|timeout
+  configuration: object
+  version: integer
+  created_at; updated_at; started_at?; completed_at?: datetime
+  completeness?: AnalysisCompletenessResponse
+  published_version_id?: UUID
+  error_code?: string; error_message?: string
+  stages: AnalysisStageResponse[]
+  active_job?: AnalysisJobResponse
+}
 
-| Path | Action | Responsibilities | Key Dependencies & Contracts | Tests |
-| :--- | :--- | :--- | :--- | :--- |
-| `express/package.json` | Modify | Add `bcryptjs` and `jsonwebtoken` runtime dependencies | `bcryptjs`, `jsonwebtoken` | Package lock integrity |
-| `express/src/config/authConfig.js` | Create | Validate runtime secrets (`JWT_SECRET`, `REFRESH_TOKEN_HMAC_KEY`), fail in production if invalid/missing, export lifetimes (60m / 30d) and bcrypt rounds | `dotenv` | `authConfig.test.js` |
-| `express/src/models/User.js` | Create | User Mongoose model (UUID v4, unique lowercase email/username, hidden password_hash, is_active, JSON transform) | `mongoose`, `uuid` | `userModel.test.js` |
-| `express/src/models/RefreshToken.js` | Create | RefreshToken Mongoose model (UUID v4, user_id, HMAC token_hash, expires_at, revoked_at, replaced_by_token_id) | `mongoose`, `uuid` | `refreshTokenModel.test.js` |
-| `express/src/services/auth/passwordService.js` | Create | Bcrypt hashing (12 rounds), 8–128 character policy validation, 72-byte ceiling rejection without silent truncation, dummy comparison | `bcryptjs` | `passwordService.test.js` |
-| `express/src/services/auth/tokenService.js` | Create | HS256 JWT access token signing/verification (`sub` claim) and HMAC-SHA256 refresh token hashing | `jsonwebtoken`, `crypto`, `uuid` | `tokenService.test.js` |
-| `express/src/errors/authErrors.js` | Create | Structured domain error classes with HTTP status codes and semantic error codes | Error base class | Unit & error handler tests |
-| `express/src/services/auth/authService.js` | Create | Application service with atomic refresh token rotation (`findOneAndUpdate` on `token_hash`), duplicate registration race handling, and logout | `User`, `RefreshToken`, services | Service & API tests |
-| `express/src/middleware/authValidate.js` | Create | Input validation for `/register`, `/login`, `/refresh`, `/logout` payloads (422 status) | Express middleware | API integration tests |
-| `express/src/controllers/authController.js` | Create | HTTP controller translating HTTP requests to `authService` invocations and responses | `authService` | `authApi.test.js` |
-| `express/src/routes/authRoutes.js` | Create | Route definitions for `/api/v1/auth` endpoints | Express Router | `authApi.test.js` |
-| `express/src/routes/index.js` | Modify | Mount `/auth` routes under `/api/v1` | `authRoutes` | Health and API tests |
-| `express/src/middleware/authenticate.js` | Modify | Validate Bearer JWTs, derive `req.user.id` from `payload.sub`, strictly reject `x-user-id` in production, allow only in test | `tokenService` | `authenticate.test.js` |
-| `express/src/middleware/errorHandler.js` | Modify | Map auth domain errors to appropriate HTTP status codes (401, 403, 409, 422) | Error classes | Integration tests |
-| `frontend/vite.config.js` | Modify | Update `/api` proxy target from port 8000 to port 5000 | Vite config | `npm test` & dev server |
-| `frontend/src/services/ingestionService.js` | Modify | Translate GitHub URL/ref inputs to canonical Express `source_reference`; keep nested paths and multipart contract | `apiClient`, Express ingestion DTO | `m6Flows.test.js` service/body assertions |
-| `frontend/src/auth/AuthContext.jsx` | Modify | Preserve stored credentials on transient restoration failures; clear only on definitive auth rejection | `authService`, `tokenStorage` | `m6Flows.test.js` restoration-policy assertions |
-| `frontend/tests/m6Flows.test.js` | Modify | Correct and extend proxy, service, error, session, and multipart contract coverage | Node assert/fetch/FormData harness | `npm test` |
-| `express/src/app.js` | Reuse | Current CORS does not require an M6-B1 change because Vite proxies same-origin `/api` traffic | `cors` | Existing Express integration suite |
-| `express/tests/integration/e2eVerticalSlice.test.js` | Create | End-to-end integration test with deterministic bounded polling for ingestion completion | Supertest, Jest | E2E test execution |
+AnalysisCompletenessResponse {
+  analyzed_files_count; unsupported_files_count; failed_files_count;
+  excluded_files_count: integer
+  is_partial: boolean
+  details: Record<string,string>
+}
 
----
+AnalysisStageResponse {
+  id; analysis_id: UUID
+  stage_name: input_validation|inventory|language_detection|
+              framework_detection|syntax_extraction|ir_construction|
+              identity_resolution|architecture_build
+  status: pending|queued|running|completed|failed|skipped|cancelled
+  order; processed_items; total_items; version: integer
+  is_mandatory: boolean
+  created_at; updated_at; started_at?; completed_at?: datetime
+  error_code?: string; error_message?: string
+}
 
-## 6. Execution Ledger
+AnalysisJobResponse {
+  id; analysis_id: UUID
+  status: pending|queued|running|retrying|completed|failed|cancelled
+  attempt; max_attempts; version: integer
+  worker_id?; heartbeat_at?; started_at?; completed_at?: string
+  created_at; updated_at: datetime
+  error_code?: string; error_message?: string
+}
 
-| Module / Batch | Description | Status | Evidence / Verification |
-| :--- | :--- | :--- | :--- |
-| **M1 Batch 1** | Express foundation, DB connection, health API | **Passed** | 3 tests passed |
-| **M1 Batch 2** | Project model & service layer | **Passed** | 12 tests passed |
-| **M1 Batch 3** | Project API routes, validation & error handling | **Passed** | 22 tests passed |
-| **M2 (All)** | Project Access model, service, RBAC & routes | **Passed** | PR #20 merged |
-| **M3 (All)** | Repository model, service & routes | **Passed** | PR #22 verified |
-| **M4 (All)** | Ingestion, acquisition handlers, storage & validation | **Passed** | PR #22 verified (22 suites / 268 tests passed) |
-| **M5 Batch 1** | User & RefreshToken models, Password & Token services, AuthConfig | **Passed** | 5 suites / 56 tests passed (review follow-ups resolved) |
-| **M5 Batch 2** | AuthService, Auth Controller & Routes, Atomic Rotation | **Passed** | 36 auth integration tests passed, including inactive/deleted-user rejection |
-| **M5 Batch 3** | Authenticate middleware upgrade, Production Guard & Regression | **Passed** | 18 middleware tests passed; active-user revalidation, prod guard, RBAC integration, and full Express regression verified (28 suites / 372 tests) |
-| **M6 Batch 1** | Frontend API integration & contract alignment | **Complete** | Frontend tests/build passed; targeted Express contract regression passed (4 suites / 100 tests) |
-| **M6 Batch 2** | E2E vertical slice validation & production build | **Complete** | Real Express vertical slice passed; full Express 29 suites / 373 tests; frontend tests/build passed |
-| **Dashboard & Artifacts** | Repo search, 5/page pagination, 3-dot deletion, ArtifactsTab revisions fix | **Complete** | Frontend tests passed (3 suites / 100%), build passed; Express 29 suites / 377 tests passed |
-| **Phase 2 Closeout**| Evaluation 1 readiness, architectural compliance & freeze | Planned | Tracked until all acceptance criteria verified |
+AnalysisDiagnosticResponse {
+  id; analysis_id: UUID
+  code; category; severity; scope; message; retryability: string
+  created_at: datetime; stage?: string
+  details: safe object
+  artifact_id?: UUID; artifact_path?: string
+  source_line?: integer; source_column?: integer
+}
 
----
+AnalysisDiagnosticListResponse {
+  items: AnalysisDiagnosticResponse[]; total; limit; offset: integer
+}
+```
 
-## 7. Decisions and Risks
+`AnalysisDiagnosticListResponse` is approved but does not yet exist. Express
+must pass only the safe FastAPI DTO and must not expose internal exceptions.
 
-### Approved Decisions
-1. **Password Hashing via `bcryptjs`**: Use pure JavaScript `bcryptjs` with 12 rounds (4 in tests) and strict 72 UTF-8 byte rejection (no silent truncation).
-2. **User Credential Co-location**: In MongoDB, embed `password_hash` directly on the `User` document with `{ select: false }`. Never serialize `password_hash` in API responses.
-3. **Stateful Refresh Tokens with HMAC-SHA256**: Store only the HMAC-SHA256 hash of refresh tokens in MongoDB.
-4. **Atomic Token Rotation**: Use `findOneAndUpdate` with query filter `{ token_hash: tokenHash, revoked_at: null, expires_at: { $gt: now } }` and update `$set: { revoked_at: now, replaced_by_token_id: newTokenId }`. Ensures strictly single-use consumption even under concurrent requests. If replacement insertion fails, compensating update rolls back revocation.
-5. **Separate Secrets & Lifetimes**: Enforce distinct `JWT_SECRET` (for signing) and `REFRESH_TOKEN_HMAC_KEY` (for HMAC hashing) validated at runtime startup. Lifetimes match Python reference defaults: 60 minutes for access tokens, 30 days for refresh tokens.
-6. **Canonical JWT Claim**: The canonical user ID claim is `sub` (RFC 7519). `authenticate.js` derives `req.user.id` from `payload.sub`. Tested explicitly against claim naming mismatches.
-7. **Strict Production Authentication**: In production (`NODE_ENV === 'production'`), only `Authorization: Bearer <access_token>` is accepted. Any test seam (`x-user-id`) is strictly guarded and disallowed in production.
-8. **Canonical Ingestion Route**: The canonical endpoint is strictly `/api/v1/projects/:projectId/repositories/:repositoryId/ingestions` with explicit route parameter names. Shorthand un-nested routes are prohibited.
-9. **Deterministic Terminal Polling**: E2E tests poll ingestion status until either terminal status (`completed` or `failed`) is reached. `completed` succeeds; `failed` immediately reports the ingestion error.
-10. **Active-User Revalidation**: Every Bearer-authenticated request verifies the JWT first, then resolves `sub` to the authoritative User record. Missing users are rejected with `invalid_token`; inactive users are rejected with `user_inactive`. Request identity fields come from the validated User record, while M2 remains the authority for project-scoped permissions.
-11. **Repository Deletion & Active Ingestion Safety**: Repository deletion endpoint (`DELETE /api/v1/projects/:projectId/repositories/:repositoryId`) verifies project boundary, blocks deletion if an ingestion is actively `PROCESSING` (409 conflict), and triggers defensive cascade cleanup of child ingestions, revisions, and artifacts through Mongoose hooks while preserving content-addressed physical storage objects.
-12. **ArtifactsTab Revisions Decoupling**: Revisions list fetching depends strictly on `[projectId, repositoryId]` identity via refs, avoiding re-fetching when `selectedRevision` changes. Artifacts loading depends on the primitive `selectedRevisionId` string.
+#### SSE contract
 
-### Approved M6-B1 Decisions
+```text
+id: <monotonic sequence number>
+event: analysis.created | analysis.queued | analysis.started |
+       analysis.stage.started | analysis.stage.progress |
+       analysis.stage.completed | analysis.stage.failed |
+       analysis.stage.skipped | analysis.partial |
+       analysis.cancel_requested | analysis.cancelled | analysis.timeout |
+       analysis.completed | analysis.completed_with_warnings | analysis.failed
+data: <sanitized JSON object>
+```
 
-1. Keep Express contracts unchanged and translate the existing GitHub UI inputs inside `ingestionService` to canonical `source_reference`.
-2. Preserve session credentials for unrelated 403, status `0`, and 5xx restoration failures; clear only for 401 or explicit `403 user_inactive`.
-3. Keep CORS unchanged for M6-B1 because the Vite development proxy maintains a same-origin browser contract.
-4. Retain the unused legacy `src/api/authApi.js` during this scoped migration; consolidation is separate cleanup.
+The UI treats SSE as a notification and refetches `AnalysisResponse`; it never
+derives canonical state solely by replaying event payloads.
 
-### Risks & Mitigations
-- **Concurrent Duplicate Registrations**: Simultaneous requests with identical emails or usernames could pass application checks.  
-  *Mitigation*: Enforce unique MongoDB indexes and translate error code 11000 into structured 409 conflict responses.
-- **Asynchronous Ingestion Timing Flakes**: Tests relying on arbitrary delays could flake or mask background failures.  
-  *Mitigation*: Use deterministic bounded polling in E2E tests, asserting terminal status `completed` or failing immediately on `failed`.
-- **Port & Cross-Origin Ambiguity**: Dev proxy vs production direct access.  
-  *Mitigation*: Change the existing Vite proxy target to Express port 5000. Cross-origin configuration is not changed because browser API calls remain same-origin through `/api`.
+#### Architecture responses
 
----
+```text
+ArchitectureVersionResponse {
+  id; analysis_id; project_id; repository_id; snapshot_id: UUID
+  sequence_number: integer
+  architecture_schema_version; ir_schema_version; content_digest: string
+  entity_count; relationship_count; evidence_count;
+  unresolved_relationship_count; conflict_count: integer
+  completeness: safe object
+  published_at: datetime
+}
 
-## 8. Current Handoff
+ArchitectureEntityResponse {
+  id: UUID; logical_id; kind; name; status: string
+  namespace; evidence_ids; source_ir_keys: string[]
+  metadata: safe object
+}
 
-- **Current Stage**: Phase 2 MERN Migration — Frontend API coverage, username-based collaborator resolution, and collaborator self-management protections implemented and verified.
-- **Verification Evidence**:
-  - `frontend`: `npm test` passed all four configured scripts (`authApi.test.js`, `m6Flows.test.js`, `repositoryManagementAndArtifacts.test.js`, `coverageCompletion.test.js`).
-  - `frontend`: `npm run build` completed cleanly without errors.
-  - `express`: `npx jest --runInBand --detectOpenHandles` passed 100% across all 30 suites (385 tests).
-- **Next Recommended Action**: Proceed with Phase 2 closeout or next milestone per roadmap.
+ArchitectureRelationshipResponse {
+  id: UUID; logical_id; kind; source_logical_id; target_logical_id; status: string
+  evidence_ids; source_ir_keys: string[]; metadata: safe object
+}
+
+ArchitectureEvidenceResponse {
+  id: UUID; logical_id; source_record_type; path: string
+  artifact_id?: UUID; source_fact_key?: string; source_range?: safe object
+  producer_id?; producer_version?; strength; polarity: string
+  metadata: safe object
+}
+
+ArchitectureUnresolvedResponse {
+  id: UUID; logical_id; kind; source_logical_id; target_descriptor;
+  reason; status: string; evidence_ids; candidate_references: string[];
+  metadata: safe object
+}
+
+ArchitectureConflictResponse {
+  id: UUID; logical_id; conflict_type; subject_key: string
+  evidence_ids: string[]; details: safe object
+}
+
+ArchitectureCollectionResponse<T> {
+  items: T[]; total; limit; offset: integer
+}
+```
+
+Entity kinds and relationship kinds come directly from Architecture Model v1;
+the frontend maps them to labels/icons but preserves raw values. Findings are
+not a new domain object: the Findings tab presents existing
+`AnalysisDiagnosticResponse`, `ArchitectureUnresolvedResponse` and
+`ArchitectureConflictResponse` in separate sections.
+
+#### Error response
+
+```text
+ErrorResponse {
+  error: { code: string; message: string; details: safe object }
+}
+```
+
+401 follows the existing refresh flow. 403 preserves the session and shows a
+permission message. 404 shows scoped not-found UI. 409 shows conflict/retry
+guidance. 422 maps field details inline. Network/5xx errors preserve credentials
+and expose retry without destructive state resets.
+
+### 4.8 Frontend state and behavior
+
+- `useAnalysisLiveStatus` owns one stream, one fallback timer and one in-flight
+  REST request. It uses `AbortController`, exponential reconnect capped at 15s,
+  serialized 3s polling fallback, terminal-state stop and unmount cleanup.
+- History/filter offsets reset when project/repository/status changes.
+- Analysis progress is derived from stage rows: completed terminal stages plus
+  bounded `processed_items/total_items` for the active stage. Unknown totals
+  show indeterminate progress rather than fabricated percentages.
+- Architecture collections maintain independent offsets and errors per tab.
+- Canvas selection uses logical IDs; data tables use stable resource UUIDs for
+  route/API identity. Persistence IDs never replace logical IDs in semantics.
+- Search is only client-side within the currently loaded page unless a backend
+  search/filter parameter exists; the UI labels that scope.
+- Every async region has loading, empty, structured error and retry states.
+- Mutations prevent duplicate submissions and announce result through existing
+  status/alert patterns.
+
+### 4.9 Implementation batches
+
+#### Batch 1 — Secure analysis gateway and contract completion
+
+Objective: establish the browser-safe Express delegation boundary and the two
+minimum FastAPI read-query additions.
+
+- Add Express configuration, gateway, validation, routes/controllers and SSE
+  relay for every endpoint in §4.6.
+- Use authoritative project membership to construct delegated role headers.
+- Verify project/repository/revision chain for create and exact project scope for
+  every read/mutation.
+- Add the owner-approved optional `repository_id` to FastAPI analysis listing
+  and repository query.
+- Add the owner-approved paginated/filterable diagnostic listing owned by M1.
+- Add the owner-approved M4 `entity_id` evidence collection filter.
+
+Acceptance: browser JWT succeeds without exposing the service token; outsider
+and cross-project access fails; Viewer reads but cannot create/cancel; upstream
+failures remain structured/sanitized; SSE disconnect aborts upstream; JSON calls
+time out; existing Python/Express contracts remain green.
+
+#### Batch 2 — Frontend contracts, services and repository analysis history
+
+- Add contract modules, `analysisService`, `architectureService` and the minimal
+  streaming extension to `apiClient`.
+- Add Analyses tab, history/status filters, pagination and Start Analysis modal.
+- Reuse revision APIs, `useProjectRole`, existing form/dialog/table patterns and
+  unchanged repository metadata/ingestion workflows.
+
+Acceptance: operator can create one analysis for an immutable revision with a
+stable idempotency key; Viewer cannot see mutation controls; history is correctly
+repository-filtered/paginated; the run appears without page reload; validation,
+403, 409, 422, network and 5xx feedback are handled.
+
+#### Batch 3 — Analysis lifecycle, progress and findings page
+
+- Add route parsing, `AnalysisDetailPage`, live-status hook, status/progress,
+  stage rail, completeness, execution and findings components.
+- Integrate SSE invalidation with bounded polling fallback and cancellation.
+- Load published unresolved/conflicts only when an Architecture Version exists.
+
+Acceptance: every canonical state has an intentional mapping; reconnect never
+creates duplicate timers/requests; terminal state stops background work;
+findings paginate independently; a published run links to its exact model.
+
+#### Batch 4 — Architecture Model page, visualization and M5 closure
+
+- Add Architecture page, model summary, deterministic SVG window, inspector and
+  five paginated data tabs.
+- Add supported filters, safe metadata, keyboard selection, responsive behavior
+  and accessible status/error feedback.
+- Complete cross-service/frontend regression and E2E verification.
+
+Acceptance: only published scoped models render; the canvas identifies its
+bounded window; tables provide complete offset navigation; no graph projection,
+traversal, AI or editing is introduced; build/tests/vertical slice pass.
+
+### 4.10 File-level implementation specification
+
+Paths labeled **proposed** do not currently exist.
+
+#### Express
+
+| Path | Action and responsibility |
+|---|---|
+| `express/src/config/analysisConfig.js` | **Create.** Validate analysis base URL, service secret, JSON timeout and SSE policy; fail closed outside test. |
+| `express/src/services/analysisGatewayService.js` | **Create.** Construct delegated headers, bounded JSON requests, safe errors and upstream SSE connection. |
+| `express/src/middleware/analysisValidate.js` | **Create.** UUID, body, pagination/filter and project/repository validation. |
+| `express/src/controllers/analysisController.js` | **Create.** Thin lifecycle/history/diagnostics/SSE handlers; no persistence. |
+| `express/src/controllers/architectureController.js` | **Create.** Thin published-result handlers. |
+| `express/src/routes/analysisRoutes.js` | **Create.** Authenticated lifecycle routes. |
+| `express/src/routes/architectureRoutes.js` | **Create.** Authenticated published-model routes. |
+| `express/src/routes/index.js` | Modify; register both routers. |
+| `express/.env.example` | Modify; document approved `ANALYSIS_API_BASE_URL`, `ANALYSIS_INTERNAL_API_SECRET_KEY`, timeouts. |
+| `express/tests/unit/analysisGatewayService.test.js` | **Create.** Headers, timeout, sanitization, abort, safe errors. |
+| `express/tests/integration/analysisProxyApi.test.js` | **Create.** JWT, RBAC, isolation, request/response/SSE contract. |
+
+#### FastAPI/PostgreSQL — narrow M1/M4 query change control only
+
+| Path | Action and responsibility |
+|---|---|
+| `backend/api/v1/analyses.py` | Modify after approval; accept `repository_id`, expose diagnostics list. |
+| `backend/platform/analysis/application/dto.py` | Modify; add immutable diagnostic collection DTO. |
+| `backend/platform/analysis/application/lifecycle_service.py` | Modify; scoped history and diagnostic reads. |
+| `backend/platform/analysis/repositories/analysis_repo.py` | Modify; optional repository filter on list port. |
+| `backend/platform/analysis/infra/analysis_repository.py` | Modify; bounded PostgreSQL predicate/count. |
+| Diagnostic repository port/adapter | Modify; bounded list/count with severity/stage filters. |
+| `backend/api/v1/architecture.py` and M4 query repository/service | Optional only if entity-scoped evidence filtering is approved. |
+| M1 API/lifecycle/repository tests | Modify; filters, pagination, RBAC, isolation. |
+| `tests/p3/api/test_m4_architecture_api.py` | Optional evidence-filter coverage. |
+
+No lifecycle transition, F1 field, event vocabulary, worker, M2, M3, model
+builder, publication or database migration change is planned.
+
+#### Frontend
+
+| Path | Action and responsibility |
+|---|---|
+| `frontend/src/App.jsx` | Modify; exact ordered analysis/architecture routes. |
+| `frontend/src/contracts/analysisContracts.js` | **Create.** Shared JSDoc lifecycle/diagnostic/SSE contracts/constants. |
+| `frontend/src/contracts/architectureContracts.js` | **Create.** Shared JSDoc model contracts/vocabulary labels. |
+| `frontend/src/services/apiClient.js` | Modify minimally; authenticated streaming path sharing refresh rules. |
+| `frontend/src/services/analysisService.js` | **Create.** Lifecycle/history/cancel/diagnostic/event operations. |
+| `frontend/src/services/architectureService.js` | **Create.** Published version/collection operations. |
+| `frontend/src/hooks/useAnalysisLiveStatus.js` | **Create.** Single SSE/reconnect/poll lifecycle. |
+| `frontend/src/pages/RepositoryDetailPage.jsx` | Modify; add Analyses tab. |
+| `frontend/src/pages/AnalysisDetailPage.jsx` | **Create.** Lifecycle/findings/execution composition. |
+| `frontend/src/pages/ArchitectureModelPage.jsx` | **Create.** Summary, bounded overview and collections. |
+| `frontend/src/components/analysis/AnalysesTab.jsx` | **Create.** History/filter/pagination/start entry. |
+| `frontend/src/components/analysis/StartAnalysisModal.jsx` | **Create.** Revision/configuration/validation/idempotency. |
+| `frontend/src/components/analysis/AnalysisHeader.jsx` | **Create.** Breadcrumb/status/actions. |
+| `frontend/src/components/analysis/AnalysisProgress.jsx` | **Create.** Overall/ordered stage progress. |
+| `frontend/src/components/analysis/AnalysisFindings.jsx` | **Create.** Diagnostics/unresolved/conflicts. |
+| `frontend/src/components/analysis/AnalysisExecution.jsx` | **Create.** Job/attempt/stage details. |
+| `frontend/src/components/architecture/ArchitectureCanvas.jsx` | **Create.** Bounded deterministic SVG/keyboard selection. |
+| `frontend/src/components/architecture/ArchitectureInspector.jsx` | **Create.** Selected entity/safe metadata. |
+| `frontend/src/components/architecture/ArchitectureCollectionTable.jsx` | **Create.** Typed table/pagination shell. |
+| `frontend/src/styles/analysis.css` | **Create.** Existing-token analysis styling. |
+| `frontend/src/styles/architecture.css` | **Create.** Existing-token model styling. |
+| `frontend/package.json`, lockfile | Modify; add Vitest, jsdom and React Testing Library; retain Node regressions. |
+| Frontend service/UI test files | **Create.** Exact contracts, roles, lifecycle, timers, pagination and accessibility. |
+
+Do not split each card, row or icon into a separate component without proven
+reuse.
+
+### 4.11 Testing and quality gates
+
+Express tests cover delegated-header origin, role matrix, cross-project denial,
+validation/defaults/idempotency, safe upstream errors, secret non-exposure,
+timeouts, SSE forwarding/backpressure and disconnect abort.
+
+Python tests cover repository-filtered count/order/pagination, diagnostic
+severity/stage filters, deterministic ordering/bounds, project isolation and
+frozen lifecycle/event/M4 regressions.
+
+Frontend tests cover exact service requests, route precedence, unresolved-role
+safety, start/cancel duplicate prevention, every lifecycle state, progress,
+SSE/poll cleanup, findings/model pagination, bounded canvas labeling,
+deterministic keyboard selection, loading/empty/error/retry states, and existing
+auth/project/repository/ingestion regressions.
+
+Planned commands, verified where scripts already exist:
+
+```text
+cd express && npm test
+cd frontend && npm test
+cd frontend && npm run build
+./venv/bin/pytest -q tests/p3/analysis/test_m1_*.py tests/p3/api/test_m4_architecture_api.py
+./venv/bin/ruff check backend tests
+./venv/bin/mypy --strict backend
+./venv/bin/black --check backend tests
+git diff --check
+```
+
+Frontend `npm test` must retain the four existing Node suites and add the new
+Vitest/RTL suite. No frontend lint/typecheck command is claimed until configured.
+
+### 4.12 Definition of Done and acceptance criteria
+
+M5 is complete only when:
+
+1. An authenticated operator can select an immutable revision, start an analysis
+   and reach its detail page.
+2. Any member can view correctly repository-scoped, paginated history.
+3. Lifecycle, stages, attempts, completeness, errors and cancellation reflect
+   canonical backend state; live updates stop reliably.
+4. Diagnostics, unresolved relationships and conflicts are distinct,
+   evidence-backed finding categories; no new finding model is invented.
+5. A published Architecture Version exposes summary, entities, relationships,
+   evidence, unresolved items and conflicts with server pagination.
+6. The bounded overview is accessible, deterministic and explicitly partial;
+   no graph projection or full-model browser load occurs.
+7. Express enforces JWT/RBAC, safely delegates, hides credentials and preserves
+   structured errors.
+8. Viewer and unresolved-role UI never exposes mutations; backend authorization
+   remains decisive.
+9. Existing design, responsive behavior, auth/dashboard/repository flows and
+   `apiClient` refresh semantics remain intact.
+10. Executed tests/build/static checks are recorded before completion.
+
+## 5. Execution Ledger
+
+| Module | Status | Evidence / remaining |
+|---|---|---|
+| M1 | **FROZEN / COMPLETE** | Verified, including the implemented additive repository-history filter and diagnostic query boundary required by M5. Frozen F1 lifecycle semantics remain unchanged. |
+| M2 | **FROZEN / COMPLETE** | F2 contract and extraction coverage remain unchanged. Production performance hardening now reuses bounded OS-isolated parser children, parallelizes authorized artifact reads through a pooled HTTP client, preserves deterministic ordering/integrity checks, and emits phase timing telemetry. |
+| M3 | **FROZEN / COMPLETE** | No M5 change planned. |
+| M4 | **FROZEN / COMPLETE** | Architecture Model construction/publication and the implemented bounded entity-evidence query filter are verified. Frozen schema v1 semantics remain unchanged. |
+| M5 B1 | **COMPLETE / VERIFIED** | Implemented Express analysisConfig, analysisGatewayService, analysisValidate, analysisController, architectureController, analysisRoutes, architectureRoutes. Implemented FastAPI optional repository_id filter, diagnostics list endpoint, and M4 entity_id evidence filter. 29 Express tests passed (11 unit, 18 integration). 15 FastAPI M1/M4 API tests passed. |
+| M5 B2 | **COMPLETE / VERIFIED** | Implemented frontend contracts (analysisContracts, architectureContracts), API services (analysisService, architectureService), apiClient streaming extension (apiStream), dark theme styling (analysis.css), AnalysesTab with pagination/status filtering, StartAnalysisModal with revision inspection, idempotency key generation and advanced options, RepositoryDetailPage tab integration, and App route precedence. Verified with clean `npm run build` (vite v8.3.1), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and clean static checks (black, ruff, mypy --strict). |
+| M5 B3 | **COMPLETE / VERIFIED** | Implemented `useAnalysisLiveStatus` hook (authoritative REST polling with SSE invalidation, 15s reconnect backoff, 3s serialized polling fallback, terminal state teardown), `AnalysisDetailPage`, `AnalysisHeader` (breadcrumbs, cancellation modal, architecture link, streaming indicator), `AnalysisProgress` (8-stage progress rail, metrics cards, indeterminate/percentage progress), `AnalysisFindings` (diagnostics, unresolved relationships, architecture conflicts with independent pagination and severity filters), `AnalysisExecution` (active worker job telemetry and stage execution table), App route mounting, and dark theme CSS. Verified with clean `npm run build` (75 modules, 2.15s), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and static checks (black, ruff, mypy --strict). |
+| M5 B4 | **COMPLETE / VERIFIED** | Implemented `ArchitectureModelPage`, `ArchitectureCanvas` (bounded partial window of max 100 entities, deterministic tier layout by kind, stable logical-ID ordering, static SVG connectors with arrowheads, keyboard selection), `ArchitectureInspector` (safe structured metadata key-values, evidence counts, namespace, IR tags), `ArchitectureCollectionTable` (typed paginated table shell for Entities, Relationships, Evidence with entity filtering, Unresolved, Conflicts), `architecture.css` dark theme design token styling, and App route integration. Verified with clean `npm run build` (81 modules, 3.96s), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and static checks (black, ruff, mypy --strict). |
+| M5 remediation | **FROZEN / COMPLETE** | Corrected the Express gateway prefix to `/api/v1`, documented/configured both internal service credentials, registered the mandatory production `input_validation` stage, removed the API-to-worker queue-state race, preserved authorization-before-resource-lookup ordering, and repaired live-status lifecycle handling. Corrected multi-application M4 scope promotion, internal module resolution, static Express router mount composition, and the M4 boundary so lower-level frontend calls/imports are not mislabeled as unresolved architecture. Added conservative, evidence-backed backend boundary promotion for Django, FastAPI, Flask, Express and NestJS controllers, services, data repositories and workers without changing F3; added static endpoint-to-controller routing and indexed cross-file relationship resolution. Test/spec/migration evidence no longer expands or destroys production framework roots, FastAPI route modules are promoted as controllers, and ordinary Python `.get()`/`.delete()` calls are not published as HTTP endpoints. The bounded overview now selects entities round-robin by application namespace and loads bounded relationship candidates by semantic kind, preventing Express logical-ID ordering from hiding FastAPI endpoints and Python services. Modules, libraries and the full frontend inventory remain available in collection tabs. Aligned frontend entity/relationship/evidence vocabulary with the canonical M4 contract and replaced the single-row canvas with a wrapped, tiered, zoomable bounded view. Canvas selection remains fixed during selection/focus changes and the analysis SVG node class is isolated from landing-page hover transforms. Node content is now clipped inside its SVG card, and connector-focus controls are grouped responsively so `Show all` cannot overlap the connector summary. Long pipeline-stage labels now wrap in a stable two-line title area instead of truncating Identity Resolution and Architecture Build. A real optimized run processed 469 extraction items in about 20 seconds and completed the downstream pipeline. The final repository smoke model validated with 2 applications, 19 controllers, 25 services, 26 data repositories, 4 workers, 79 endpoints and 78 static `routes_to` relationships. Latest architecture verification: 42 focused M4 tests passed; the 10,000-entity capacity benchmark passed in 27.38s; Python regression excluding the pre-existing pathological M3 stress benchmark passed 746 tests with 3 platform skips; frontend legacy suites plus 8 Vitest tests and the production build passed. Earlier Express 422-test and zero-vulnerability npm audit gates remain unchanged. Focused Ruff, changed-file Black, strict mypy and diff checks passed. |
+| Local analysis operations | **VERIFIED** | Added and installed user-level systemd worker and Beat services from `ops/systemd/`. Exactly one named worker consumes `analysis.jobs`; Beat executes the 60-second M1 dispatch-recovery schedule. Both services are enabled with automatic restart, user lingering is enabled for boot-time startup, and the PostgreSQL/RabbitMQ containers already use `unless-stopped`. A previously orphaned queued analysis was republished once and verified `RUNNING` under `stacksense-worker@pr0xius`. M2 throughput hardening replaces per-artifact parser startup with four reusable sandboxed children (recycled after 64 requests), reuses Express HTTP connections, and performs eight bounded concurrent artifact reads. Benchmarks measured 12 representative isolated parses falling from 18.014s to 3.056s (5.89x), 100 small Python parses completing in 3.193s, and 300 actual StackSense source files (1.71 MB, 59,053 facts) completing isolated extraction in 6.810s; 105 focused M1-input/M2 tests passed with 3 platform skips. |
+| M5 | **FROZEN / COMPLETE** | Analysis initiation, live lifecycle, findings, model exploration, visualization and final stage-rail presentation are verified. |
+| M6 | **FROZEN / COMPLETE** | Final cross-service regression, real execution, performance, build, static and dependency-security gates passed. On 2026-11-10 the owner additionally accepted the phase after live testing complete analysis runs and Architecture Model exploration on multiple projects. |
+
+## 6. Decisions, Risks and Required Approvals
+
+### 6.1 Approved owner decisions
+
+1. **M1 query change control — approved:** add optional `repository_id` on
+   `GET /analyses` and paginated `GET /analyses/:id/diagnostics`. These are
+   additive read-only changes; F1 input/lifecycle/event contracts remain frozen.
+2. **Evidence drill-down — approved:** add optional `entity_id` filtering to the
+   existing evidence collection so selected-entity evidence is retrieved with
+   bounded server pagination.
+3. **Basic visualization boundary — approved:** implement the bounded,
+   deterministic SVG in §4.4 as M5 presentation of canonical rows; full graph
+   projection and traversal remain Phase 4.
+4. **Frontend test tooling — approved:** add Vitest, jsdom and React Testing
+   Library while retaining the existing source-inspection Node regressions.
+
+These approvals authorize only the plan recorded here. They do not mark any
+implementation batch, API change, dependency addition or test as completed.
+
+### 6.2 Principal risks and mitigations
+
+- Secret leakage: server-only config, header allowlist, sanitized errors/logs and
+  negative tests.
+- RBAC drift: authoritative Express membership then independent FastAPI checks.
+- SSE leaks: one hook/controller, abort on disconnect/unmount, bounded reconnect,
+  REST-authoritative state.
+- Large models: page <=100, independent offsets, bounded canvas, no aggregation.
+- Misleading visualization: loaded/total counts and explicit partial label.
+- Dynamic metadata/XSS: React text rendering/safe structure; no raw HTML.
+- Route regression: most-specific matching and tests.
+- Dirty worktree: status inspection before/after and no unrelated overwrite.
+
+No architectural decision or unresolved acceptance gate blocks Phase 3 closure.
+
+## 7. Current Handoff
+
+M1–M5 contracts and implementation are frozen and verified. Corrective changes
+preserve F1/F2/F3 and Architecture Model schema versions. The analysis-start
+flow, production-only backend scope resolution, backend boundary promotion,
+relationship resolution, application-balanced backend-first map, map stability,
+parser throughput and pipeline-stage presentation are resolved.
+M6 closeout is complete, and the owner accepted the end-to-end product behavior
+after live project testing on 2026-11-10. Phase 3 is formally **FROZEN /
+COMPLETE**; subsequent changes require explicit change control.
+The user-level Celery worker and Beat services were restarted, verified active,
+and remain enabled for login/boot startup. Existing published Architecture
+Versions remain immutable; run a new analysis to observe the final model changes.
+The user-level Celery worker was restarted after the final scope/sampling fix and
+confirmed ready on `analysis.jobs`. Previously published models will never change
+in place; that immutability is intentional.
+
+M2 performance hardening preserves the frozen F2 contract, source coverage,
+security sandbox and capacity behavior. New timing logs split artifact-read,
+parse, enrichment and serialization time so future bottlenecks are measurable.
+Any long-running Celery worker must be restarted after deploying this code;
+Celery does not hot-reload imported parser modules.
+
+**Next action:** Create and push the Phase 3 completion commit on
+`feature_mannan`, then begin Phase 4 planning from the frozen Phase 3 output
+boundary. Do not reopen frozen Phase 3 contracts without explicit change
+control.

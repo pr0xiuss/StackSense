@@ -1,0 +1,19 @@
+[Unit]
+Description=StackSense analysis Celery worker
+Documentation=file://%h/dev/projects/StackSense/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/projects/StackSense
+EnvironmentFile=-%h/dev/projects/StackSense/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/dev/projects/StackSense/venv/bin/celery -A backend.worker.celery_app:celery_app worker --loglevel=info --hostname=stacksense-worker@%H
+Restart=always
+RestartSec=5
+TimeoutStopSec=120
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target
