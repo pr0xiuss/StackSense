@@ -44,6 +44,37 @@ from tests.p3.analysis.test_m4_builder import _document, _evidence
 def _multi_application_input() -> AnalysisInput:
     sources = (
         (
+            "requirements.txt",
+            b"fastapi==0.115.0\n",
+            ArtifactCategory.CONFIGURATION,
+            SupportLevel.PARTIAL,
+        ),
+        (
+            "backend/api/v1/users.py",
+            (
+                b"from fastapi import APIRouter\n"
+                b"router = APIRouter()\n"
+                b"status_codes = {}\n"
+                b"status_codes.get('ok')\n"
+                b"@router.get('/users')\n"
+                b"def list_users(): return []\n"
+            ),
+            ArtifactCategory.SOURCE_CODE,
+            SupportLevel.FULL,
+        ),
+        (
+            "backend/api/services/users.service.py",
+            b"class UserService:\n    def list_users(self): return []\n",
+            ArtifactCategory.SOURCE_CODE,
+            SupportLevel.FULL,
+        ),
+        (
+            "tests/test_fastapi_routes.py",
+            b"from fastapi import FastAPI\napp = FastAPI()\n",
+            ArtifactCategory.SOURCE_CODE,
+            SupportLevel.FULL,
+        ),
+        (
             "backend/django/requirements.txt",
             b"Django==5.0\n",
             ArtifactCategory.CONFIGURATION,
@@ -84,10 +115,40 @@ def _multi_application_input() -> AnalysisInput:
             "backend/express/src/routes/docs.routes.js",
             (
                 b'import express from "express";\n'
+                b'import { listDocuments } from "../controllers/'
+                b'documents.controller.js";\n'
                 b"const router = express.Router();\n"
                 b'router.get("/", listDocuments);\n'
                 b"export default router;\n"
             ),
+            ArtifactCategory.SOURCE_CODE,
+            SupportLevel.FULL,
+        ),
+        (
+            "backend/express/src/controllers/documents.controller.js",
+            (
+                b'import { listStoredDocuments } from "../services/'
+                b'documents.service.js";\n'
+                b"export function listDocuments(req, res) {\n"
+                b"  return res.json(listStoredDocuments());\n"
+                b"}\n"
+            ),
+            ArtifactCategory.SOURCE_CODE,
+            SupportLevel.FULL,
+        ),
+        (
+            "backend/express/src/services/documents.service.js",
+            (
+                b'import { findDocuments } from "../repositories/'
+                b'documents.repository.js";\n'
+                b"export function listStoredDocuments() { return findDocuments(); }\n"
+            ),
+            ArtifactCategory.SOURCE_CODE,
+            SupportLevel.FULL,
+        ),
+        (
+            "backend/express/src/repositories/documents.repository.js",
+            b"export function findDocuments() { return []; }\n",
             ArtifactCategory.SOURCE_CODE,
             SupportLevel.FULL,
         ),
@@ -254,6 +315,7 @@ def test_multi_application_pipeline_preserves_architecture_structure() -> None:
     assert applications.keys() >= {
         "django application",
         "express application",
+        "fastapi application",
         "react application",
     }
     assert any(
@@ -279,12 +341,47 @@ def test_multi_application_pipeline_preserves_architecture_structure() -> None:
         and entity.name == "Elasticsearch"
         for entity in architecture.entities
     )
+    assert any(
+        entity.kind is ArchitectureEntityKind.CONTROLLER
+        and entity.name == "Documents Controller"
+        for entity in architecture.entities
+    )
+    assert any(
+        entity.kind is ArchitectureEntityKind.SERVICE
+        and entity.name == "Documents Service"
+        for entity in architecture.entities
+    )
+    assert any(
+        entity.kind is ArchitectureEntityKind.CONTROLLER
+        and entity.name == "Users Controller"
+        and entity.metadata.get("framework") == "fastapi"
+        for entity in architecture.entities
+    )
+    assert any(
+        entity.kind is ArchitectureEntityKind.SERVICE
+        and entity.name == "Users Service"
+        and entity.metadata.get("framework") == "fastapi"
+        for entity in architecture.entities
+    )
+    fastapi_endpoints = [
+        entity
+        for entity in architecture.entities
+        if entity.kind is ArchitectureEntityKind.ENDPOINT
+        and entity.metadata.get("framework") == "fastapi"
+    ]
+    assert [entity.name for entity in fastapi_endpoints] == ["GET /users"]
+    assert any(
+        entity.kind is ArchitectureEntityKind.DATA_REPOSITORY
+        and entity.name == "Documents Repository"
+        for entity in architecture.entities
+    )
     assert architecture.relationships
     assert {relationship.kind for relationship in architecture.relationships} >= {
         ArchitectureRelationshipKind.CALLS,
         ArchitectureRelationshipKind.CONTAINS,
         ArchitectureRelationshipKind.EXPOSES,
         ArchitectureRelationshipKind.IMPORTS,
+        ArchitectureRelationshipKind.ROUTES_TO,
     }
     assert {
         unresolved.target_descriptor

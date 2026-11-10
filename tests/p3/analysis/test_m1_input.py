@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import BinaryIO
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 from backend.platform.analysis.application.input_factory import (
@@ -14,6 +15,7 @@ from backend.platform.analysis.application.input_factory import (
     is_safe_relative_path,
 )
 from backend.platform.analysis.application.platform_gateway import (
+    HttpPlatformRepositoryGateway,
     PlatformArtifact,
     PlatformRepositoryGateway,
     PlatformSnapshotManifest,
@@ -717,3 +719,69 @@ def test_platform_factory_preserves_immutable_input_and_bounded_content() -> Non
     assert analysis_input.content_reader.read_bytes(artifact, max_bytes=2) == b"da"
     assert gateway.requested_max_bytes == 2
     assert "storage_key" not in type(artifact).__annotations__
+
+
+def test_http_platform_gateway_reuses_injected_client_and_authorizes_reads() -> None:
+    project_id = uuid4()
+    repository_id = uuid4()
+    revision_id = uuid4()
+    artifact_id = uuid4()
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["X-Service-Token"] == "service-secret"
+        if request.url.path.endswith("/manifest"):
+            return httpx.Response(
+                200,
+                json={
+                    "revision": {
+                        "id": str(revision_id),
+                        "project_id": str(project_id),
+                        "repository_id": str(repository_id),
+                        "revision_identifier": "main",
+                        "source_hash": "tree",
+                        "total_files": 1,
+                        "total_bytes": 4,
+                    },
+                    "artifacts": [
+                        {
+                            "id": str(artifact_id),
+                            "project_id": str(project_id),
+                            "repository_id": str(repository_id),
+                            "revision_id": str(revision_id),
+                            "path": "src/main.py",
+                            "size_bytes": 4,
+                            "content_hash": hashlib.sha256(b"data").hexdigest(),
+                            "category": ArtifactCategory.SOURCE_CODE.value,
+                            "support_level": SupportLevel.FULL.value,
+                        }
+                    ],
+                },
+            )
+        assert request.url.params["max_bytes"] == "2"
+        return httpx.Response(200, content=b"data")
+
+    client = httpx.Client(transport=httpx.MockTransport(handle))
+    gateway = HttpPlatformRepositoryGateway(
+        "http://platform.test/api/v1/internal",
+        "service-secret",
+        5.0,
+        client=client,
+    )
+
+    manifest = gateway.get_manifest(project_id, repository_id, revision_id)
+    content = gateway.read_artifact(
+        project_id,
+        repository_id,
+        revision_id,
+        artifact_id,
+        max_bytes=2,
+    )
+    gateway.close()
+
+    assert manifest.artifacts[0].id == artifact_id
+    assert content == b"da"
+    assert len(requests) == 2
+    assert not client.is_closed
+    client.close()

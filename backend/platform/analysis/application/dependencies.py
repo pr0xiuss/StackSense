@@ -1,6 +1,7 @@
 """FastAPI dependency injection providers for Analysis lifecycle infrastructure."""
 
 import secrets
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
@@ -108,15 +109,26 @@ def get_stage_handler_registry() -> StageHandlerRegistry:
     return get_worker_registry()
 
 
-def get_platform_repository_gateway(
-    settings: Settings = Depends(get_settings),
-) -> PlatformRepositoryGateway:
-    """Provide the authorized Express platform source adapter."""
+def _build_platform_repository_gateway(
+    settings: Settings,
+) -> HttpPlatformRepositoryGateway:
     return HttpPlatformRepositoryGateway(
         settings.platform_api_base_url,
         settings.platform_api_secret_key.get_secret_value(),
         settings.platform_api_timeout_seconds,
+        concurrent_read_limit=settings.platform_artifact_fetch_concurrency,
     )
+
+
+def get_platform_repository_gateway(
+    settings: Settings = Depends(get_settings),
+) -> Iterator[PlatformRepositoryGateway]:
+    """Provide and reliably close the authorized Express source adapter."""
+    gateway = _build_platform_repository_gateway(settings)
+    try:
+        yield gateway
+    finally:
+        gateway.close()
 
 
 def get_analysis_input_factory(
@@ -138,7 +150,7 @@ def get_analysis_orchestrator(
         resolved_factory = input_factory
     else:
         resolved_factory = PlatformAnalysisInputFactory(
-            get_platform_repository_gateway(settings)
+            _build_platform_repository_gateway(settings)
         )
 
     resolved_registry: StageHandlerRegistry

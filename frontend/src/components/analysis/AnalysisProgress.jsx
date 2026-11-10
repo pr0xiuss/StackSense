@@ -153,6 +153,7 @@ export default function AnalysisProgress({ analysis }) {
         <div className="stage-rail-track" role="list" aria-label="Pipeline Stages">
           {orderedStages.map((stage, idx) => {
             const st = (stage.status || 'pending').toLowerCase();
+            const stageLabel = getStageLabel(stage.stage_name);
             const isCompleted = st === 'completed';
             const isRunning = st === 'running';
             const isFailed = st === 'failed';
@@ -189,7 +190,9 @@ export default function AnalysisProgress({ analysis }) {
                 </div>
 
                 <div className="stage-node-content">
-                  <span className="stage-node-title">{getStageLabel(stage.stage_name)}</span>
+                  <span className="stage-node-title" title={stageLabel}>
+                    {stageLabel}
+                  </span>
                   <div className="stage-node-meta">
                     <span className="stage-node-status">{st}</span>
                     {typeof stage.total_items === 'number' && stage.total_items > 0 && (

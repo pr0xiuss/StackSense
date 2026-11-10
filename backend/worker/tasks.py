@@ -202,6 +202,7 @@ def execute_analysis_task(
     job_uuid = UUID(job_id)
     project_uuid = UUID(project_id)
     attempt_store: AnalysisAttemptStore | None = None
+    platform_gateway: HttpPlatformRepositoryGateway | None = None
     release_attempt = False
 
     try:
@@ -211,13 +212,13 @@ def execute_analysis_task(
             stage_repo = SqlAlchemyStageRepository(session)
             event_repo = SqlAlchemyEventRepository(session)
             diagnostic_repo = SqlAlchemyDiagnosticRepository(session)
-            input_factory = PlatformAnalysisInputFactory(
-                HttpPlatformRepositoryGateway(
-                    settings.platform_api_base_url,
-                    settings.platform_api_secret_key.get_secret_value(),
-                    settings.platform_api_timeout_seconds,
-                )
+            platform_gateway = HttpPlatformRepositoryGateway(
+                settings.platform_api_base_url,
+                settings.platform_api_secret_key.get_secret_value(),
+                settings.platform_api_timeout_seconds,
+                concurrent_read_limit=settings.platform_artifact_fetch_concurrency,
             )
+            input_factory = PlatformAnalysisInputFactory(platform_gateway)
 
             registry, attempt_store = build_worker_registry(session, settings)
             orchestrator = AnalysisOrchestrator(
@@ -270,6 +271,8 @@ def execute_analysis_task(
             countdown=settings.analysis_retry_backoff_seconds,
         ) from exc
     finally:
+        if platform_gateway is not None:
+            platform_gateway.close()
         if release_attempt and attempt_store is not None:
             attempt_store.release(analysis_uuid, job_uuid)
 

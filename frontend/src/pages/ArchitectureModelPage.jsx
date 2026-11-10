@@ -4,31 +4,9 @@ import ArchitectureCanvas from '../components/architecture/ArchitectureCanvas.js
 import ArchitectureInspector from '../components/architecture/ArchitectureInspector.jsx';
 import ArchitectureCollectionTable from '../components/architecture/ArchitectureCollectionTable.jsx';
 import { analysisService } from '../services/analysisService.js';
-import { architectureService } from '../services/architectureService.js';
+import { loadArchitectureOverview } from '../services/architectureOverview.js';
 import { projectService } from '../services/projectService.js';
 import { repositoryService } from '../services/repositoryService.js';
-
-const OVERVIEW_ENTITY_LIMIT = 100;
-const OVERVIEW_RELATIONSHIP_LIMIT = 500;
-
-async function loadOverviewRelationships(versionId, projectId) {
-  const items = [];
-  let offset = 0;
-  let total = 0;
-  do {
-    const page = await architectureService.listRelationships(versionId, {
-      projectId,
-      limit: 100,
-      offset,
-    });
-    const pageItems = Array.isArray(page?.items) ? page.items : [];
-    total = typeof page?.total === 'number' ? page.total : pageItems.length;
-    items.push(...pageItems);
-    offset += pageItems.length;
-    if (pageItems.length === 0) break;
-  } while (offset < total && items.length < OVERVIEW_RELATIONSHIP_LIMIT);
-  return items.slice(0, OVERVIEW_RELATIONSHIP_LIMIT);
-}
 
 export default function ArchitectureModelPage({ projectId, repositoryId, analysisId }) {
   const [version, setVersion] = useState(null);
@@ -70,17 +48,8 @@ export default function ArchitectureModelPage({ projectId, repositoryId, analysi
       // Load overview canvas data
       if (verData?.id) {
         setOverviewLoading(true);
-        Promise.all([
-          architectureService.listEntities(verData.id, {
-            projectId,
-            limit: OVERVIEW_ENTITY_LIMIT,
-            offset: 0,
-          }),
-          loadOverviewRelationships(verData.id, projectId),
-        ])
-          .then(([entRes, relRes]) => {
-            const entList = Array.isArray(entRes?.items) ? entRes.items : [];
-            const relList = Array.isArray(relRes) ? relRes : [];
+        loadArchitectureOverview(verData.id, projectId)
+          .then(({ entities: entList, relationships: relList }) => {
             setOverviewEntities(entList);
             setOverviewRelationships(relList);
             if (entList.length > 0) {

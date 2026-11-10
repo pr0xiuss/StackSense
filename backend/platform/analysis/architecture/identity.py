@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
@@ -30,6 +31,7 @@ from backend.platform.analysis.ir.model import (
     IREntity,
     IREntityKind,
     IREvidence,
+    IRFactStatus,
     IRRelationshipKind,
 )
 
@@ -254,7 +256,11 @@ class InitialPromotionRuleTable:
                 anchor_parts=(entity.qualified_name or entity.name, kind.value),
                 name=entity.name,
                 status=_status(entity),
-                rule_id="m4.component.structural_role.v1",
+                rule_id=(
+                    metadata["role_inference_rule_id"]
+                    if isinstance(metadata.get("role_inference_rule_id"), str)
+                    else "m4.component.structural_role.v1"
+                ),
                 metadata={
                     "application_namespace": scope,
                     "architectural_role": (
@@ -267,10 +273,24 @@ class InitialPromotionRuleTable:
                     ),
                     "framework": framework,
                     "qualified_name": entity.qualified_name,
+                    **(
+                        {"role_inference_signals": metadata["role_inference_signals"]}
+                        if isinstance(metadata.get("role_inference_signals"), tuple)
+                        else {}
+                    ),
                 },
             )
 
         if entity.kind == IREntityKind.ENDPOINT:
+            # FastAPI routes are decorator declarations. Generic ``.get`` and
+            # ``.delete`` calls in a module that imports FastAPI are ordinary
+            # source references, not HTTP interfaces.
+            if (
+                (entity.framework or resolved_framework) == "fastapi"
+                and isinstance(metadata.get("reference_kind"), str)
+                and metadata.get("reference_kind") != "decorator"
+            ):
+                return None
             method = metadata.get("method") or metadata.get("http_method")
             path = metadata.get("path") or metadata.get("route_path")
             scope = metadata.get("application_namespace")
@@ -344,14 +364,23 @@ class IdentityResolutionService:
             *root_candidates,
             *dependency_candidates,
         ]
-        mapped_evidence_by_id = {
-            mapped.logical_id: mapped
+        evidence_source_by_logical_id = {
+            build_evidence_logical_id(document.snapshot_id, source.evidence_key): source
             for source in document.evidence
-            for mapped in (map_ir_evidence(document.snapshot_id, source),)
         }
+        mapped_evidence_by_key: dict[str, ArchitectureEvidence] = {}
+
+        def mapped_evidence(source: IREvidence) -> ArchitectureEvidence:
+            mapped = mapped_evidence_by_key.get(source.evidence_key)
+            if mapped is None:
+                mapped = map_ir_evidence(document.snapshot_id, source)
+                mapped_evidence_by_key[source.evidence_key] = mapped
+            return mapped
+
         for candidate in candidates:
             for evidence_id in candidate.evidence_ids:
-                used_evidence[evidence_id] = mapped_evidence_by_id[evidence_id]
+                source_evidence = evidence_source_by_logical_id[evidence_id]
+                used_evidence[evidence_id] = mapped_evidence(source_evidence)
         root_scopes = {
             item.metadata["application_namespace"]
             for item in root_candidates
@@ -360,15 +389,46 @@ class IdentityResolutionService:
         default_scope = next(iter(root_scopes)) if len(root_scopes) == 1 else None
         for source in document.entities:
             effective_source = scope_index.with_resolved_route_path(source)
-            resolved_scope = scope_index.scope_for_entity(
-                effective_source, evidence_by_key
+            explicit_framework = effective_source.framework
+            resolved_framework = (
+                explicit_framework
+                if isinstance(explicit_framework, str)
+                else scope_index.framework_for_entity(effective_source, evidence_by_key)
+            )
+            backend_role = _derive_backend_architectural_role(
+                effective_source,
+                evidence_by_key,
+                resolved_framework=resolved_framework,
+                route_paths=scope_index.route_paths,
+            )
+            if backend_role is not None:
+                role, rule_id, signals, display_name = backend_role
+                effective_source = replace(
+                    effective_source,
+                    kind=IREntityKind.COMPONENT,
+                    name=display_name,
+                    status=(
+                        effective_source.status
+                        if effective_source.status == IRFactStatus.CONFLICTING
+                        else IRFactStatus.INFERRED
+                    ),
+                    metadata={
+                        **effective_source.metadata,
+                        "architectural_role": role,
+                        "role_inference_rule_id": rule_id,
+                        "role_inference_signals": signals,
+                    },
+                )
+            explicit_scope = effective_source.metadata.get("application_namespace")
+            resolved_scope = (
+                explicit_scope
+                if isinstance(explicit_scope, str)
+                else scope_index.scope_for_entity(effective_source, evidence_by_key)
             )
             decision = self._rules.decide(
                 effective_source,
                 default_application_scope=resolved_scope or default_scope,
-                resolved_framework=scope_index.framework_for_entity(
-                    effective_source, evidence_by_key
-                ),
+                resolved_framework=resolved_framework,
             )
             if decision is None:
                 continue
@@ -398,7 +458,7 @@ class IdentityResolutionService:
             evidence_ids: list[str] = []
             has_conflicting_evidence = False
             for key in source.evidence_keys:
-                mapped = map_ir_evidence(document.snapshot_id, evidence_by_key[key])
+                mapped = mapped_evidence(evidence_by_key[key])
                 used_evidence[mapped.logical_id] = mapped
                 evidence_ids.append(mapped.logical_id)
                 has_conflicting_evidence = (
@@ -525,6 +585,231 @@ def _status(entity: IREntity) -> ArchitectureFactStatus:
     }[entity.status.value]
 
 
+_BACKEND_FRAMEWORKS = frozenset({"django", "express", "fastapi", "flask", "nestjs"})
+_NON_PRODUCTION_PATH_TOKENS = frozenset(
+    {
+        "test",
+        "tests",
+        "spec",
+        "specs",
+        "fixture",
+        "fixtures",
+        "migration",
+        "migrations",
+        "frontend",
+        "client",
+        "components",
+        "pages",
+        "hooks",
+    }
+)
+_APPLICATION_SCOPE_EXCLUDED_PATH_TOKENS = frozenset(
+    {"test", "tests", "spec", "specs", "fixture", "fixtures", "migration", "migrations"}
+)
+_ROLE_PATH_TOKENS: tuple[tuple[str, frozenset[str]], ...] = (
+    (
+        "controller",
+        frozenset({"controller", "controllers", "views", "viewsets"}),
+    ),
+    (
+        "data_repository",
+        frozenset(
+            {"repo", "repos", "repository", "repositories", "dao", "dal", "data_access"}
+        ),
+    ),
+    (
+        "service",
+        frozenset(
+            {"service", "services", "usecase", "usecases", "interactor", "interactors"}
+        ),
+    ),
+    (
+        "worker",
+        frozenset(
+            {
+                "worker",
+                "workers",
+                "task",
+                "tasks",
+                "job",
+                "jobs",
+                "consumer",
+                "consumers",
+            }
+        ),
+    ),
+)
+_ROLE_NAME_SUFFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("controller", ("controller", "view", "viewset")),
+    ("data_repository", ("repository", "dao")),
+    ("service", ("service", "usecase", "interactor")),
+    ("worker", ("worker", "task", "job", "consumer")),
+)
+_ROUTE_DECORATOR_SUFFIXES = frozenset(
+    {"route", "get", "post", "put", "patch", "delete", "options", "head", "websocket"}
+)
+
+
+def _derive_backend_architectural_role(
+    entity: IREntity,
+    evidence_by_key: dict[str, IREvidence],
+    *,
+    resolved_framework: str | None,
+    route_paths: frozenset[str] = frozenset(),
+) -> tuple[str, str, tuple[str, ...], str] | None:
+    """Derive a conservative backend boundary without changing frozen F3.
+
+    Modules in conventional backend boundary directories represent one
+    architectural unit per source file. Top-level declarations are promoted
+    only when their name or route decorator is explicit. Nested methods and
+    ordinary helpers remain source-level F3 symbols.
+    """
+    if entity.kind not in {IREntityKind.MODULE, IREntityKind.SYMBOL}:
+        return None
+    if resolved_framework not in _BACKEND_FRAMEWORKS:
+        return None
+    if entity.metadata.get("declaration_kind") in {"module", "package"}:
+        return None
+    if entity.kind == IREntityKind.SYMBOL and entity.container_key is not None:
+        return None
+
+    paths = _entity_source_paths(entity, evidence_by_key)
+    if not paths:
+        return None
+    path = paths[0]
+    path_tokens = set(_identifier_tokens(path))
+    if path_tokens & _NON_PRODUCTION_PATH_TOKENS:
+        return None
+
+    signals: list[str] = [f"framework:{resolved_framework}"]
+    role: str | None = None
+    rule_id: str | None = None
+
+    path_role = _role_from_boundary_path(path)
+    if entity.kind == IREntityKind.MODULE:
+        if path_role is not None:
+            role, token = path_role
+            signals.append(f"path_token:{token}")
+            rule_id = "m4.component.backend_path_role.v1"
+        elif path in route_paths:
+            role = "controller"
+            signals.append("framework_route_module")
+            rule_id = "m4.component.backend_route_module.v1"
+    else:
+        # The module is the boundary when its file/directory already declares
+        # a role; do not duplicate it as one entity per class or function.
+        if path_role is not None or path in route_paths:
+            return None
+        if entity.metadata.get("declaration_kind") == "class":
+            name = entity.name.casefold()
+            for candidate_role, suffixes in _ROLE_NAME_SUFFIXES:
+                if any(name.endswith(suffix) for suffix in suffixes):
+                    role = candidate_role
+                    signals.append(f"name_suffix:{candidate_role}")
+                    rule_id = "m4.component.backend_named_role.v1"
+                    break
+        if role is None and entity.metadata.get("declaration_kind") in {
+            "function",
+            "method",
+        }:
+            decorators = entity.metadata.get("decorators", ())
+            if isinstance(decorators, tuple):
+                route_decorators = sorted(
+                    decorator
+                    for decorator in decorators
+                    if isinstance(decorator, str)
+                    and decorator.casefold().rsplit(".", maxsplit=1)[-1]
+                    in _ROUTE_DECORATOR_SUFFIXES
+                )
+                if route_decorators:
+                    role = "controller"
+                    signals.append(f"route_decorator:{route_decorators[0]}")
+                    rule_id = "m4.component.backend_route_handler.v1"
+
+    if role is None or rule_id is None:
+        return None
+    display_name = (
+        _architectural_boundary_name(path, role)
+        if entity.kind == IREntityKind.MODULE
+        else entity.name
+    )
+    return role, rule_id, tuple(sorted(signals)), display_name
+
+
+def _identifier_tokens(value: str) -> tuple[str, ...]:
+    expanded = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    return tuple(
+        token.casefold() for token in re.split(r"[^A-Za-z0-9]+", expanded) if token
+    )
+
+
+def _role_from_boundary_path(path: str) -> tuple[str, str] | None:
+    source = PurePosixPath(path)
+    # Prefer the most specific suffix in the filename, then the immediate
+    # directory. A distant ancestor named "repositories" or "services" is a
+    # domain boundary, not proof that every nested file has that role.
+    filename_tokens = _identifier_tokens(source.stem)
+    parent_tokens = _identifier_tokens(source.parent.name)
+    if not filename_tokens or filename_tokens[-1] in {"init", "index"}:
+        return None
+    if set(parent_tokens) & {
+        "model",
+        "models",
+        "schema",
+        "schemas",
+        "entity",
+        "entities",
+    }:
+        return None
+    # In filenames, only a role suffix is meaningful. This rejects names such
+    # as repositoryErrors.js and RepositoryArtifact.js. Plural role names are
+    # accepted as directory boundaries but not as resource-named files such as
+    # api/v1/repositories.py.
+    boundary_tokens = (filename_tokens[-1], *reversed(parent_tokens))
+    for token in boundary_tokens:
+        for role, role_tokens in _ROLE_PATH_TOKENS:
+            if token in role_tokens and not (
+                token == filename_tokens[-1] and token.endswith("s")
+            ):
+                return role, token
+    return None
+
+
+def _architectural_boundary_name(path: str, role: str) -> str:
+    source = PurePosixPath(path)
+    stem_tokens = list(_identifier_tokens(source.stem))
+    generic = set().union(*(tokens for _, tokens in _ROLE_PATH_TOKENS))
+    meaningful = [token for token in stem_tokens if token not in generic]
+    if not meaningful:
+        structural = generic | {
+            "application",
+            "domain",
+            "infra",
+            "infrastructure",
+            "src",
+            "api",
+            "v1",
+            "v2",
+        }
+        for parent in source.parents:
+            contextual = [
+                token
+                for token in _identifier_tokens(parent.name)
+                if token not in structural
+            ]
+            if contextual:
+                meaningful = contextual
+                break
+    role_label = {
+        "controller": "Controller",
+        "data_repository": "Repository",
+        "service": "Service",
+        "worker": "Worker",
+    }[role]
+    prefix = " ".join(token.capitalize() for token in meaningful)
+    return f"{prefix} {role_label}".strip()
+
+
 def map_ir_evidence(snapshot_id: UUID, source: IREvidence) -> ArchitectureEvidence:
     source_range = None
     if source.source_range is not None:
@@ -627,6 +912,7 @@ class _ApplicationScopeIndex:
     frameworks_by_path: dict[str, tuple[str, ...]]
     application_evidence_keys: dict[str, tuple[str, ...]]
     route_prefixes_by_module: dict[str, str]
+    route_paths: frozenset[str]
 
     @classmethod
     def build(cls, document: IRDocument) -> _ApplicationScopeIndex:
@@ -635,6 +921,7 @@ class _ApplicationScopeIndex:
         paths: dict[str, set[str]] = defaultdict(set)
         path_frameworks: dict[str, set[str]] = defaultdict(set)
         supporting_keys: dict[str, set[str]] = defaultdict(set)
+        route_paths: set[str] = set()
 
         for evidence in document.evidence:
             if evidence.source_record_type != "framework_detection":
@@ -649,18 +936,29 @@ class _ApplicationScopeIndex:
             for signal in evidence.metadata.get("signals", ()):
                 if isinstance(signal, str) and signal.startswith("path_signal:"):
                     path = _normalized_source_path(signal.removeprefix("path_signal:"))
-                    if path is not None:
+                    if path is not None and _is_application_scope_path(path):
                         paths[framework].add(path)
 
         react_keys: set[str] = set()
         react_paths: set[str] = set()
         for evidence in document.evidence:
             path = _normalized_source_path(evidence.path)
+            production_path = (
+                path if path is not None and _is_application_scope_path(path) else None
+            )
             detected: set[str] = set()
             if evidence.source_record_type == "framework_fact" and isinstance(
                 evidence.framework_name, str
             ):
                 detected.add(evidence.framework_name)
+                if (
+                    production_path is not None
+                    and evidence.framework_name == "fastapi"
+                    and evidence.metadata.get("fact_type") == "route"
+                    and evidence.metadata.get("details", {}).get("reference_kind")
+                    == "decorator"
+                ):
+                    route_paths.add(production_path)
             if evidence.source_record_type == "import_fact":
                 source_module = evidence.metadata.get("source_module")
                 if isinstance(source_module, str):
@@ -671,16 +969,18 @@ class _ApplicationScopeIndex:
             ):
                 detected.add("react")
 
-            if "react" in detected and path is not None:
+            if "react" in detected and production_path is not None:
                 react_keys.add(evidence.evidence_key)
-                react_paths.add(path)
+                react_paths.add(production_path)
 
             for framework in detected:
                 if framework != "react" and framework not in confirmed:
                     continue
-                if path is not None:
-                    paths[framework].add(path)
-                    path_frameworks[path].add(framework)
+                if production_path is not None:
+                    paths[framework].add(production_path)
+                    path_frameworks[production_path].add(framework)
+                else:
+                    continue
                 supporting_keys[framework].add(evidence.evidence_key)
 
         # Next.js is already the stronger full-stack React application boundary.
@@ -716,6 +1016,7 @@ class _ApplicationScopeIndex:
             },
             application_evidence_keys=evidence_keys,
             route_prefixes_by_module=_express_route_mounts(document),
+            route_paths=frozenset(route_paths),
         )
 
     def framework_for_entity(
@@ -887,6 +1188,10 @@ def _normalized_source_path(path: str) -> str | None:
     return normalized
 
 
+def _is_application_scope_path(path: str) -> bool:
+    return not (set(_identifier_tokens(path)) & _APPLICATION_SCOPE_EXCLUDED_PATH_TOKENS)
+
+
 def _boundary_roots(paths: set[str]) -> tuple[str, ...]:
     parents = [PurePosixPath(path).parent.parts for path in sorted(paths)]
     if not parents:
@@ -896,6 +1201,11 @@ def _boundary_roots(paths: set[str]) -> tuple[str, ...]:
         if len(set(parts)) != 1:
             break
         common.append(parts[0])
+    # Versioned API packages are interface subtrees, not application roots.
+    # Widen ``backend/api/v1`` to ``backend/api`` so adjacent application
+    # services remain within the same evidence-backed FastAPI boundary.
+    if common and re.fullmatch(r"v\d+", common[-1], flags=re.IGNORECASE):
+        common.pop()
     root = "/".join(common)
     return (root,) if root and root != "." else ()
 

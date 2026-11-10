@@ -115,17 +115,38 @@
 .arch-canvas-controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.45rem;
+  min-width: 0;
   color: var(--text-secondary, #94A3B8);
   font-size: 0.775rem;
-  white-space: nowrap;
+}
+
+.arch-focus-controls,
+.arch-zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.arch-focus-controls {
+  flex: 1 1 18rem;
+  justify-content: flex-end;
+}
+
+.arch-zoom-controls {
+  flex: 0 0 auto;
 }
 
 .arch-connector-count {
-  display: inline-block;
-  width: 12.5rem;
+  display: block;
+  min-width: 0;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 .arch-canvas-controls button {
@@ -146,6 +167,7 @@
 }
 
 .arch-canvas-controls .arch-focus-reset {
+  flex: 0 0 4.5rem;
   width: 4.5rem;
   padding-inline: 0.7rem;
   border-color: rgba(56, 189, 248, 0.45);
@@ -203,8 +225,16 @@
 @media (max-width: 720px) {
   .arch-canvas-controls {
     justify-content: flex-start;
-    overflow-x: auto;
     padding-bottom: 0.2rem;
+  }
+
+  .arch-focus-controls {
+    flex-basis: 100%;
+    justify-content: space-between;
+  }
+
+  .arch-connector-count {
+    text-align: left;
   }
 }
 
@@ -257,6 +287,10 @@
   fill: #94A3B8;
   font-family: var(--font-mono, monospace);
   font-size: 10px;
+}
+
+.arch-map-node-content {
+  pointer-events: none;
 }
 
 .arch-connector {

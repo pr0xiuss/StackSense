@@ -46,6 +46,22 @@ def _evidence(key: str, path: str = "src/app.py") -> IREvidence:
     )
 
 
+def _framework_evidence(framework: str, path: str) -> IREvidence:
+    return IREvidence(
+        evidence_key=f"ev-framework-{framework}",
+        artifact_id=None,
+        path=path,
+        source_record_type="framework_detection",
+        upstream_analyzer_version="0.1.0",
+        strength=IREvidenceStrength.FRAMEWORK_STRUCTURAL,
+        metadata={
+            "framework": framework,
+            "status": "confirmed",
+            "signals": (f"path_signal:{path}",),
+        },
+    )
+
+
 def _document(
     entities: tuple[IREntity, ...], evidence: tuple[IREvidence, ...]
 ) -> IRDocument:
@@ -132,6 +148,65 @@ def test_low_level_symbols_and_unscoped_modules_are_not_promoted() -> None:
     )
     assert result.entities == ()
     assert result.evidence == ()
+
+
+def test_backend_source_boundaries_are_promoted_without_mutating_f3() -> None:
+    framework = _framework_evidence("express", "backend/express/src/app.js")
+    controller_ev = _evidence(
+        "ev-controller", "backend/express/src/controllers/users.controller.js"
+    )
+    service_ev = _evidence(
+        "ev-service", "backend/express/src/services/users.service.js"
+    )
+    repository_ev = _evidence(
+        "ev-repository", "backend/express/src/repositories/users.repository.js"
+    )
+    helper_ev = _evidence("ev-helper", "backend/express/src/utils/format.js")
+
+    def module(key: str, evidence: IREvidence) -> IREntity:
+        return IREntity(
+            ir_key=key,
+            kind=IREntityKind.MODULE,
+            name=evidence.path.rsplit("/", maxsplit=1)[-1],
+            qualified_name=evidence.path,
+            language="javascript",
+            evidence_keys=(evidence.evidence_key,),
+        )
+
+    source_entities = (
+        module("controller-module", controller_ev),
+        module("service-module", service_ev),
+        module("repository-module", repository_ev),
+        module("helper-module", helper_ev),
+    )
+    resolved = IdentityResolutionService().resolve(
+        _document(
+            source_entities,
+            (framework, controller_ev, service_ev, repository_ev, helper_ev),
+        )
+    )
+
+    by_kind = {entity.kind: entity for entity in resolved.entities}
+    assert by_kind[ArchitectureEntityKind.CONTROLLER].name == "Users Controller"
+    assert by_kind[ArchitectureEntityKind.SERVICE].name == "Users Service"
+    assert by_kind[ArchitectureEntityKind.DATA_REPOSITORY].name == "Users Repository"
+    assert (
+        next(
+            entity
+            for entity in resolved.entities
+            if entity.source_ir_keys == ("helper-module",)
+        ).kind
+        == ArchitectureEntityKind.MODULE
+    )
+    assert all(
+        by_kind[kind].status == ArchitectureFactStatus.INFERRED
+        for kind in {
+            ArchitectureEntityKind.CONTROLLER,
+            ArchitectureEntityKind.SERVICE,
+            ArchitectureEntityKind.DATA_REPOSITORY,
+        }
+    )
+    assert all(entity.kind == IREntityKind.MODULE for entity in source_entities)
 
 
 def test_same_name_in_different_scopes_remains_distinct() -> None:

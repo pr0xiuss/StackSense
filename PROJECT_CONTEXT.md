@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md — StackSense Engineering Context
 
-Last reconciled: 2026-11-09
+Last reconciled: 2026-11-10
 Current branch: `feature_mannan`
 
 ## 1. Project Overview
@@ -13,12 +13,10 @@ execution, deterministic inspection/IR, canonical Architecture Models and
 published analysis results. The services communicate only through authenticated
 internal APIs and never read each other's databases.
 
-Phase 3 M1/F1 through M4/Architecture Model v1 are implemented, independently
-reviewed, corrected, verified and frozen. Phase 3 M5 frontend integration and
-basic Architecture Model visualization has been implemented by a collaborator.
-The current work is post-implementation M5 review and remediation; the broken
-analysis-start vertical slice has been corrected and verified, while the wider
-M5 review remains open at the owner's request.
+Phase 3 M1/F1 through M4/Architecture Model v1 and M5 frontend integration are
+implemented, independently reviewed, corrected, verified and frozen. M6
+cross-service validation, security checks, performance verification and phase
+closeout are complete. Phase 3 is **FROZEN / COMPLETE**.
 
 ### 1.1 Authoritative sources
 
@@ -31,12 +29,12 @@ M5 review remains open at the owner's request.
 ### 1.2 Verified repository state
 
 - Branch: `feature_mannan`.
-- The worktree is dirty and includes the collaborator's M1–M4 implementation,
-  review remediation and untracked M4 files. Planning must preserve it.
+- The worktree contains the verified Phase 3 implementation and final remediation
+  awaiting its completion commit. All existing changes must be preserved.
 - React 18/Vite uses JavaScript/JSX, a small hash/path router in `App.jsx`, the
-  central `apiClient.js`, `AuthContext`, and feature services. There is no React
-  Router, global state library, visualization dependency, Vitest, ESLint or
-  TypeScript configuration.
+  central `apiClient.js`, `AuthContext`, feature services, and focused Vitest /
+  React Testing Library coverage. There is no React Router, global state
+  library, visualization dependency, ESLint or TypeScript configuration.
 - Existing route pages are Landing, Auth, Projects Dashboard and Repository
   Detail. Repository Detail already exposes Ingestion, Revisions and Artifacts.
 - The existing design is a responsive dark interface using tokens in
@@ -84,8 +82,8 @@ M5 review remains open at the owner's request.
 | M2/F2 | **FROZEN / COMPLETE v1.0.0** | Deterministic inventory, detection, isolated Python/JS/TS/JSX/TSX parsing, framework enrichment and immutable non-persisted F2. |
 | M3/F3 | **FROZEN / COMPLETE v1.0.0** | Deterministic parser-neutral IR, document-local lexical semantics, diagnostics, validation and immutable non-persisted F3. |
 | M4 | **FROZEN / COMPLETE v1.0.0** | Canonical identity/model construction, validation, approved capacity limits, atomic publication and published-only query APIs. |
-| M5 | **IMPLEMENTED — REVIEW/REMEDIATION IN PROGRESS** | Express analysis gateway plus React initiation, lifecycle, findings, result exploration and basic bounded Architecture Model visualization. The start-analysis path is corrected and verified end to end. |
-| M6 | Planned | Cross-service/E2E evaluation, security, performance and Phase 3 closeout after M5. |
+| M5 | **FROZEN / COMPLETE** | Express analysis gateway plus React initiation, lifecycle, findings, result exploration and bounded Architecture Model visualization; final UI remediation is verified. |
+| M6 | **FROZEN / COMPLETE** | Cross-service/E2E, regression, security, production-build and performance validation completed; Phase 3 closed on 2026-11-10. |
 
 ### 3.1 M1–M4 verification retained
 
@@ -101,7 +99,7 @@ tests rather than being duplicated here.
 
 ## 4. Current Phase Plan — Phase 3 Module 5
 
-**Status: IMPLEMENTED — REVIEW/REMEDIATION IN PROGRESS.**
+**Status: FROZEN / COMPLETE.**
 
 The owner approved the complete four-batch plan and all four decisions in §6.1
 on 2026-11-09. The plan is now the implementation baseline. Material scope,
@@ -714,18 +712,18 @@ M5 is complete only when:
 
 | Module | Status | Evidence / remaining |
 |---|---|---|
-| M1 | **FROZEN / COMPLETE** | Verified; owner-approved additive M5 repository-history and diagnostic query change control is queued for B1. |
-| M2 | **FROZEN / COMPLETE** | No M5 change planned. |
+| M1 | **FROZEN / COMPLETE** | Verified, including the implemented additive repository-history filter and diagnostic query boundary required by M5. Frozen F1 lifecycle semantics remain unchanged. |
+| M2 | **FROZEN / COMPLETE** | F2 contract and extraction coverage remain unchanged. Production performance hardening now reuses bounded OS-isolated parser children, parallelizes authorized artifact reads through a pooled HTTP client, preserves deterministic ordering/integrity checks, and emits phase timing telemetry. |
 | M3 | **FROZEN / COMPLETE** | No M5 change planned. |
-| M4 | **FROZEN / COMPLETE** | Existing API verified; owner-approved additive entity-evidence query filter is queued for B1. |
+| M4 | **FROZEN / COMPLETE** | Architecture Model construction/publication and the implemented bounded entity-evidence query filter are verified. Frozen schema v1 semantics remain unchanged. |
 | M5 B1 | **COMPLETE / VERIFIED** | Implemented Express analysisConfig, analysisGatewayService, analysisValidate, analysisController, architectureController, analysisRoutes, architectureRoutes. Implemented FastAPI optional repository_id filter, diagnostics list endpoint, and M4 entity_id evidence filter. 29 Express tests passed (11 unit, 18 integration). 15 FastAPI M1/M4 API tests passed. |
 | M5 B2 | **COMPLETE / VERIFIED** | Implemented frontend contracts (analysisContracts, architectureContracts), API services (analysisService, architectureService), apiClient streaming extension (apiStream), dark theme styling (analysis.css), AnalysesTab with pagination/status filtering, StartAnalysisModal with revision inspection, idempotency key generation and advanced options, RepositoryDetailPage tab integration, and App route precedence. Verified with clean `npm run build` (vite v8.3.1), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and clean static checks (black, ruff, mypy --strict). |
 | M5 B3 | **COMPLETE / VERIFIED** | Implemented `useAnalysisLiveStatus` hook (authoritative REST polling with SSE invalidation, 15s reconnect backoff, 3s serialized polling fallback, terminal state teardown), `AnalysisDetailPage`, `AnalysisHeader` (breadcrumbs, cancellation modal, architecture link, streaming indicator), `AnalysisProgress` (8-stage progress rail, metrics cards, indeterminate/percentage progress), `AnalysisFindings` (diagnostics, unresolved relationships, architecture conflicts with independent pagination and severity filters), `AnalysisExecution` (active worker job telemetry and stage execution table), App route mounting, and dark theme CSS. Verified with clean `npm run build` (75 modules, 2.15s), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and static checks (black, ruff, mypy --strict). |
 | M5 B4 | **COMPLETE / VERIFIED** | Implemented `ArchitectureModelPage`, `ArchitectureCanvas` (bounded partial window of max 100 entities, deterministic tier layout by kind, stable logical-ID ordering, static SVG connectors with arrowheads, keyboard selection), `ArchitectureInspector` (safe structured metadata key-values, evidence counts, namespace, IR tags), `ArchitectureCollectionTable` (typed paginated table shell for Entities, Relationships, Evidence with entity filtering, Unresolved, Conflicts), `architecture.css` dark theme design token styling, and App route integration. Verified with clean `npm run build` (81 modules, 3.96s), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and static checks (black, ruff, mypy --strict). |
-| M5 remediation | **ANALYSIS FLOW AND MODEL PRESENTATION FIXED / VERIFIED** | Corrected the Express gateway prefix to `/api/v1`, documented/configured both internal service credentials, registered the mandatory production `input_validation` stage, removed the API-to-worker queue-state race, preserved authorization-before-resource-lookup ordering, and repaired live-status lifecycle handling. Corrected multi-application M4 scope promotion, internal module resolution, static Express router mount composition, and the M4 boundary so lower-level frontend calls/imports are not mislabeled as unresolved architecture. Aligned frontend entity/relationship/evidence vocabulary with the canonical M4 contract and replaced the single-row canvas with a wrapped, tiered, zoomable bounded view. Canvas selection now preserves the exact scroll position before and after browser focus handling, uses fixed toolbar geometry so connector-count changes cannot reflow the viewport, and offers a direct-neighborhood focus with an explicit Show all reset. The analysis SVG node class is isolated from the landing-page preview styles; this removes the global hover transform that previously replaced SVG coordinates and caused nodes to jump to the origin or disappear. Real MongoDB/PostgreSQL/RabbitMQ/Celery verification completed all eight stages and published a 147-entity/292-relationship model before the final noise and mount-path corrections. Non-PostgreSQL Phase 3 regression: 404 passed, 3 skipped, 2 deselected; PostgreSQL rerun: 3 passed; frontend: all legacy suites plus 5 Vitest tests and production build passed; focused Python Ruff, Black and strict mypy passed; both npm audits report zero vulnerabilities. A fresh real analysis is required to regenerate immutable published results with the final corrections. |
-| Local analysis operations | **VERIFIED** | Added and installed user-level systemd worker and Beat services from `ops/systemd/`. Exactly one named worker consumes `analysis.jobs`; Beat executes the 60-second M1 dispatch-recovery schedule. Both services are enabled with automatic restart, user lingering is enabled for boot-time startup, and the PostgreSQL/RabbitMQ containers already use `unless-stopped`. A previously orphaned queued analysis was republished once and verified `RUNNING` under `stacksense-worker@pr0xius`. |
-| M5 | **IMPLEMENTED — REVIEW/REMEDIATION IN PROGRESS** | Start-analysis blocker is resolved. Do not mark M5 frozen until the owner resumes and the remaining UI/review scope is closed. |
-| M6 | Not started | Blocked on M5 review closure. |
+| M5 remediation | **FROZEN / COMPLETE** | Corrected the Express gateway prefix to `/api/v1`, documented/configured both internal service credentials, registered the mandatory production `input_validation` stage, removed the API-to-worker queue-state race, preserved authorization-before-resource-lookup ordering, and repaired live-status lifecycle handling. Corrected multi-application M4 scope promotion, internal module resolution, static Express router mount composition, and the M4 boundary so lower-level frontend calls/imports are not mislabeled as unresolved architecture. Added conservative, evidence-backed backend boundary promotion for Django, FastAPI, Flask, Express and NestJS controllers, services, data repositories and workers without changing F3; added static endpoint-to-controller routing and indexed cross-file relationship resolution. Test/spec/migration evidence no longer expands or destroys production framework roots, FastAPI route modules are promoted as controllers, and ordinary Python `.get()`/`.delete()` calls are not published as HTTP endpoints. The bounded overview now selects entities round-robin by application namespace and loads bounded relationship candidates by semantic kind, preventing Express logical-ID ordering from hiding FastAPI endpoints and Python services. Modules, libraries and the full frontend inventory remain available in collection tabs. Aligned frontend entity/relationship/evidence vocabulary with the canonical M4 contract and replaced the single-row canvas with a wrapped, tiered, zoomable bounded view. Canvas selection remains fixed during selection/focus changes and the analysis SVG node class is isolated from landing-page hover transforms. Node content is now clipped inside its SVG card, and connector-focus controls are grouped responsively so `Show all` cannot overlap the connector summary. Long pipeline-stage labels now wrap in a stable two-line title area instead of truncating Identity Resolution and Architecture Build. A real optimized run processed 469 extraction items in about 20 seconds and completed the downstream pipeline. The final repository smoke model validated with 2 applications, 19 controllers, 25 services, 26 data repositories, 4 workers, 79 endpoints and 78 static `routes_to` relationships. Latest architecture verification: 42 focused M4 tests passed; the 10,000-entity capacity benchmark passed in 27.38s; Python regression excluding the pre-existing pathological M3 stress benchmark passed 746 tests with 3 platform skips; frontend legacy suites plus 8 Vitest tests and the production build passed. Earlier Express 422-test and zero-vulnerability npm audit gates remain unchanged. Focused Ruff, changed-file Black, strict mypy and diff checks passed. |
+| Local analysis operations | **VERIFIED** | Added and installed user-level systemd worker and Beat services from `ops/systemd/`. Exactly one named worker consumes `analysis.jobs`; Beat executes the 60-second M1 dispatch-recovery schedule. Both services are enabled with automatic restart, user lingering is enabled for boot-time startup, and the PostgreSQL/RabbitMQ containers already use `unless-stopped`. A previously orphaned queued analysis was republished once and verified `RUNNING` under `stacksense-worker@pr0xius`. M2 throughput hardening replaces per-artifact parser startup with four reusable sandboxed children (recycled after 64 requests), reuses Express HTTP connections, and performs eight bounded concurrent artifact reads. Benchmarks measured 12 representative isolated parses falling from 18.014s to 3.056s (5.89x), 100 small Python parses completing in 3.193s, and 300 actual StackSense source files (1.71 MB, 59,053 facts) completing isolated extraction in 6.810s; 105 focused M1-input/M2 tests passed with 3 platform skips. |
+| M5 | **FROZEN / COMPLETE** | Analysis initiation, live lifecycle, findings, model exploration, visualization and final stage-rail presentation are verified. |
+| M6 | **FROZEN / COMPLETE** | Final cross-service regression, real execution, performance, build, static and dependency-security gates passed. On 2026-11-10 the owner additionally accepted the phase after live testing complete analysis runs and Architecture Model exploration on multiple projects. |
 
 ## 6. Decisions, Risks and Required Approvals
 
@@ -759,17 +757,32 @@ implementation batch, API change, dependency addition or test as completed.
 - Route regression: most-specific matching and tests.
 - Dirty worktree: status inspection before/after and no unrelated overwrite.
 
-No architectural decision currently blocks implementation.
+No architectural decision or unresolved acceptance gate blocks Phase 3 closure.
 
 ## 7. Current Handoff
 
-M1–M4 contracts remain frozen and verified. Corrective implementation changes
-preserve F1/F2/F3 and Architecture Model schema versions. M5 is implemented but
-is undergoing independent review/remediation. The analysis-start blocker, model
-under-promotion, unresolved-noise boundary and unreadable map layout are resolved.
+M1–M5 contracts and implementation are frozen and verified. Corrective changes
+preserve F1/F2/F3 and Architecture Model schema versions. The analysis-start
+flow, production-only backend scope resolution, backend boundary promotion,
+relationship resolution, application-balanced backend-first map, map stability,
+parser throughput and pipeline-stage presentation are resolved.
+M6 closeout is complete, and the owner accepted the end-to-end product behavior
+after live project testing on 2026-11-10. Phase 3 is formally **FROZEN /
+COMPLETE**; subsequent changes require explicit change control.
 The user-level Celery worker and Beat services were restarted, verified active,
 and remain enabled for login/boot startup. Existing published Architecture
 Versions remain immutable; run a new analysis to observe the final model changes.
+The user-level Celery worker was restarted after the final scope/sampling fix and
+confirmed ready on `analysis.jobs`. Previously published models will never change
+in place; that immutability is intentional.
 
-**Next action:** At the owner's direction, resume the remaining M5 UI review;
-do not begin M6 or mark M5 frozen before that closure.
+M2 performance hardening preserves the frozen F2 contract, source coverage,
+security sandbox and capacity behavior. New timing logs split artifact-read,
+parse, enrichment and serialization time so future bottlenecks are measurable.
+Any long-running Celery worker must be restarted after deploying this code;
+Celery does not hot-reload imported parser modules.
+
+**Next action:** Create and push the Phase 3 completion commit on
+`feature_mannan`, then begin Phase 4 planning from the frozen Phase 3 output
+boundary. Do not reopen frozen Phase 3 contracts without explicit change
+control.

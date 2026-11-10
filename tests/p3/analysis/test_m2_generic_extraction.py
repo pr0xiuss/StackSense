@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from uuid import UUID, uuid4
+
+import pytest
 
 from backend.platform.analysis.domain.analysis import AnalysisConfiguration
 from backend.platform.analysis.domain.input import (
@@ -15,6 +18,7 @@ from backend.platform.analysis.domain.input import (
 from backend.platform.analysis.inspection.model import ArtifactProcessingOutcome
 from backend.platform.analysis.inspection.service import RepositoryInspectionService
 from backend.platform.analysis.syntax.base import ParserRequest, ParserResult
+from backend.platform.analysis.syntax.executor import ParserExecutor
 from backend.platform.analysis.syntax.javascript import TreeSitterJsTsAdapter
 from backend.platform.analysis.syntax.model import (
     DeclarationFact,
@@ -306,6 +310,28 @@ def test_successful_repository_extraction_is_canonical_and_parses_once() -> None
         if isinstance(fact, DeclarationFact) and fact.name == "App"
     )
     assert component.kind == DeclarationKind.REACT_COMPONENT
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Production pool targets Linux")
+def test_production_parser_pool_preserves_canonical_f2_output() -> None:
+    """Concurrent isolated execution is byte-equivalent to canonical parsing."""
+    analysis_input = _analysis_input(
+        tuple(
+            (
+                f"src/module_{index}.py",
+                f"def value_{index}():\n    return {index}\n".encode(),
+            )
+            for index in range(6)
+        )
+    )
+    baseline = RepositoryInspectionService(
+        parser_executor=_InProcessExecutor()  # type: ignore[arg-type]
+    ).inspect(analysis_input, configuration_fingerprint="config-v1")
+    optimized = RepositoryInspectionService(
+        parser_executor=ParserExecutor(worker_count=2)
+    ).inspect(analysis_input, configuration_fingerprint="config-v1")
+
+    assert optimized.result.to_canonical_json() == baseline.result.to_canonical_json()
 
 
 def test_analysis_fact_and_serialized_caps_reject_result_atomically() -> None:

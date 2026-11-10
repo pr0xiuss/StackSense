@@ -147,6 +147,19 @@ Do not also run foreground workers after enabling these services. Check them
 with `systemctl --user status stacksense-celery-worker.service` and follow logs
 with `journalctl --user -u stacksense-celery-worker.service -f`.
 
+Syntax extraction uses a bounded pool of reusable, OS-isolated parser children.
+The defaults are four parser children per active analysis and 64 files before a
+child is recycled. Smaller worker hosts can lower `PARSER_WORKER_COUNT`; capacity
+planning should account for `PARSER_MAX_MEMORY_MB` per concurrent parser child
+and `ANALYSIS_WORKER_CONCURRENCY` simultaneous analyses. Reducing the pool size
+changes throughput only—it does not reduce extraction coverage.
+
+Artifact content is fetched from the authorized Express internal API through a
+reused HTTP connection pool. `PLATFORM_ARTIFACT_FETCH_CONCURRENCY` defaults to
+eight bounded concurrent reads per active analysis. Lower it when the Express
+service or object store has a tighter connection budget; content size and hash
+validation remain mandatory regardless of the concurrency setting.
+
 ---
 
 ### Frontend
