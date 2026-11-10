@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import replace
+from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID
 
@@ -35,6 +36,7 @@ from backend.platform.analysis.architecture.validator import ArchitectureValidat
 from backend.platform.analysis.ir.model import (
     IRConflict,
     IRDocument,
+    IREntity,
     IREvidence,
     IRFactStatus,
     IRRelationshipKind,
@@ -65,6 +67,14 @@ _RELATIONSHIP_RULES = {
     IRRelationshipKind.SOURCE_REFERENCES_DEPENDENCY: (
         ArchitectureRelationshipKind.DEPENDS_ON,
         "m4.relationship.source_dependency.v1",
+    ),
+    IRRelationshipKind.COMPOSES: (
+        ArchitectureRelationshipKind.DEPENDS_ON,
+        "m4.relationship.static_composition.v1",
+    ),
+    IRRelationshipKind.DECLARES_ROUTE: (
+        ArchitectureRelationshipKind.CONTAINS,
+        "m4.relationship.declares_route.v1",
     ),
 }
 
@@ -123,6 +133,7 @@ class ArchitectureBuilder:
     ) -> ArchitectureDocument:
         ir_to_entities = _index_entities_by_ir_key(resolved.entities)
         entities_by_id = {item.logical_id: item for item in resolved.entities}
+        source_entities_by_key = {item.ir_key: item for item in source.entities}
         source_evidence = {item.evidence_key: item for item in source.evidence}
         evidence = {item.logical_id: item for item in resolved.evidence}
         relationships: list[ArchitectureRelationship] = []
@@ -137,22 +148,64 @@ class ArchitectureBuilder:
             if rule is None or source_logical_id is None:
                 continue
             kind, rule_id = rule
+            if (
+                kind == ArchitectureRelationshipKind.CALLS
+                and entities_by_id[source_logical_id].kind
+                == ArchitectureEntityKind.MODULE
+            ):
+                kind = ArchitectureRelationshipKind.DEPENDS_ON
+                rule_id = "m4.relationship.module_static_reference.v1"
             if item.target_key is not None:
                 target_logical_id = _single_identity(ir_to_entities, item.target_key)
                 if target_logical_id is None:
-                    continue
-                if kind == ArchitectureRelationshipKind.DEPENDS_ON:
-                    kind = _dependency_relationship_kind(
+                    target = source_entities_by_key.get(item.target_key)
+                    if not _preserve_unpromoted_relationship(
+                        item.kind,
                         entities_by_id[source_logical_id],
-                        entities_by_id[target_logical_id],
-                        item.metadata,
+                        target,
+                    ):
+                        # Low-level IR containment may intentionally terminate at
+                        # a symbol that is not architecturally promoted. The same
+                        # applies to static source facts that do not establish an
+                        # architectural target.
+                        continue
+                    mapped_evidence = _map_evidence_ids(
+                        source.snapshot_id,
+                        source_evidence,
+                        item.evidence_keys,
+                        evidence,
                     )
-                    rule_id = f"{rule_id}.{kind.value}"
+                    unresolved_relationships.append(
+                        _unresolved_relationship(
+                            source,
+                            kind=kind,
+                            source_logical_id=source_logical_id,
+                            target_descriptor=_entity_descriptor(
+                                target, item.target_key
+                            ),
+                            reason=ArchitectureUnresolvedReason.UNSUPPORTED,
+                            status=ArchitectureFactStatus.UNRESOLVED,
+                            evidence_ids=mapped_evidence,
+                            source_ir_keys=(item.ir_key,),
+                            candidate_references=(item.target_key,),
+                            rule_id=f"{rule_id}.unpromoted_target",
+                        )
+                    )
+                    continue
+                if source_logical_id == target_logical_id:
+                    continue
                 mapped_evidence = _map_evidence_ids(
                     source.snapshot_id,
                     source_evidence,
                     item.evidence_keys,
                     evidence,
+                )
+                kind, rule_id = _relationship_kind_for_target(
+                    kind,
+                    rule_id,
+                    entities_by_id[source_logical_id],
+                    entities_by_id[target_logical_id],
+                    item.metadata,
                 )
                 relationships.append(
                     _relationship(
@@ -168,6 +221,51 @@ class ArchitectureBuilder:
                 )
             elif item.unresolved_reference_key is not None:
                 unresolved = unresolved_by_key[item.unresolved_reference_key]
+                target_logical_id = _resolve_descriptor_identity(
+                    unresolved.target_name,
+                    source_entity=entities_by_id[source_logical_id],
+                    entities=resolved.entities,
+                )
+                if target_logical_id is not None:
+                    if source_logical_id != target_logical_id:
+                        mapped_evidence = _map_evidence_ids(
+                            source.snapshot_id,
+                            source_evidence,
+                            tuple(
+                                sorted(
+                                    set(item.evidence_keys + unresolved.evidence_keys)
+                                )
+                            ),
+                            evidence,
+                        )
+                        resolved_kind, resolved_rule_id = _relationship_kind_for_target(
+                            kind,
+                            rule_id,
+                            entities_by_id[source_logical_id],
+                            entities_by_id[target_logical_id],
+                            item.metadata,
+                        )
+                        relationships.append(
+                            _relationship(
+                                source,
+                                kind=resolved_kind,
+                                source_logical_id=source_logical_id,
+                                target_logical_id=target_logical_id,
+                                status=ArchitectureFactStatus.INFERRED,
+                                evidence_ids=mapped_evidence,
+                                source_ir_keys=(item.ir_key, unresolved.unresolved_key),
+                                rule_id=(
+                                    f"{resolved_rule_id}.exact_cross_file_resolution"
+                                ),
+                            )
+                        )
+                    continue
+                if not _preserve_unresolved_relationship(
+                    item.kind,
+                    entities_by_id[source_logical_id],
+                    unresolved.target_name,
+                ):
+                    continue
                 mapped_evidence = _map_evidence_ids(
                     source.snapshot_id,
                     source_evidence,
@@ -258,6 +356,201 @@ def _index_entities_by_ir_key(
 def _single_identity(index: dict[str, tuple[str, ...]], ir_key: str) -> str | None:
     values = index.get(ir_key, ())
     return values[0] if len(values) == 1 else None
+
+
+def _entity_descriptor(entity: IREntity | None, fallback: str) -> str:
+    if entity is None:
+        return fallback
+    return entity.qualified_name or entity.name
+
+
+def _resolve_descriptor_identity(
+    descriptor: str,
+    *,
+    source_entity: ArchitectureEntity,
+    entities: tuple[ArchitectureEntity, ...],
+) -> str | None:
+    """Resolve one static import descriptor to an exact module/dependency entity."""
+    dependency_matches = [
+        entity.logical_id
+        for entity in entities
+        if isinstance(entity.metadata.get("dependency_name"), str)
+        and _dependency_matches_descriptor(
+            str(entity.metadata["dependency_name"]), descriptor
+        )
+        and entity.metadata.get("application_namespace")
+        == source_entity.metadata.get("application_namespace")
+    ]
+    if len(dependency_matches) == 1:
+        return dependency_matches[0]
+
+    source_path = source_entity.metadata.get("qualified_name")
+    module_paths = {
+        str(entity.metadata["qualified_name"]): entity.logical_id
+        for entity in entities
+        if entity.kind == ArchitectureEntityKind.MODULE
+        and isinstance(entity.metadata.get("qualified_name"), str)
+    }
+    candidates = _module_path_candidates(
+        descriptor,
+        source_path if isinstance(source_path, str) else None,
+    )
+    exact = {
+        logical_id
+        for path, logical_id in module_paths.items()
+        if _module_path_matches(path, candidates)
+    }
+    return next(iter(exact)) if len(exact) == 1 else None
+
+
+def _dependency_matches_descriptor(dependency_name: str, descriptor: str) -> bool:
+    if dependency_name.startswith("@"):
+        descriptor_root = "/".join(descriptor.split("/")[:2])
+    else:
+        descriptor_root = descriptor.split("/", maxsplit=1)[0].split(".", maxsplit=1)[0]
+    return descriptor_root == dependency_name
+
+
+def _module_path_candidates(
+    descriptor: str, source_path: str | None
+) -> tuple[str, ...]:
+    normalized = descriptor.replace("\\", "/")
+    bases: set[str] = set()
+    if normalized.startswith(".") and source_path is not None:
+        parent = PurePosixPath(source_path).parent
+        parts: list[str] = list(parent.parts)
+        for part in PurePosixPath(normalized).parts:
+            if part in {"", "."}:
+                continue
+            if part == "..":
+                if parts:
+                    parts.pop()
+            else:
+                parts.append(part)
+        bases.add("/".join(parts))
+    else:
+        dotted = normalized.lstrip(".").replace(".", "/")
+        if dotted:
+            bases.add(dotted)
+    return tuple(sorted(bases))
+
+
+def _module_path_matches(path: str, candidates: tuple[str, ...]) -> bool:
+    normalized_path = path.replace("\\", "/")
+    without_extension = _without_source_extension(normalized_path)
+    for candidate in candidates:
+        normalized_candidate = _without_source_extension(candidate)
+        if without_extension == normalized_candidate or without_extension.endswith(
+            f"/{normalized_candidate}"
+        ):
+            return True
+        if (
+            without_extension.endswith("/index")
+            and without_extension[:-6] == normalized_candidate
+        ):
+            return True
+        if without_extension.endswith("/__init__") and without_extension[:-9].endswith(
+            normalized_candidate
+        ):
+            return True
+    return False
+
+
+def _without_source_extension(path: str) -> str:
+    suffix = PurePosixPath(path).suffix.lower()
+    if suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py"}:
+        return path[: -len(suffix)]
+    return path
+
+
+def _preserve_unpromoted_relationship(
+    kind: IRRelationshipKind,
+    source: ArchitectureEntity,
+    target: IREntity | None,
+) -> bool:
+    """Keep only unresolved records that still describe architecture.
+
+    F3 intentionally contains source-level declarations and references.  An
+    unpromoted function, hook, DOM method, or local variable is not thereby an
+    unresolved Architecture Model entity.  Backend architectural roles remain
+    useful diagnostics when their statically referenced target was not promoted.
+    """
+    if kind in {IRRelationshipKind.CONTAINS, IRRelationshipKind.DECLARES}:
+        return False
+    return (
+        target is not None
+        and kind
+        in {
+            IRRelationshipKind.STATIC_CALL_REFERENCE,
+            IRRelationshipKind.SOURCE_REFERENCES_DEPENDENCY,
+            IRRelationshipKind.INHERITS,
+        }
+        and _is_backend_architectural_source(source)
+    )
+
+
+def _preserve_unresolved_relationship(
+    kind: IRRelationshipKind,
+    source: ArchitectureEntity,
+    target_descriptor: str,
+) -> bool:
+    if kind == IRRelationshipKind.IMPORTS:
+        # Relative source imports represent repository-internal module edges.
+        # Styles/assets and bare runtime/library imports remain available in F3
+        # but are not missing Architecture Model entities.
+        suffix = PurePosixPath(target_descriptor).suffix.lower()
+        return target_descriptor.startswith(".") and suffix not in {
+            ".css",
+            ".scss",
+            ".sass",
+            ".less",
+            ".svg",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+        }
+    if kind in {
+        IRRelationshipKind.STATIC_CALL_REFERENCE,
+        IRRelationshipKind.INHERITS,
+        IRRelationshipKind.SOURCE_REFERENCES_DEPENDENCY,
+    }:
+        return _is_backend_architectural_source(source)
+    return False
+
+
+def _is_backend_architectural_source(entity: ArchitectureEntity) -> bool:
+    if entity.metadata.get("architectural_role") == "frontend_component":
+        return False
+    return entity.kind in {
+        ArchitectureEntityKind.SERVICE,
+        ArchitectureEntityKind.CONTROLLER,
+        ArchitectureEntityKind.WORKER,
+        ArchitectureEntityKind.DATA_REPOSITORY,
+        ArchitectureEntityKind.COMPONENT,
+    }
+
+
+def _relationship_kind_for_target(
+    kind: ArchitectureRelationshipKind,
+    rule_id: str,
+    source: ArchitectureEntity,
+    target: ArchitectureEntity,
+    metadata: Mapping[str, Any],
+) -> tuple[ArchitectureRelationshipKind, str]:
+    if kind == ArchitectureRelationshipKind.IMPORTS and target.kind not in {
+        ArchitectureEntityKind.MODULE,
+        ArchitectureEntityKind.COMPONENT,
+        ArchitectureEntityKind.LIBRARY,
+    }:
+        return (
+            ArchitectureRelationshipKind.DEPENDS_ON,
+            f"{rule_id}.static_infrastructure_dependency",
+        )
+    if kind == ArchitectureRelationshipKind.DEPENDS_ON:
+        resolved = _dependency_relationship_kind(source, target, metadata)
+        return resolved, f"{rule_id}.{resolved.value}"
+    return kind, rule_id
 
 
 def _dependency_relationship_kind(

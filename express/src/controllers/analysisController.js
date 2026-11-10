@@ -3,13 +3,31 @@ const { analysisGatewayService } = require('../services/analysisGatewayService')
 
 const analysisController = {
   /**
+   * Authorize analysis creation before repository/revision existence checks.
+   * This ordering prevents authenticated non-members from probing resource IDs.
+   */
+  async authorizeCreateAnalysis(req, res, next) {
+    try {
+      req.analysisProjectAccess = await projectAuthorization.requireCreateAccess(
+        req.body.project_id,
+        req.user.id
+      );
+      next();
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  /**
    * POST /api/v1/analyses
    * Enqueue a new analysis job for project repository revision.
    */
   async createAnalysis(req, res, next) {
     try {
       const projectId = req.body.project_id;
-      const access = await projectAuthorization.requireCreateAccess(projectId, req.user.id);
+      const access =
+        req.analysisProjectAccess ||
+        (await projectAuthorization.requireCreateAccess(projectId, req.user.id));
 
       const result = await analysisGatewayService.request({
         method: 'POST',

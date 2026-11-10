@@ -12,5 +12,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
-  }
+  },
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./tests/component/setup.js'],
+    include: ['tests/component/**/*.test.{js,jsx}'],
+    restoreMocks: true,
+  },
 });

@@ -220,6 +220,43 @@ def test_recovery_of_undispatched_job(session: Session) -> None:
     assert updated_analysis.status == AnalysisStatus.QUEUED
 
 
+def test_recovery_republishes_queued_job_without_worker_lease(session: Session) -> None:
+    project, repo, rev = _setup_fixtures(session)
+    lifecycle_service, recovery_service, publisher = _build_services(session)
+    created = lifecycle_service.create_analysis(
+        CreateAnalysisRequest(
+            project_id=project.id,
+            repository_id=repo.id,
+            revision_id=rev.id,
+        )
+    )
+    assert created.active_job is not None
+
+    job_repo = SqlAlchemyJobRepository(session)
+    pending = job_repo.get_by_id(created.active_job.id)
+    assert pending is not None
+    queued = pending.transition_to(JobStatus.QUEUED, updated_at=datetime.now(UTC))
+    job_repo.update(queued, expected_version=pending.version)
+    model = session.get(AnalysisJobModel, queued.id)
+    assert model is not None
+    model.created_at = datetime.now(UTC) - timedelta(seconds=100)
+    session.flush()
+    assert [item.id for item in job_repo.find_pending_jobs(datetime.now(UTC))] == [
+        queued.id
+    ]
+
+    recovered = recovery_service.recover_undispatched_job(
+        created.id, project.id, threshold_seconds=60
+    )
+
+    assert recovered is True
+    assert len(publisher.published_jobs) == 1
+    recovered_job = job_repo.get_by_id(queued.id)
+    assert recovered_job is not None
+    assert recovered_job.status == JobStatus.QUEUED
+    assert recovered_job.worker_id is None
+
+
 def test_recovery_of_undispatched_job_ignores_recent_job(session: Session) -> None:
     project, repo, rev = _setup_fixtures(session)
     lifecycle_service, recovery_service, publisher = _build_services(session)

@@ -116,6 +116,23 @@ describe('Analysis & Architecture Proxy API Integration Tests (M5 Batch 1)', () 
       expect(res.body.error.code).toBe('project_access_denied');
     });
 
+    it('authorizes before resource lookup so outsiders cannot probe repository IDs', async () => {
+      const repositoryLookup = jest.spyOn(Repository, 'findOne');
+
+      const res = await request(app)
+        .post('/api/v1/analyses')
+        .set('x-user-id', outsiderId)
+        .send({
+          project_id: project._id,
+          repository_id: crypto.randomUUID(),
+          revision_id: crypto.randomUUID(),
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('project_access_denied');
+      expect(repositoryLookup).not.toHaveBeenCalled();
+    });
+
     it('rejects VIEWER with 403 on create', async () => {
       const res = await request(app)
         .post('/api/v1/analyses')

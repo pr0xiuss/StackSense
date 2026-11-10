@@ -62,7 +62,10 @@ class JobRecoveryService:
             return False
 
         active_job = self._job_repo.get_active_for_analysis(analysis_id)
-        if active_job is None or active_job.status != JobStatus.PENDING:
+        if active_job is None or active_job.status not in {
+            JobStatus.PENDING,
+            JobStatus.QUEUED,
+        }:
             return False
 
         now = datetime.now(UTC)
@@ -84,8 +87,9 @@ class JobRecoveryService:
         )
         self._queue_publisher.publish_job(payload)
 
-        queued_job = active_job.transition_to(JobStatus.QUEUED, updated_at=now)
-        self._job_repo.update(queued_job, expected_version=active_job.version)
+        if active_job.status == JobStatus.PENDING:
+            queued_job = active_job.transition_to(JobStatus.QUEUED, updated_at=now)
+            self._job_repo.update(queued_job, expected_version=active_job.version)
 
         emitter = LifecycleEventEmitter(self._event_repo, analysis.id)
         if analysis.status == AnalysisStatus.CREATED:

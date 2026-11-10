@@ -532,6 +532,69 @@ def test_unresolved_and_conflicting_f3_records_survive_with_provenance() -> None
     assert model.completeness.failed_artifacts == 1
 
 
+def test_frontend_runtime_noise_is_not_published_as_architecture_unresolved() -> None:
+    source_evidence = _evidence("frontend-source")
+    source = replace(
+        _component(
+            "frontend-component",
+            source_evidence.evidence_key,
+            qualified_name="frontend/src/App.jsx::App",
+            role="frontend_component",
+        ),
+        framework="react",
+        metadata={
+            "architectural_role": "frontend_component",
+            "application_namespace": "frontend",
+        },
+    )
+    descriptors = (
+        ("useState", IRRelationshipKind.STATIC_CALL_REFERENCE),
+        ("./styles.css", IRRelationshipKind.IMPORTS),
+        ("./Missing.jsx", IRRelationshipKind.IMPORTS),
+    )
+    unresolved = tuple(
+        IRUnresolvedReference(
+            unresolved_key=f"missing-{index}",
+            source_key=source.ir_key,
+            relationship_kind=kind,
+            target_name=descriptor,
+            reason=IRUnresolvedReason.NOT_FOUND,
+            candidate_references=(descriptor,),
+            evidence_keys=(source_evidence.evidence_key,),
+        )
+        for index, (descriptor, kind) in enumerate(descriptors)
+    )
+    relationships = tuple(
+        IRRelationship(
+            ir_key=f"relationship-{index}",
+            kind=kind,
+            source_key=source.ir_key,
+            unresolved_reference_key=unresolved[index].unresolved_key,
+            status=IRFactStatus.UNRESOLVED,
+            evidence_keys=(source_evidence.evidence_key,),
+        )
+        for index, (_, kind) in enumerate(descriptors)
+    )
+
+    model = (
+        _builder()
+        .build(
+            _document(
+                entities=(source,),
+                evidence=(source_evidence,),
+                relationships=relationships,
+                unresolved=unresolved,
+            ),
+            VERSION_ID,
+        )
+        .document
+    )
+
+    assert [item.target_descriptor for item in model.unresolved_relationships] == [
+        "./Missing.jsx"
+    ]
+
+
 def test_model_digest_and_content_are_order_independent() -> None:
     first = _evidence("first")
     second = _evidence("second")

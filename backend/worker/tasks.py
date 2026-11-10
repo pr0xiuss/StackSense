@@ -22,6 +22,7 @@ from backend.platform.analysis.application.platform_gateway import (
 from backend.platform.analysis.application.recovery import JobRecoveryService
 from backend.platform.analysis.application.registry import (
     StageHandlerRegistry,
+    register_input_validation_handler,
 )
 from backend.platform.analysis.architecture.builder import ArchitectureBuilder
 from backend.platform.analysis.architecture.handlers import (
@@ -89,6 +90,7 @@ def get_worker_registry() -> StageHandlerRegistry:
     global _registry_instance, _m2_coordinator_instance, _attempt_store_instance
     if _registry_instance is None:
         _registry_instance = StageHandlerRegistry()
+        register_input_validation_handler(_registry_instance)
         _m2_coordinator_instance = M2ExecutionCoordinator()
         register_m2_stage_handlers(_registry_instance, _m2_coordinator_instance)
 
@@ -125,6 +127,7 @@ def build_worker_registry(
 ) -> tuple[StageHandlerRegistry, AnalysisAttemptStore]:
     """Compose one attempt-isolated M2-M4 registry bound to this transaction."""
     registry = StageHandlerRegistry()
+    register_input_validation_handler(registry)
     m2_coordinator = M2ExecutionCoordinator()
     register_m2_stage_handlers(registry, m2_coordinator)
 

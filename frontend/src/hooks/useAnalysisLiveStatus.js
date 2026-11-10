@@ -45,6 +45,8 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
   const reconnectTimerRef = useRef(null);
   const reconnectDelayRef = useRef(INITIAL_RECONNECT_DELAY_MS);
   const isTerminalRef = useRef(false);
+  const isLiveRef = useRef(false);
+  const analysisRef = useRef(null);
 
   // Stop all background polling and streaming
   const stopLiveUpdates = useCallback(() => {
@@ -65,6 +67,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
       reconnectTimerRef.current = null;
     }
     if (isMountedRef.current) {
+      isLiveRef.current = false;
       setIsLive(false);
     }
   }, []);
@@ -76,7 +79,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
       if (inFlightRef.current) return null;
 
       inFlightRef.current = true;
-      if (!isManual && isMountedRef.current && analysis) {
+      if (!isManual && isMountedRef.current && analysisRef.current) {
         setRefreshing(true);
       }
 
@@ -84,6 +87,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
         const data = await analysisService.getAnalysis(analysisId, { projectId });
         if (!isMountedRef.current) return null;
 
+        analysisRef.current = data;
         setAnalysis(data);
         setError(null);
         setErrorCode(null);
@@ -109,7 +113,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
         }
       }
     },
-    [projectId, analysisId, analysis, stopLiveUpdates]
+    [projectId, analysisId, stopLiveUpdates]
   );
 
   // Serialized polling fallback
@@ -119,12 +123,12 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
 
     pollTimerRef.current = setTimeout(async () => {
       if (!isMountedRef.current || isTerminalRef.current) return;
-      const data = await fetchAnalysis(false);
-      if (data && !isTerminalStatus(data.status) && !isLive) {
+      await fetchAnalysis(false);
+      if (!isTerminalRef.current && !isLiveRef.current) {
         schedulePoll();
       }
     }, POLL_INTERVAL_MS);
-  }, [fetchAnalysis, isLive]);
+  }, [fetchAnalysis]);
 
   // Connect SSE with backoff
   const connectSSE = useCallback(() => {
@@ -144,6 +148,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
         projectId,
         onOpen: () => {
           if (!isMountedRef.current || isTerminalRef.current) return;
+          isLiveRef.current = true;
           setIsLive(true);
           reconnectDelayRef.current = INITIAL_RECONNECT_DELAY_MS;
           // Clear polling fallback when stream is established
@@ -159,6 +164,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
         },
         onError: () => {
           if (!isMountedRef.current) return;
+          isLiveRef.current = false;
           setIsLive(false);
 
           if (!isTerminalRef.current) {
@@ -181,6 +187,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
         },
         onClose: () => {
           if (!isMountedRef.current) return;
+          isLiveRef.current = false;
           setIsLive(false);
           if (!isTerminalRef.current) {
             schedulePoll();
@@ -190,6 +197,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
 
       streamHandleRef.current = handle;
     } catch {
+      isLiveRef.current = false;
       setIsLive(false);
       schedulePoll();
     }
@@ -199,6 +207,9 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
   useEffect(() => {
     isMountedRef.current = true;
     isTerminalRef.current = false;
+    isLiveRef.current = false;
+    analysisRef.current = null;
+    setAnalysis(null);
     setLoading(true);
     setError(null);
     setErrorCode(null);
@@ -209,6 +220,7 @@ export function useAnalysisLiveStatus(projectId, analysisId) {
       .getAnalysis(analysisId, { projectId })
       .then((data) => {
         if (!active || !isMountedRef.current) return;
+        analysisRef.current = data;
         setAnalysis(data);
         const terminal = isTerminalStatus(data?.status);
         isTerminalRef.current = terminal;

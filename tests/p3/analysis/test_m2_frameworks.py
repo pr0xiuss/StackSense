@@ -114,3 +114,35 @@ def test_supported_or_unrelated_framework_does_not_fabricate_facts() -> None:
     )
 
     assert not any(isinstance(fact, FrameworkFact) for fact in documents[0].facts)
+
+
+def test_express_router_mount_preserves_static_prefix_and_import_binding() -> None:
+    parsed = TreeSitterJsTsAdapter().parse(
+        ParserRequest(
+            uuid4(),
+            "src/app.js",
+            (
+                b'import express from "express";\n'
+                b'import docsRoutes from "./routes/docs.routes.js";\n'
+                b"const app = express();\n"
+                b'app.use("/api/documents", docsRoutes);\n'
+            ),
+            "javascript",
+        )
+    )
+    assert parsed.success and parsed.document is not None
+
+    enriched = FrameworkEnrichmentService().enrich(
+        (parsed.document,),
+        (FrameworkDetection("express", "confirmed"),),
+        uuid4(),
+        {parsed.document.artifact_id: parsed.framework_hints},
+    )
+    mount = next(
+        fact
+        for fact in enriched[0].facts
+        if isinstance(fact, FrameworkFact) and fact.fact_type == "middleware"
+    )
+
+    assert mount.details["path"] == "/api/documents"
+    assert mount.details["mount_target"] == "docsRoutes"

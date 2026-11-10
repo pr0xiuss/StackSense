@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ARCHITECTURE_ENTITY_KIND,
   getEntityKindLabel,
@@ -6,14 +6,23 @@ import {
 
 // Color mappings for entity kinds
 const KIND_COLORS = {
+  [ARCHITECTURE_ENTITY_KIND.APPLICATION]: { bg: '#172554', stroke: '#3B82F6', text: '#BFDBFE' },
+  [ARCHITECTURE_ENTITY_KIND.FRONTEND_APPLICATION]: { bg: '#312E81', stroke: '#6366F1', text: '#C7D2FE' },
   [ARCHITECTURE_ENTITY_KIND.SERVICE]: { bg: '#1E1B4B', stroke: '#6366F1', text: '#A5B4FC' },
   [ARCHITECTURE_ENTITY_KIND.COMPONENT]: { bg: '#082F49', stroke: '#0284C7', text: '#7DD3FC' },
   [ARCHITECTURE_ENTITY_KIND.MODULE]: { bg: '#2E1065', stroke: '#7C3AED', text: '#C4B5FD' },
+  [ARCHITECTURE_ENTITY_KIND.CONTROLLER]: { bg: '#172554', stroke: '#2563EB', text: '#BFDBFE' },
+  [ARCHITECTURE_ENTITY_KIND.ENDPOINT]: { bg: '#164E63', stroke: '#0891B2', text: '#67E8F9' },
+  [ARCHITECTURE_ENTITY_KIND.WORKER]: { bg: '#422006', stroke: '#CA8A04', text: '#FDE68A' },
+  [ARCHITECTURE_ENTITY_KIND.DATA_REPOSITORY]: { bg: '#052E16', stroke: '#16A34A', text: '#BBF7D0' },
   [ARCHITECTURE_ENTITY_KIND.DATABASE]: { bg: '#064E3B', stroke: '#059669', text: '#6EE7B7' },
-  [ARCHITECTURE_ENTITY_KIND.DATA_STORE]: { bg: '#064E3B', stroke: '#10B981', text: '#A7F3D0' },
+  [ARCHITECTURE_ENTITY_KIND.MESSAGE_BROKER]: { bg: '#451A03', stroke: '#D97706', text: '#FDE68A' },
   [ARCHITECTURE_ENTITY_KIND.QUEUE]: { bg: '#451A03', stroke: '#D97706', text: '#FDE68A' },
-  [ARCHITECTURE_ENTITY_KIND.API_ENDPOINT]: { bg: '#164E63', stroke: '#0891B2', text: '#67E8F9' },
-  [ARCHITECTURE_ENTITY_KIND.EXTERNAL_SYSTEM]: { bg: '#1E293B', stroke: '#475569', text: '#CBD5E1' },
+  [ARCHITECTURE_ENTITY_KIND.TOPIC]: { bg: '#451A03', stroke: '#F59E0B', text: '#FEF3C7' },
+  [ARCHITECTURE_ENTITY_KIND.EXTERNAL_SERVICE]: { bg: '#1E293B', stroke: '#64748B', text: '#CBD5E1' },
+  [ARCHITECTURE_ENTITY_KIND.EXTERNAL_API]: { bg: '#1E293B', stroke: '#64748B', text: '#CBD5E1' },
+  [ARCHITECTURE_ENTITY_KIND.LIBRARY]: { bg: '#292524', stroke: '#78716C', text: '#E7E5E4' },
+  [ARCHITECTURE_ENTITY_KIND.CONFIGURATION_COMPONENT]: { bg: '#27272A', stroke: '#71717A', text: '#E4E4E7' },
 };
 
 function getKindStyle(kind) {
@@ -27,36 +36,78 @@ function getKindStyle(kind) {
   );
 }
 
+function getEntitySubtitle(entity) {
+  const metadata = entity.metadata || {};
+  const value =
+    metadata.qualified_name ||
+    metadata.dependency_name ||
+    metadata.source_root ||
+    metadata.application_namespace ||
+    (Array.isArray(entity.namespace) ? entity.namespace.join('/') : null) ||
+    entity.logical_id;
+  const text = String(value || '');
+  return text.length > 30 ? `…${text.slice(-29)}` : text;
+}
+
 // Architectural tier classification
 function getTierIndex(kind) {
   const norm = (kind || '').toLowerCase();
-  if (norm === ARCHITECTURE_ENTITY_KIND.API_ENDPOINT || norm === ARCHITECTURE_ENTITY_KIND.EXTERNAL_SYSTEM) {
-    return 0; // Ingress / Edge
+  if (
+    norm === ARCHITECTURE_ENTITY_KIND.APPLICATION ||
+    norm === ARCHITECTURE_ENTITY_KIND.FRONTEND_APPLICATION
+  ) {
+    return 0;
+  }
+  if (
+    norm === ARCHITECTURE_ENTITY_KIND.ENDPOINT ||
+    norm === ARCHITECTURE_ENTITY_KIND.EXTERNAL_SERVICE ||
+    norm === ARCHITECTURE_ENTITY_KIND.EXTERNAL_API
+  ) {
+    return 1;
   }
   if (
     norm === ARCHITECTURE_ENTITY_KIND.SERVICE ||
     norm === ARCHITECTURE_ENTITY_KIND.COMPONENT ||
-    norm === ARCHITECTURE_ENTITY_KIND.MODULE
+    norm === ARCHITECTURE_ENTITY_KIND.CONTROLLER ||
+    norm === ARCHITECTURE_ENTITY_KIND.WORKER ||
+    norm === ARCHITECTURE_ENTITY_KIND.DATA_REPOSITORY
   ) {
-    return 1; // Compute & Logic
+    return 2;
+  }
+  if (
+    norm === ARCHITECTURE_ENTITY_KIND.MODULE ||
+    norm === ARCHITECTURE_ENTITY_KIND.LIBRARY ||
+    norm === ARCHITECTURE_ENTITY_KIND.CONFIGURATION_COMPONENT
+  ) {
+    return 3;
   }
   if (
     norm === ARCHITECTURE_ENTITY_KIND.DATABASE ||
-    norm === ARCHITECTURE_ENTITY_KIND.DATA_STORE ||
-    norm === ARCHITECTURE_ENTITY_KIND.QUEUE
+    norm === ARCHITECTURE_ENTITY_KIND.MESSAGE_BROKER ||
+    norm === ARCHITECTURE_ENTITY_KIND.QUEUE ||
+    norm === ARCHITECTURE_ENTITY_KIND.TOPIC
   ) {
-    return 2; // Storage & Messaging
+    return 4;
   }
-  return 3; // Other
+  return 5;
 }
 
-const TIER_NAMES = ['Ingress & Boundaries', 'Services & Components', 'Persistence & Messaging', 'Other Entities'];
+const TIER_NAMES = [
+  'Applications',
+  'Interfaces & External Systems',
+  'Services & Components',
+  'Modules & Libraries',
+  'Persistence & Messaging',
+  'Other Entities',
+];
 
 const NODE_WIDTH = 170;
 const NODE_HEIGHT = 60;
 const H_GAP = 28;
-const V_TIER_GAP = 95;
+const ROW_GAP = 28;
+const TIER_GAP = 54;
 const PADDING = 40;
+const MAX_COLUMNS = 6;
 
 export default function ArchitectureCanvas({
   entities = [],
@@ -66,10 +117,15 @@ export default function ArchitectureCanvas({
   selectedEntity = null,
   onSelectEntity,
 }) {
+  const [zoom, setZoom] = useState(0.85);
+  const [focusedLogicalId, setFocusedLogicalId] = useState(null);
+  const viewportRef = useRef(null);
+  const pendingScrollPosition = useRef(null);
+  const scrollRestoreFrame = useRef(null);
   // Deterministic layout calculations
-  const { nodeMap, nodes, links, svgWidth, svgHeight } = useMemo(() => {
-    // 1. Group entities into 4 tiers
-    const tiers = [[], [], [], []];
+  const { nodes, links, svgWidth, svgHeight, tierLayouts } = useMemo(() => {
+    // 1. Group entities into architectural tiers.
+    const tiers = TIER_NAMES.map(() => []);
     entities.forEach((ent) => {
       const tierIdx = getTierIndex(ent.kind);
       tiers[tierIdx].push(ent);
@@ -83,29 +139,43 @@ export default function ArchitectureCanvas({
     // 3. Position nodes deterministically
     const map = new Map();
     const positionedNodes = [];
+    let currentY = PADDING + 20;
     let maxCols = 1;
+    const layouts = [];
 
     tiers.forEach((tier, tierIdx) => {
-      if (tier.length > maxCols) maxCols = tier.length;
-      const y = PADDING + tierIdx * (NODE_HEIGHT + V_TIER_GAP);
+      if (tier.length === 0) return;
+      const columns = Math.max(1, Math.min(MAX_COLUMNS, tier.length));
+      const rows = Math.max(1, Math.ceil(tier.length / MAX_COLUMNS));
+      maxCols = Math.max(maxCols, columns);
+      const tierStartY = currentY;
 
       tier.forEach((ent, colIdx) => {
-        const x = PADDING + colIdx * (NODE_WIDTH + H_GAP);
+        const column = colIdx % MAX_COLUMNS;
+        const row = Math.floor(colIdx / MAX_COLUMNS);
+        const x = PADDING + column * (NODE_WIDTH + H_GAP);
+        const y = tierStartY + row * (NODE_HEIGHT + ROW_GAP);
         const node = {
           entity: ent,
           x,
           y,
           tierIdx,
-          colIdx,
+          colIdx: column,
         };
         map.set(ent.logical_id, node);
         map.set(ent.id, node);
         positionedNodes.push(node);
       });
+      const contentHeight = rows * NODE_HEIGHT + (rows - 1) * ROW_GAP;
+      layouts.push({ name: TIER_NAMES[tierIdx], y: tierStartY - 18 });
+      currentY += contentHeight + TIER_GAP;
     });
 
-    const calculatedWidth = Math.max(760, PADDING * 2 + maxCols * (NODE_WIDTH + H_GAP));
-    const calculatedHeight = Math.max(480, PADDING * 2 + tiers.length * (NODE_HEIGHT + V_TIER_GAP));
+    const calculatedWidth = Math.max(
+      760,
+      PADDING * 2 + maxCols * NODE_WIDTH + (maxCols - 1) * H_GAP,
+    );
+    const calculatedHeight = Math.max(480, currentY + PADDING - TIER_GAP);
 
     // 4. Connect relationships: only connect if both endpoints are in the loaded entity window
     const validLinks = [];
@@ -123,21 +193,83 @@ export default function ArchitectureCanvas({
     });
 
     return {
-      nodeMap: map,
       nodes: positionedNodes,
       links: validLinks,
       svgWidth: calculatedWidth,
       svgHeight: calculatedHeight,
+      tierLayouts: layouts,
     };
   }, [entities, relationships]);
 
   const selectedLogicalId = selectedEntity?.logical_id;
+  const focusedLinks = useMemo(
+    () =>
+      focusedLogicalId
+        ? links.filter(
+            ({ relationship }) =>
+              relationship.source_logical_id === focusedLogicalId ||
+              relationship.target_logical_id === focusedLogicalId,
+          )
+        : links,
+    [focusedLogicalId, links],
+  );
+  const focusedEntityIds = useMemo(() => {
+    if (!focusedLogicalId) return null;
+    const values = new Set([focusedLogicalId]);
+    focusedLinks.forEach(({ relationship }) => {
+      values.add(relationship.source_logical_id);
+      values.add(relationship.target_logical_id);
+    });
+    return values;
+  }, [focusedLinks, focusedLogicalId]);
+
+  const captureScrollPosition = useCallback(() => {
+    if (viewportRef.current) {
+      pendingScrollPosition.current = {
+        left: viewportRef.current.scrollLeft,
+        top: viewportRef.current.scrollTop,
+      };
+    }
+  }, []);
+
+  const selectEntity = (entity) => {
+    captureScrollPosition();
+    setFocusedLogicalId(entity.logical_id || entity.id);
+    onSelectEntity?.(entity);
+  };
+
+  useLayoutEffect(() => {
+    const position = pendingScrollPosition.current;
+    if (!position || !viewportRef.current) return;
+
+    const restore = () => {
+      if (!viewportRef.current) return;
+      viewportRef.current.scrollLeft = position.left;
+      viewportRef.current.scrollTop = position.top;
+    };
+
+    // Restore before paint and once more on the next frame. The second pass
+    // wins over the browser's deferred focus/scroll-into-view behavior.
+    restore();
+    scrollRestoreFrame.current = window.requestAnimationFrame(() => {
+      restore();
+      pendingScrollPosition.current = null;
+      scrollRestoreFrame.current = null;
+    });
+
+    return () => {
+      if (scrollRestoreFrame.current !== null) {
+        window.cancelAnimationFrame(scrollRestoreFrame.current);
+        scrollRestoreFrame.current = null;
+      }
+    };
+  }, [selectedLogicalId]);
 
   return (
     <div className="arch-canvas-container">
       {/* Canvas Toolbar & Bounded Window Indicator */}
       <div className="arch-canvas-toolbar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <div className="arch-canvas-heading">
           <h3 className="tab-card-title" style={{ fontSize: '1rem', margin: 0 }}>
             Architecture Overview Map
           </h3>
@@ -146,13 +278,32 @@ export default function ArchitectureCanvas({
           </span>
         </div>
 
-        <span style={{ fontSize: '0.775rem', color: '#94A3B8' }}>
-          {links.length} visible connectors · Use Tab & Enter to select
-        </span>
+        <div className="arch-canvas-controls">
+          <span className="arch-connector-count" aria-live="polite">
+            {focusedLogicalId
+              ? `${focusedLinks.length} direct connectors`
+              : `${links.length} visible connectors`}
+            {totalRelationships > relationships.length
+              ? ` from ${relationships.length} of ${totalRelationships}`
+              : ''}
+          </span>
+          <button
+            type="button"
+            className="arch-focus-reset"
+            onClick={() => setFocusedLogicalId(null)}
+            disabled={!focusedLogicalId}
+          >
+            Show all
+          </button>
+          <button type="button" onClick={() => setZoom((value) => Math.max(0.55, value - 0.15))} aria-label="Zoom out architecture map">−</button>
+          <span className="arch-zoom-value">{Math.round(zoom * 100)}%</span>
+          <button type="button" onClick={() => setZoom((value) => Math.min(1.45, value + 0.15))} aria-label="Zoom in architecture map">+</button>
+          <button type="button" onClick={() => setZoom(0.85)}>Reset</button>
+        </div>
       </div>
 
       {/* SVG Canvas Viewport */}
-      <div className="arch-canvas-viewport">
+      <div className="arch-canvas-viewport" ref={viewportRef}>
         {entities.length === 0 ? (
           <div className="analyses-empty-box" style={{ marginTop: '4rem' }}>
             <p className="analyses-empty-title">No Entities in Model</p>
@@ -164,7 +315,7 @@ export default function ArchitectureCanvas({
           <svg
             className="arch-svg-canvas"
             viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-            style={{ width: svgWidth, height: svgHeight }}
+            style={{ width: svgWidth * zoom, height: svgHeight * zoom }}
           >
             <defs>
               <marker
@@ -192,8 +343,7 @@ export default function ArchitectureCanvas({
             </defs>
 
             {/* Tier Background Guidelines */}
-            {TIER_NAMES.map((name, idx) => {
-              const y = PADDING + idx * (NODE_HEIGHT + V_TIER_GAP) - 14;
+            {tierLayouts.map(({ name, y }) => {
               return (
                 <g key={name}>
                   <text
@@ -204,7 +354,6 @@ export default function ArchitectureCanvas({
                     fontWeight="600"
                     fontFamily="sans-serif"
                     letterSpacing="0.06em"
-                    textTransform="uppercase"
                   >
                     {name}
                   </text>
@@ -241,8 +390,13 @@ export default function ArchitectureCanvas({
                   <path
                     key={relationship.id || `${relationship.source_logical_id}->${relationship.target_logical_id}`}
                     d={pathData}
-                    className={`arch-connector ${isConnectedToSelected ? 'active' : ''}`}
+                    className={`arch-connector ${
+                      isConnectedToSelected ? 'active' : ''
+                    } ${
+                      focusedLogicalId && !isConnectedToSelected ? 'muted' : ''
+                    }`}
                     markerEnd={isConnectedToSelected ? 'url(#arch-arrow-active)' : 'url(#arch-arrow)'}
+                    vectorEffect="non-scaling-stroke"
                   >
                     <title>
                       {relationship.kind} ({relationship.source_logical_id} &rarr; {relationship.target_logical_id})
@@ -259,17 +413,23 @@ export default function ArchitectureCanvas({
                   selectedEntity &&
                   (selectedEntity.logical_id === entity.logical_id || selectedEntity.id === entity.id);
                 const style = getKindStyle(entity.kind);
+                const isMuted = focusedEntityIds && !focusedEntityIds.has(entity.logical_id);
+                const subtitle = getEntitySubtitle(entity);
 
                 return (
                   <g
                     key={entity.logical_id || entity.id}
-                    className={`arch-node ${isSelected ? 'selected' : ''}`}
+                    className={`arch-map-node ${isSelected ? 'selected' : ''} ${isMuted ? 'muted' : ''}`}
                     transform={`translate(${x}, ${y})`}
-                    onClick={() => onSelectEntity && onSelectEntity(entity)}
+                    onPointerDown={(event) => {
+                      captureScrollPosition();
+                      event.preventDefault();
+                    }}
+                    onClick={() => selectEntity(entity)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        onSelectEntity && onSelectEntity(entity);
+                        selectEntity(entity);
                       }
                     }}
                     tabIndex={0}
@@ -277,6 +437,9 @@ export default function ArchitectureCanvas({
                     aria-label={`Select ${entity.name || entity.logical_id} (${getEntityKindLabel(entity.kind)})`}
                     aria-pressed={isSelected}
                   >
+                    <title>
+                      {entity.name || entity.logical_id} — {subtitle}
+                    </title>
                     <rect
                       width={NODE_WIDTH}
                       height={NODE_HEIGHT}
@@ -285,6 +448,7 @@ export default function ArchitectureCanvas({
                       fill={style.bg}
                       stroke={isSelected ? '#38BDF8' : style.stroke}
                       strokeWidth={isSelected ? 2.5 : 1.25}
+                      vectorEffect="non-scaling-stroke"
                     />
 
                     {/* Kind Indicator Pill */}
@@ -304,7 +468,6 @@ export default function ArchitectureCanvas({
                       fontWeight="600"
                       fontFamily="sans-serif"
                       letterSpacing="0.04em"
-                      textTransform="uppercase"
                     >
                       {getEntityKindLabel(entity.kind)}
                     </text>
@@ -313,7 +476,7 @@ export default function ArchitectureCanvas({
                     <text
                       x={14}
                       y={40}
-                      className="arch-node-title"
+                      className="arch-map-node-title"
                     >
                       {(entity.name || entity.logical_id).length > 20
                         ? (entity.name || entity.logical_id).slice(0, 19) + '…'
@@ -324,11 +487,9 @@ export default function ArchitectureCanvas({
                     <text
                       x={14}
                       y={52}
-                      className="arch-node-subtitle"
+                      className="arch-map-node-subtitle"
                     >
-                      {entity.logical_id.length > 24
-                        ? entity.logical_id.slice(0, 23) + '…'
-                        : entity.logical_id}
+                      {subtitle}
                     </text>
                   </g>
                 );

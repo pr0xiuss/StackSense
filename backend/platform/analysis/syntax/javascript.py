@@ -597,6 +597,15 @@ class TreeSitterJsTsAdapter(ParserAdapter):
         path = _safe_route_path(cls._string_value(first))
         if method is not None and path is not None:
             framework_hints[fact_key] = {"method": method, "path": path}
+            return
+        if name.rsplit(".", 1)[-1] == "use" and path is not None and arguments:
+            named = arguments.named_children
+            mounted = cls._text(named[1]) if len(named) > 1 else ""
+            if mounted and _SAFE_REFERENCE_NAME.fullmatch(mounted):
+                framework_hints[fact_key] = {
+                    "path": path,
+                    "mount_target": mounted,
+                }
 
     def _add_import_facts(
         self, accumulator: FactAccumulator, path: str, node: Node

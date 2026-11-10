@@ -109,6 +109,7 @@ _DIRECTION_RULES: dict[
         },
         {
             ArchitectureEntityKind.SERVICE,
+            ArchitectureEntityKind.MODULE,
             ArchitectureEntityKind.COMPONENT,
             ArchitectureEntityKind.CONTROLLER,
             ArchitectureEntityKind.ENDPOINT,

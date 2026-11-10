@@ -122,6 +122,31 @@ API documentation:
 http://127.0.0.1:8000/docs
 ```
 
+## 7. Run Analysis Workers
+
+Analysis requests are persisted and queued by FastAPI, but execution requires a
+Celery worker. Celery Beat runs the M1 recovery schedule that republishes jobs
+whose initial broker delivery was lost. For a foreground development session:
+
+```bash
+./venv/bin/celery -A backend.worker.celery_app:celery_app worker --loglevel=info
+./venv/bin/celery -A backend.worker.celery_app:celery_app beat --loglevel=info
+```
+
+On Linux with systemd, the repository provides user services that keep both
+processes running and restart them after failures:
+
+```bash
+systemctl --user link "$PWD/ops/systemd/stacksense-celery-worker.service"
+systemctl --user link "$PWD/ops/systemd/stacksense-celery-beat.service"
+systemctl --user daemon-reload
+systemctl --user enable --now stacksense-celery-worker.service stacksense-celery-beat.service
+```
+
+Do not also run foreground workers after enabling these services. Check them
+with `systemctl --user status stacksense-celery-worker.service` and follow logs
+with `journalctl --user -u stacksense-celery-worker.service -f`.
+
 ---
 
 ### Frontend

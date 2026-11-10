@@ -7,7 +7,8 @@
 
 function validateAnalysisConfig(env = process.env) {
   const isTest = env.NODE_ENV === 'test';
-  const baseUrl = env.ANALYSIS_API_BASE_URL || (isTest ? 'http://127.0.0.1:8000' : '');
+  const baseUrl =
+    env.ANALYSIS_API_BASE_URL || (isTest ? 'http://127.0.0.1:8000/api/v1' : '');
   const secretKey =
     env.ANALYSIS_INTERNAL_API_SECRET_KEY ||
     (isTest ? 'test-internal-analysis-secret-key-at-least-32-chars' : '');
@@ -41,7 +42,7 @@ try {
   // If in test or if process will configure later
   if (process.env.NODE_ENV === 'test') {
     analysisConfig = {
-      baseUrl: 'http://127.0.0.1:8000',
+      baseUrl: 'http://127.0.0.1:8000/api/v1',
       secretKey: 'test-internal-analysis-secret-key-at-least-32-chars',
       jsonTimeoutMs: 15000,
       sseTimeoutMs: 300000,
