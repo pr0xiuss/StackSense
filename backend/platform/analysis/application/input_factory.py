@@ -320,6 +320,11 @@ class PlatformArtifactContentReader(ArtifactContentReader):
         self._revision_id = revision_id
         self._artifact_ids = artifact_ids
 
+    @property
+    def concurrent_read_limit(self) -> int:
+        """Maximum safe parallel reads supported by the platform gateway."""
+        return self._gateway.concurrent_read_limit
+
     def _read(self, artifact: AnalysisArtifact, limit: int) -> bytes:
         if artifact.id not in self._artifact_ids:
             raise ArtifactContentUnavailableError(

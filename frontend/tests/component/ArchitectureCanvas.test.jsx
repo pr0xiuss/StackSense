@@ -53,10 +53,11 @@ describe('ArchitectureCanvas', () => {
     expect(screen.getByText('Interfaces & External Systems')).toBeInTheDocument();
     expect(screen.getByText('Persistence & Messaging')).toBeInTheDocument();
     expect(screen.getByText('Endpoint')).toBeInTheDocument();
-    expect(screen.getByText('…outes/users.routes.js::/users')).toBeInTheDocument();
+    expect(screen.getByText('…ers.routes.js::/users')).toBeInTheDocument();
     expect(screen.getByText(/1 visible connectors/)).toBeInTheDocument();
-    expect(screen.getByText('Bounded window: 3 of 147 entities')).toBeInTheDocument();
+    expect(screen.getByText('Backend-first view: 3 of 147 entities')).toBeInTheDocument();
     expect(container.querySelectorAll('.arch-map-node')).toHaveLength(3);
+    expect(container.querySelectorAll('.arch-map-node-content')).toHaveLength(3);
     expect(container.querySelector('.arch-node')).not.toBeInTheDocument();
   });
 

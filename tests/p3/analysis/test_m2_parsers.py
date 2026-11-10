@@ -14,6 +14,7 @@ from backend.platform.analysis.domain.constants import (
     DiagnosticCategory,
     DiagnosticSeverity,
 )
+from backend.platform.analysis.syntax import executor as executor_module
 from backend.platform.analysis.syntax.base import (
     ParserRequest,
     normalize_source_encoding,
@@ -373,6 +374,161 @@ def test_parser_executor_os_process_isolation() -> None:
     assert any(getattr(f, "name", None) == "compute" for f in res.document.facts)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Production pool targets Linux")
+def test_parser_pool_reuses_isolated_workers_and_preserves_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch execution reuses children while retaining byte-equivalent documents."""
+    original_popen = executor_module.subprocess.Popen
+    pool_commands: list[tuple[str, ...]] = []
+
+    def tracking_popen(*args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        command = args[0] if args else kwargs.get("args", ())
+        if "--serve" in command:
+            pool_commands.append(tuple(str(item) for item in command))
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(executor_module.subprocess, "Popen", tracking_popen)
+    executor = ParserExecutor(worker_count=2, worker_max_requests=64)
+    requests = tuple(
+        ParserRequest(
+            artifact_id=uuid4(),
+            path=f"src/module_{index}.py",
+            content=f"def value_{index}():\n    return {index}\n".encode(),
+            language="python",
+        )
+        for index in range(6)
+    )
+
+    pooled = executor.execute_many(requests)
+    expected = tuple(executor.execute_in_process(request) for request in requests)
+
+    assert len(pool_commands) == 2
+    assert all(result.success for result in pooled)
+    assert tuple(result.document for result in pooled) == tuple(
+        result.document for result in expected
+    )
+    assert tuple(result.document.path for result in pooled if result.document) == tuple(
+        request.path for request in requests
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Production pool targets Linux")
+def test_parser_pool_recycles_workers_at_request_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bounded worker is replaced after its approved request lifetime."""
+    original_popen = executor_module.subprocess.Popen
+    pool_starts = 0
+
+    def tracking_popen(*args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        nonlocal pool_starts
+        command = args[0] if args else kwargs.get("args", ())
+        if "--serve" in command:
+            pool_starts += 1
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(executor_module.subprocess, "Popen", tracking_popen)
+    executor = ParserExecutor(worker_count=1, worker_max_requests=2)
+    requests = tuple(
+        ParserRequest(
+            artifact_id=uuid4(),
+            path=f"src/recycled_{index}.py",
+            content=b"value = 1\n",
+            language="python",
+        )
+        for index in range(5)
+    )
+
+    results = executor.execute_many(requests)
+
+    assert all(result.success for result in results)
+    assert pool_starts == 3
+
+
+def test_parser_pool_enforces_file_ceiling_before_spawning_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch execution must not bypass the existing per-file size boundary."""
+    executor = ParserExecutor(max_file_size_bytes=4, worker_count=1)
+    executor._isolation_available = True
+
+    def unexpected_popen(*args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        raise AssertionError("Oversized input must be rejected before process spawn")
+
+    monkeypatch.setattr(executor_module.subprocess, "Popen", unexpected_popen)
+    result = executor.execute_many(
+        (
+            ParserRequest(
+                artifact_id=uuid4(),
+                path="src/oversized.py",
+                content=b"value = 1\n",
+                language="python",
+                max_file_size_bytes=100,
+            ),
+        )
+    )[0]
+
+    assert result.success is False
+    assert result.diagnostics[0].code == "file_size_exceeded"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Production pool targets Linux")
+def test_parser_pool_enforces_bounded_response_size() -> None:
+    """Persistent responses retain the existing fail-closed IPC ceiling."""
+    executor = ParserExecutor(max_ipc_result_bytes=10, worker_count=1)
+    result = executor.execute_many(
+        (
+            ParserRequest(
+                artifact_id=uuid4(),
+                path="src/result_limit.py",
+                content=b"value = 1\n",
+                language="python",
+            ),
+        )
+    )[0]
+
+    assert result.success is False
+    assert result.diagnostics[0].code == "parser_result_size_exceeded"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Production pool targets Linux")
+def test_parser_pool_timeout_kills_and_replaces_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timed-out pooled child is never reused for the next artifact."""
+    original_popen = executor_module.subprocess.Popen
+    pool_starts = 0
+
+    def tracking_popen(*args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        nonlocal pool_starts
+        command = args[0] if args else kwargs.get("args", ())
+        if "--serve" in command:
+            pool_starts += 1
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(executor_module.subprocess, "Popen", tracking_popen)
+    executor = ParserExecutor(worker_count=1)
+    requests = tuple(
+        ParserRequest(
+            artifact_id=uuid4(),
+            path=f"src/timeout_{index}.py",
+            content=b"value = 1\n",
+            language="python",
+            deadline_seconds=0.0001,
+        )
+        for index in range(2)
+    )
+
+    results = executor.execute_many(requests)
+
+    assert [result.diagnostics[0].code for result in results] == [
+        "parser_timeout",
+        "parser_timeout",
+    ]
+    assert pool_starts == 2
+
+
 def test_parser_executor_environment_sanitization() -> None:
     """Verify sensitive environment variables are stripped from child process."""
     os.environ["SECRET_API_TOKEN_FOR_TEST"] = "super-secret"
@@ -675,6 +831,8 @@ def test_parser_executor_from_settings() -> None:
         parser_max_memory_mb=256,
         parser_max_stderr_bytes=512 * 1024,
         parser_max_facts_per_artifact=12_345,
+        parser_worker_count=3,
+        parser_worker_max_requests=17,
     )
     executor = ParserExecutor.from_settings(settings=custom_settings)
     assert executor._default_timeout_seconds == 45.0
@@ -682,6 +840,8 @@ def test_parser_executor_from_settings() -> None:
     assert executor._max_memory_mb == 256
     assert executor._max_stderr_bytes == 512 * 1024
     assert executor._max_facts_per_artifact == 12_345
+    assert executor._worker_count == 3
+    assert executor._worker_max_requests == 17
 
     # Default fallback to get_settings()
     default_executor = ParserExecutor.from_settings()
@@ -690,6 +850,8 @@ def test_parser_executor_from_settings() -> None:
     assert default_executor._max_memory_mb == 512
     assert default_executor._max_stderr_bytes == 1024 * 1024
     assert default_executor._max_facts_per_artifact == 25_000
+    assert default_executor._worker_count == 4
+    assert default_executor._worker_max_requests == 64
 
 
 def test_diagnostic_credential_and_secret_redaction() -> None:

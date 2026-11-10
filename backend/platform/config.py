@@ -51,6 +51,7 @@ class Settings(BaseSettings):
         "internal-platform-secret-key-change-in-production"
     )
     platform_api_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    platform_artifact_fetch_concurrency: int = Field(default=8, ge=1, le=32)
     sse_poll_interval_seconds: float = 0.5
 
     # Repository inspection & syntax analysis (Phase 3 Module 2)
@@ -61,6 +62,8 @@ class Settings(BaseSettings):
     parser_max_facts_per_artifact: int = Field(default=25_000, ge=1)
     parser_max_facts_per_analysis: int = Field(default=250_000, ge=1)
     parser_max_serialized_f2_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
+    parser_worker_count: int = Field(default=4, ge=1, le=16)
+    parser_worker_max_requests: int = Field(default=64, ge=1, le=1000)
 
     # Intermediate Representation (Phase 3 Module 3)
     ir_max_entities: int = Field(default=150_000, ge=1)

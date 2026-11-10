@@ -90,6 +90,8 @@ _DIRECTION_RULES: dict[
             ArchitectureEntityKind.COMPONENT,
             ArchitectureEntityKind.CONTROLLER,
             ArchitectureEntityKind.SERVICE,
+            ArchitectureEntityKind.DATA_REPOSITORY,
+            ArchitectureEntityKind.WORKER,
         },
         {
             ArchitectureEntityKind.MODULE,
@@ -104,6 +106,7 @@ _DIRECTION_RULES: dict[
             ArchitectureEntityKind.SERVICE,
             ArchitectureEntityKind.COMPONENT,
             ArchitectureEntityKind.CONTROLLER,
+            ArchitectureEntityKind.DATA_REPOSITORY,
             ArchitectureEntityKind.ENDPOINT,
             ArchitectureEntityKind.WORKER,
         },
@@ -112,6 +115,7 @@ _DIRECTION_RULES: dict[
             ArchitectureEntityKind.MODULE,
             ArchitectureEntityKind.COMPONENT,
             ArchitectureEntityKind.CONTROLLER,
+            ArchitectureEntityKind.DATA_REPOSITORY,
             ArchitectureEntityKind.ENDPOINT,
             ArchitectureEntityKind.EXTERNAL_API,
         },
@@ -259,7 +263,7 @@ class ArchitectureValidator:
                     actual=actual,
                     limit=limit,
                 )
-        size = len(document.to_canonical_json().encode("utf-8"))
+        size = document.canonical_payload_size
         if size > self._capacity.max_serialized_bytes:
             raise ArchitectureCapacityError(
                 dimension="canonical_payload_bytes",

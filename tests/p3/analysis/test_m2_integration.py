@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
+from threading import Lock
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -56,15 +58,56 @@ class _MemoryReader(ArtifactContentReader):
         return artifact.id in self.values
 
 
+class _ConcurrentMemoryReader(_MemoryReader):
+    concurrent_read_limit = 4
+
+    def __init__(self, values: dict[UUID, bytes]) -> None:
+        super().__init__(values)
+        self._lock = Lock()
+        self._active = 0
+        self.max_active = 0
+
+    def read_bytes(
+        self, artifact: AnalysisArtifact, max_bytes: int | None = None
+    ) -> bytes:
+        with self._lock:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+        try:
+            time.sleep(0.02)
+            return super().read_bytes(artifact, max_bytes)
+        finally:
+            with self._lock:
+                self._active -= 1
+
+
 @dataclass
 class _InProcessExecutor:
     calls: int = 0
+    batch_calls: int = 0
 
     def execute(self, request: ParserRequest) -> ParserResult:
         self.calls += 1
         if request.language == "python":
             return PythonAstAdapter().parse(request)
         return TreeSitterJsTsAdapter().parse(request)
+
+    def execute_many(
+        self,
+        requests: tuple[ParserRequest, ...],
+        *,
+        on_complete=None,  # type: ignore[no-untyped-def]
+        check_cancellation=None,  # type: ignore[no-untyped-def]
+    ) -> tuple[ParserResult, ...]:
+        self.batch_calls += 1
+        results = []
+        for index, request in enumerate(requests):
+            if check_cancellation is not None:
+                check_cancellation()
+            results.append(self.execute(request))
+            if on_complete is not None:
+                on_complete(index)
+        return tuple(results)
 
 
 class _FailingEnrichment(FrameworkEnrichmentService):
@@ -206,6 +249,7 @@ def test_ordered_handlers_produce_attempt_scoped_immutable_f2_once() -> None:
 
     f2 = coordinator.handoff.require_result(context.analysis_id, context.job_id)
     assert executor.calls == 1
+    assert executor.batch_calls == 1
     assert f2.framework_detections[0].framework == "fastapi"
     assert any(
         isinstance(fact, FrameworkFact)
@@ -285,6 +329,58 @@ def test_inspection_rejects_content_that_breaks_immutable_hash() -> None:
     assert any(
         diagnostic.code == "artifact_read_failed"
         for diagnostic in execution.diagnostics
+    )
+
+
+def test_inspection_prefetches_supported_artifacts_without_changing_order() -> None:
+    revision_id = uuid4()
+    artifacts: list[AnalysisArtifact] = []
+    content: dict[UUID, bytes] = {}
+    for index in range(8):
+        value = f"def function_{index}():\n    return {index}\n".encode()
+        artifact = AnalysisArtifact(
+            id=uuid4(),
+            revision_id=revision_id,
+            path=f"src/file_{index}.py",
+            size_bytes=len(value),
+            content_hash=hashlib.sha256(value).hexdigest(),
+            category=ArtifactCategory.SOURCE_CODE,
+            support_level=SupportLevel.FULL,
+        )
+        artifacts.append(artifact)
+        content[artifact.id] = value
+    reader = _ConcurrentMemoryReader(content)
+    analysis_input = AnalysisInput(
+        analysis_id=uuid4(),
+        project_id=uuid4(),
+        repository_id=uuid4(),
+        snapshot_id=revision_id,
+        revision_identifier="main",
+        source_hash="sha256:repository",
+        total_files=len(artifacts),
+        total_bytes=sum(item.size_bytes for item in artifacts),
+        effective_configuration=AnalysisConfiguration(),
+        artifact_catalog=ArtifactCatalog(tuple(reversed(artifacts))),
+        content_reader=reader,
+    )
+
+    execution = RepositoryInspectionService(  # type: ignore[arg-type]
+        parser_executor=_InProcessExecutor()
+    ).inspect(
+        analysis_input,
+        configuration_fingerprint="f" * 64,
+    )
+
+    assert reader.max_active == reader.concurrent_read_limit
+    assert tuple(document.path for document in execution.result.syntax_documents) == (
+        "src/file_0.py",
+        "src/file_1.py",
+        "src/file_2.py",
+        "src/file_3.py",
+        "src/file_4.py",
+        "src/file_5.py",
+        "src/file_6.py",
+        "src/file_7.py",
     )
 
 

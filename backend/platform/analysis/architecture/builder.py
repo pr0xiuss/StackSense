@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID
@@ -136,6 +136,7 @@ class ArchitectureBuilder:
         source_entities_by_key = {item.ir_key: item for item in source.entities}
         source_evidence = {item.evidence_key: item for item in source.evidence}
         evidence = {item.logical_id: item for item in resolved.evidence}
+        descriptor_index = _DescriptorIdentityIndex.build(resolved.entities)
         relationships: list[ArchitectureRelationship] = []
         unresolved_relationships: list[ArchitectureUnresolvedRelationship] = []
         unresolved_by_key = {
@@ -224,7 +225,7 @@ class ArchitectureBuilder:
                 target_logical_id = _resolve_descriptor_identity(
                     unresolved.target_name,
                     source_entity=entities_by_id[source_logical_id],
-                    entities=resolved.entities,
+                    index=descriptor_index,
                 )
                 if target_logical_id is not None:
                     if source_logical_id != target_logical_id:
@@ -288,7 +289,9 @@ class ArchitectureBuilder:
                 )
 
         relationships.extend(_scope_relationships(source, resolved.entities, evidence))
-        relationships.extend(_route_handler_relationships(source, resolved.entities))
+        relationships.extend(
+            _route_handler_relationships(source, resolved.entities, descriptor_index)
+        )
         merged_relationships = _merge_relationships(relationships)
         merged_unresolved = _merge_unresolved(unresolved_relationships)
         conflicts = [_identity_conflict(source, item) for item in resolved.conflicts]
@@ -364,16 +367,47 @@ def _entity_descriptor(entity: IREntity | None, fallback: str) -> str:
     return entity.qualified_name or entity.name
 
 
+@dataclass(frozen=True)
+class _DescriptorIdentityIndex:
+    dependencies: tuple[ArchitectureEntity, ...]
+    source_boundaries: dict[str, tuple[str, ...]]
+
+    @classmethod
+    def build(
+        cls, entities: tuple[ArchitectureEntity, ...]
+    ) -> _DescriptorIdentityIndex:
+        boundaries: dict[str, list[str]] = defaultdict(list)
+        dependencies: list[ArchitectureEntity] = []
+        for entity in entities:
+            if isinstance(entity.metadata.get("dependency_name"), str):
+                dependencies.append(entity)
+            qualified_name = entity.metadata.get("qualified_name")
+            if entity.kind in {
+                ArchitectureEntityKind.MODULE,
+                ArchitectureEntityKind.CONTROLLER,
+                ArchitectureEntityKind.SERVICE,
+                ArchitectureEntityKind.DATA_REPOSITORY,
+                ArchitectureEntityKind.WORKER,
+            } and isinstance(qualified_name, str):
+                boundaries[qualified_name].append(entity.logical_id)
+        return cls(
+            dependencies=tuple(dependencies),
+            source_boundaries={
+                path: tuple(sorted(ids)) for path, ids in boundaries.items()
+            },
+        )
+
+
 def _resolve_descriptor_identity(
     descriptor: str,
     *,
     source_entity: ArchitectureEntity,
-    entities: tuple[ArchitectureEntity, ...],
+    index: _DescriptorIdentityIndex,
 ) -> str | None:
     """Resolve one static import descriptor to an exact module/dependency entity."""
     dependency_matches = [
         entity.logical_id
-        for entity in entities
+        for entity in index.dependencies
         if isinstance(entity.metadata.get("dependency_name"), str)
         and _dependency_matches_descriptor(
             str(entity.metadata["dependency_name"]), descriptor
@@ -385,20 +419,15 @@ def _resolve_descriptor_identity(
         return dependency_matches[0]
 
     source_path = source_entity.metadata.get("qualified_name")
-    module_paths = {
-        str(entity.metadata["qualified_name"]): entity.logical_id
-        for entity in entities
-        if entity.kind == ArchitectureEntityKind.MODULE
-        and isinstance(entity.metadata.get("qualified_name"), str)
-    }
     candidates = _module_path_candidates(
         descriptor,
         source_path if isinstance(source_path, str) else None,
     )
     exact = {
         logical_id
-        for path, logical_id in module_paths.items()
+        for path, logical_ids in index.source_boundaries.items()
         if _module_path_matches(path, candidates)
+        for logical_id in logical_ids
     }
     return next(iter(exact)) if len(exact) == 1 else None
 
@@ -538,6 +567,15 @@ def _relationship_kind_for_target(
     target: ArchitectureEntity,
     metadata: Mapping[str, Any],
 ) -> tuple[ArchitectureRelationshipKind, str]:
+    if (
+        kind == ArchitectureRelationshipKind.CALLS
+        and source.kind == ArchitectureEntityKind.DATA_REPOSITORY
+        and target.kind == ArchitectureEntityKind.DATABASE
+    ):
+        return (
+            ArchitectureRelationshipKind.PERSISTS_TO,
+            f"{rule_id}.static_persistence_usage",
+        )
     if kind == ArchitectureRelationshipKind.IMPORTS and target.kind not in {
         ArchitectureEntityKind.MODULE,
         ArchitectureEntityKind.COMPONENT,
@@ -674,6 +712,8 @@ def _scope_relationships(
             ArchitectureEntityKind.FRONTEND_APPLICATION,
         }:
             applications[scope].append(entity)
+    if not applications:
+        return []
     output: list[ArchitectureRelationship] = []
     for entity in entities:
         if entity.kind in {
@@ -724,18 +764,84 @@ def _scope_relationships(
 def _route_handler_relationships(
     document: IRDocument,
     entities: tuple[ArchitectureEntity, ...],
+    descriptor_index: _DescriptorIdentityIndex,
 ) -> list[ArchitectureRelationship]:
+    endpoints = tuple(
+        entity for entity in entities if entity.kind == ArchitectureEntityKind.ENDPOINT
+    )
+    if not endpoints:
+        return []
+    architecture_by_id = {entity.logical_id: entity for entity in entities}
+    architecture_by_ir_key = _index_entities_by_ir_key(entities)
+    source_by_ir_key = {entity.ir_key: entity for entity in document.entities}
+    unresolved_by_key = {
+        item.unresolved_key: item for item in document.unresolved_references
+    }
     handlers: dict[str, list[ArchitectureEntity]] = defaultdict(list)
+    controllers_by_path: dict[str, list[ArchitectureEntity]] = defaultdict(list)
     for entity in entities:
         qualified = entity.metadata.get("qualified_name")
         if isinstance(qualified, str):
             handlers[qualified].append(entity)
+            if entity.kind == ArchitectureEntityKind.CONTROLLER:
+                controllers_by_path[_qualified_source_path(qualified)].append(entity)
     output: list[ArchitectureRelationship] = []
-    for endpoint in entities:
-        if endpoint.kind != ArchitectureEntityKind.ENDPOINT:
-            continue
+    for endpoint in endpoints:
         handler = endpoint.metadata.get("handler")
-        matches = handlers.get(handler, ()) if isinstance(handler, str) else ()
+        matches: tuple[ArchitectureEntity, ...] = (
+            tuple(handlers.get(handler, ())) if isinstance(handler, str) else ()
+        )
+        rule_id = "m4.relationship.endpoint_routes_to_exact_handler.v1"
+        status = ArchitectureFactStatus.CONFIRMED
+        if len(matches) != 1 and isinstance(handler, str):
+            matches = tuple(
+                controllers_by_path.get(_qualified_source_path(handler), ())
+            )
+            rule_id = "m4.relationship.endpoint_routes_to_source_controller.v1"
+            status = ArchitectureFactStatus.INFERRED
+        if len(matches) != 1 and endpoint.source_ir_keys:
+            source_endpoint = source_by_ir_key.get(endpoint.source_ir_keys[0])
+            module_key = (
+                source_endpoint.module_key if source_endpoint is not None else None
+            )
+            module_logical_id = (
+                _single_identity(architecture_by_ir_key, module_key)
+                if module_key is not None
+                else None
+            )
+            module_entity = (
+                architecture_by_id.get(module_logical_id)
+                if module_logical_id is not None
+                else None
+            )
+            imported_controllers: dict[str, ArchitectureEntity] = {}
+            if module_key is not None and module_entity is not None:
+                for relationship in document.relationships:
+                    if (
+                        relationship.kind != IRRelationshipKind.IMPORTS
+                        or relationship.source_key != module_key
+                        or relationship.unresolved_reference_key is None
+                    ):
+                        continue
+                    unresolved = unresolved_by_key.get(
+                        relationship.unresolved_reference_key
+                    )
+                    if unresolved is None:
+                        continue
+                    target_id = _resolve_descriptor_identity(
+                        unresolved.target_name,
+                        source_entity=module_entity,
+                        index=descriptor_index,
+                    )
+                    target = architecture_by_id.get(target_id) if target_id else None
+                    if (
+                        target is not None
+                        and target.kind == ArchitectureEntityKind.CONTROLLER
+                    ):
+                        imported_controllers[target.logical_id] = target
+            matches = tuple(imported_controllers.values())
+            rule_id = "m4.relationship.endpoint_routes_to_imported_controller.v1"
+            status = ArchitectureFactStatus.INFERRED
         if len(matches) != 1:
             continue
         output.append(
@@ -744,17 +850,21 @@ def _route_handler_relationships(
                 kind=ArchitectureRelationshipKind.ROUTES_TO,
                 source_logical_id=endpoint.logical_id,
                 target_logical_id=matches[0].logical_id,
-                status=ArchitectureFactStatus.CONFIRMED,
+                status=status,
                 evidence_ids=tuple(
                     sorted(set(endpoint.evidence_ids + matches[0].evidence_ids))
                 ),
                 source_ir_keys=tuple(
                     sorted(set(endpoint.source_ir_keys + matches[0].source_ir_keys))
                 ),
-                rule_id="m4.relationship.endpoint_routes_to_exact_handler.v1",
+                rule_id=rule_id,
             )
         )
     return output
+
+
+def _qualified_source_path(qualified_name: str) -> str:
+    return qualified_name.split("::", maxsplit=1)[0].replace("\\", "/")
 
 
 def _merge_relationships(

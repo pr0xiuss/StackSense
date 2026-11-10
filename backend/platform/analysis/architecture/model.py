@@ -571,10 +571,28 @@ class ArchitectureDocument:
             "source_diagnostic_ids",
             tuple(sorted(set(self.source_diagnostic_ids))),
         )
-        expected_digest = self.calculate_content_digest()
+        semantic_json = json.dumps(
+            _json_value(self.semantic_payload()),
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        expected_digest = hashlib.sha256(semantic_json.encode("utf-8")).hexdigest()
         if self.content_digest and self.content_digest != expected_digest:
             raise ArchitectureModelError("architecture content digest mismatch")
         object.__setattr__(self, "content_digest", expected_digest)
+        object.__setattr__(self, "_semantic_content_digest", expected_digest)
+        added_pairs = (
+            f'"architecture_version_id":{json.dumps(str(self.architecture_version_id))}',
+            f'"content_digest":{json.dumps(expected_digest)}',
+        )
+        object.__setattr__(
+            self,
+            "_canonical_payload_size",
+            len(semantic_json.encode("utf-8"))
+            + sum(len(pair.encode("utf-8")) for pair in added_pairs)
+            + len(added_pairs),
+        )
 
     def semantic_payload(self) -> dict[str, Any]:
         """Return canonical content, excluding persistence identity and digest."""
@@ -597,6 +615,9 @@ class ArchitectureDocument:
         }
 
     def calculate_content_digest(self) -> str:
+        cached = getattr(self, "_semantic_content_digest", None)
+        if isinstance(cached, str):
+            return cached
         return hashlib.sha256(
             json.dumps(
                 _json_value(self.semantic_payload()),
@@ -605,6 +626,11 @@ class ArchitectureDocument:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
+
+    @property
+    def canonical_payload_size(self) -> int:
+        """Exact canonical UTF-8 payload size calculated during construction."""
+        return self._canonical_payload_size  # type: ignore[attr-defined,no-any-return]
 
     def to_dict(self) -> dict[str, Any]:
         return _json_value(self)  # type: ignore[no-any-return]

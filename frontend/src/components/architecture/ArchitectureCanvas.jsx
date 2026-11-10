@@ -46,7 +46,7 @@ function getEntitySubtitle(entity) {
     (Array.isArray(entity.namespace) ? entity.namespace.join('/') : null) ||
     entity.logical_id;
   const text = String(value || '');
-  return text.length > 30 ? `…${text.slice(-29)}` : text;
+  return text.length > 22 ? `…${text.slice(-21)}` : text;
 }
 
 // Architectural tier classification
@@ -274,31 +274,35 @@ export default function ArchitectureCanvas({
             Architecture Overview Map
           </h3>
           <span className="arch-window-label" title="Deterministic window of currently loaded entities">
-            Bounded window: {entities.length} of {totalEntities || entities.length} entities
+            Backend-first view: {entities.length} of {totalEntities || entities.length} entities
           </span>
         </div>
 
         <div className="arch-canvas-controls">
-          <span className="arch-connector-count" aria-live="polite">
-            {focusedLogicalId
-              ? `${focusedLinks.length} direct connectors`
-              : `${links.length} visible connectors`}
-            {totalRelationships > relationships.length
-              ? ` from ${relationships.length} of ${totalRelationships}`
-              : ''}
-          </span>
-          <button
-            type="button"
-            className="arch-focus-reset"
-            onClick={() => setFocusedLogicalId(null)}
-            disabled={!focusedLogicalId}
-          >
-            Show all
-          </button>
-          <button type="button" onClick={() => setZoom((value) => Math.max(0.55, value - 0.15))} aria-label="Zoom out architecture map">−</button>
-          <span className="arch-zoom-value">{Math.round(zoom * 100)}%</span>
-          <button type="button" onClick={() => setZoom((value) => Math.min(1.45, value + 0.15))} aria-label="Zoom in architecture map">+</button>
-          <button type="button" onClick={() => setZoom(0.85)}>Reset</button>
+          <div className="arch-focus-controls">
+            <span className="arch-connector-count" aria-live="polite">
+              {focusedLogicalId
+                ? `${focusedLinks.length} direct connectors`
+                : `${links.length} visible connectors`}
+              {totalRelationships > relationships.length
+                ? ` · ${relationships.length} of ${totalRelationships} loaded`
+                : ''}
+            </span>
+            <button
+              type="button"
+              className="arch-focus-reset"
+              onClick={() => setFocusedLogicalId(null)}
+              disabled={!focusedLogicalId}
+            >
+              Show all
+            </button>
+          </div>
+          <div className="arch-zoom-controls">
+            <button type="button" onClick={() => setZoom((value) => Math.max(0.55, value - 0.15))} aria-label="Zoom out architecture map">−</button>
+            <span className="arch-zoom-value">{Math.round(zoom * 100)}%</span>
+            <button type="button" onClick={() => setZoom((value) => Math.min(1.45, value + 0.15))} aria-label="Zoom in architecture map">+</button>
+            <button type="button" onClick={() => setZoom(0.85)}>Reset</button>
+          </div>
         </div>
       </div>
 
@@ -451,46 +455,48 @@ export default function ArchitectureCanvas({
                       vectorEffect="non-scaling-stroke"
                     />
 
-                    {/* Kind Indicator Pill */}
-                    <rect
-                      x={8}
-                      y={8}
-                      width={NODE_WIDTH - 16}
-                      height={16}
-                      rx={4}
-                      fill="rgba(0, 0, 0, 0.25)"
-                    />
-                    <text
-                      x={14}
-                      y={19}
-                      fill={style.text}
-                      fontSize="9"
-                      fontWeight="600"
-                      fontFamily="sans-serif"
-                      letterSpacing="0.04em"
+                    {/* A nested viewport clips every label to the card's inner
+                        width. SVG text does not honor CSS overflow by itself. */}
+                    <svg
+                      className="arch-map-node-content"
+                      width={NODE_WIDTH - 8}
+                      height={NODE_HEIGHT}
+                      overflow="hidden"
+                      aria-hidden="true"
                     >
-                      {getEntityKindLabel(entity.kind)}
-                    </text>
+                      {/* Kind Indicator Pill */}
+                      <rect
+                        x={8}
+                        y={8}
+                        width={NODE_WIDTH - 16}
+                        height={16}
+                        rx={4}
+                        fill="rgba(0, 0, 0, 0.25)"
+                      />
+                      <text
+                        x={14}
+                        y={19}
+                        fill={style.text}
+                        fontSize="9"
+                        fontWeight="600"
+                        fontFamily="sans-serif"
+                        letterSpacing="0.04em"
+                      >
+                        {getEntityKindLabel(entity.kind)}
+                      </text>
 
-                    {/* Entity Name */}
-                    <text
-                      x={14}
-                      y={40}
-                      className="arch-map-node-title"
-                    >
-                      {(entity.name || entity.logical_id).length > 20
-                        ? (entity.name || entity.logical_id).slice(0, 19) + '…'
-                        : entity.name || entity.logical_id}
-                    </text>
+                      {/* Entity Name */}
+                      <text x={14} y={40} className="arch-map-node-title">
+                        {(entity.name || entity.logical_id).length > 20
+                          ? (entity.name || entity.logical_id).slice(0, 19) + '…'
+                          : entity.name || entity.logical_id}
+                      </text>
 
-                    {/* Logical ID Subtext */}
-                    <text
-                      x={14}
-                      y={52}
-                      className="arch-map-node-subtitle"
-                    >
-                      {subtitle}
-                    </text>
+                      {/* Logical ID Subtext */}
+                      <text x={14} y={52} className="arch-map-node-subtitle">
+                        {subtitle}
+                      </text>
+                    </svg>
                   </g>
                 );
               })}

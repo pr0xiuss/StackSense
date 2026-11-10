@@ -214,6 +214,9 @@ def test_builder_returns_only_whole_model_validation_marker() -> None:
     result = _build()
     assert isinstance(result, ValidatedArchitectureModel)
     assert result.document.content_digest
+    assert result.document.canonical_payload_size == len(
+        result.document.to_canonical_json().encode("utf-8")
+    )
 
 
 def test_invalid_relationship_direction_is_rejected() -> None:

@@ -44,6 +44,11 @@ class PlatformSnapshotManifest:
 class PlatformRepositoryGateway:
     """Port for reading Express-owned immutable revision data."""
 
+    concurrent_read_limit = 1
+
+    def close(self) -> None:
+        """Release gateway resources when the implementation owns any."""
+
     def get_manifest(
         self, project_id: UUID, repository_id: UUID, revision_id: UUID
     ) -> PlatformSnapshotManifest:
@@ -65,11 +70,34 @@ class HttpPlatformRepositoryGateway(PlatformRepositoryGateway):
     """HTTP implementation that never accesses the Express MongoDB directly."""
 
     def __init__(
-        self, base_url: str, service_token: str, timeout_seconds: float
+        self,
+        base_url: str,
+        service_token: str,
+        timeout_seconds: float,
+        *,
+        concurrent_read_limit: int = 8,
+        client: httpx.Client | None = None,
     ) -> None:
+        if concurrent_read_limit <= 0:
+            raise ValueError("concurrent_read_limit must be positive")
         self._base_url = base_url.rstrip("/")
         self._service_token = service_token
         self._timeout_seconds = timeout_seconds
+        self.concurrent_read_limit = concurrent_read_limit
+        self._owns_client = client is None
+        self._client = client or httpx.Client(
+            headers=self._headers(),
+            timeout=self._timeout_seconds,
+            limits=httpx.Limits(
+                max_connections=concurrent_read_limit,
+                max_keepalive_connections=concurrent_read_limit,
+            ),
+        )
+
+    def close(self) -> None:
+        """Release pooled HTTP connections owned by this gateway."""
+        if self._owns_client:
+            self._client.close()
 
     def _headers(self) -> dict[str, str]:
         return {"X-Service-Token": self._service_token}
@@ -82,9 +110,7 @@ class HttpPlatformRepositoryGateway(PlatformRepositoryGateway):
             f"/revisions/{revision_id}/manifest"
         )
         try:
-            response = httpx.get(
-                url, headers=self._headers(), timeout=self._timeout_seconds
-            )
+            response = self._client.get(url, headers=self._headers())
             response.raise_for_status()
             payload = response.json()
             revision = payload["revision"]
@@ -144,11 +170,10 @@ class HttpPlatformRepositoryGateway(PlatformRepositoryGateway):
             f"/revisions/{revision_id}/artifacts/{artifact_id}/content"
         )
         try:
-            response = httpx.get(
+            response = self._client.get(
                 url,
                 headers=self._headers(),
                 params={"max_bytes": bounded},
-                timeout=self._timeout_seconds,
             )
             response.raise_for_status()
             return response.content[:bounded]

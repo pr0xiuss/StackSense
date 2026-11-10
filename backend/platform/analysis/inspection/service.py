@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+import time
 from collections import Counter
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from backend.platform.analysis.domain.constants import DiagnosticSeverity
 from backend.platform.analysis.domain.diagnostic import AnalysisDiagnostic
-from backend.platform.analysis.domain.input import AnalysisInput
+from backend.platform.analysis.domain.input import AnalysisArtifact, AnalysisInput
 from backend.platform.analysis.frameworks import FrameworkEnrichmentService
 from backend.platform.analysis.inspection.detection import DetectionService
 from backend.platform.analysis.inspection.inventory import InventoryBuilder
@@ -28,6 +31,7 @@ from backend.platform.analysis.inspection.model import (
 )
 from backend.platform.analysis.syntax.base import (
     ParserRequest,
+    ParserResult,
     create_parsing_diagnostic,
 )
 from backend.platform.analysis.syntax.executor import ParserExecutor
@@ -43,6 +47,7 @@ if TYPE_CHECKING:
 
 
 _SHA256_HEX_RE = re.compile(r"[0-9a-fA-F]{64}")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -126,6 +131,7 @@ class RepositoryInspectionService:
         check_cancellation: Callable[[], None] | None = None,
     ) -> RepositoryInspectionExecution:
         """Inspect artifacts once, enrich generic facts, and return canonical F2."""
+        inspection_started = time.monotonic()
         prepared = preparation or self.prepare(analysis_input)
         inventory = prepared.inventory
         languages = prepared.languages
@@ -160,38 +166,90 @@ class RepositoryInspectionService:
         )
         total_semantic = len(semantic_artifacts)
         processed_semantic = 0
+        parse_artifacts: list[AnalysisArtifact] = []
+        parse_requests: list[ParserRequest] = []
 
-        for artifact in analysis_input.artifact_catalog.artifacts:
+        max_file_bytes = min(
+            analysis_input.effective_configuration.max_file_size_bytes,
+            5 * 1024 * 1024,
+        )
+        read_started = time.monotonic()
+
+        def read_and_validate(artifact: AnalysisArtifact) -> bytes:
+            content = analysis_input.content_reader.read_bytes(
+                artifact,
+                max_bytes=max_file_bytes,
+            )
+            if len(content) != artifact.size_bytes:
+                raise ValueError(
+                    "artifact content size did not match immutable metadata"
+                )
+            if _SHA256_HEX_RE.fullmatch(artifact.content_hash):
+                actual_hash = hashlib.sha256(content).hexdigest()
+                if actual_hash.lower() != artifact.content_hash.lower():
+                    raise ValueError(
+                        "artifact content hash did not match immutable metadata"
+                    )
+            return content
+
+        read_results: dict[UUID, bytes | Exception] = {}
+        read_concurrency = max(
+            1,
+            min(
+                int(
+                    getattr(
+                        analysis_input.content_reader,
+                        "concurrent_read_limit",
+                        1,
+                    )
+                ),
+                len(semantic_artifacts) or 1,
+            ),
+        )
+        if read_concurrency == 1:
+            for artifact in semantic_artifacts:
+                if check_cancellation is not None:
+                    check_cancellation()
+                try:
+                    read_results[artifact.id] = read_and_validate(artifact)
+                except Exception as exc:
+                    read_results[artifact.id] = exc
+        else:
+            with ThreadPoolExecutor(
+                max_workers=read_concurrency,
+                thread_name_prefix="artifact-fetch",
+            ) as pool:
+                futures = {
+                    pool.submit(read_and_validate, artifact): artifact
+                    for artifact in semantic_artifacts
+                }
+                for future in as_completed(futures):
+                    if check_cancellation is not None:
+                        check_cancellation()
+                    artifact = futures[future]
+                    try:
+                        read_results[artifact.id] = future.result()
+                    except Exception as exc:
+                        read_results[artifact.id] = exc
+
+        read_seconds = time.monotonic() - read_started
+
+        for artifact in semantic_artifacts:
             entry = entries[artifact.id]
-            if entry.analysis_role != ArtifactAnalysisRole.SEMANTIC:
-                continue
             if check_cancellation is not None:
                 check_cancellation()
-            try:
-                content = analysis_input.content_reader.read_bytes(
-                    artifact,
-                    max_bytes=min(
-                        analysis_input.effective_configuration.max_file_size_bytes,
-                        5 * 1024 * 1024,
-                    ),
-                )
-                if len(content) != artifact.size_bytes:
-                    raise ValueError(
-                        "artifact content size did not match immutable metadata"
-                    )
-                if _SHA256_HEX_RE.fullmatch(artifact.content_hash):
-                    actual_hash = hashlib.sha256(content).hexdigest()
-                    if actual_hash.lower() != artifact.content_hash.lower():
-                        raise ValueError(
-                            "artifact content hash did not match immutable metadata"
-                        )
-            except Exception as exc:
+            content_or_error = read_results[artifact.id]
+            if isinstance(content_or_error, Exception):
+                read_error = content_or_error
                 diagnostic = create_parsing_diagnostic(
                     analysis_input.analysis_id,
                     artifact.id,
                     entry.path,
                     "artifact_read_failed",
-                    f"Artifact content could not be read ({type(exc).__name__})",
+                    (
+                        "Artifact content could not be read "
+                        f"({type(read_error).__name__})"
+                    ),
                     DiagnosticSeverity.ERROR,
                 )
                 diagnostics.append(diagnostic)
@@ -208,23 +266,112 @@ class RepositoryInspectionService:
                         f"Inspection failed for {entry.path}",
                     )
                 continue
+            content = content_or_error
 
-            try:
-                parse_result = self._parser.execute(
-                    ParserRequest(
-                        artifact_id=artifact.id,
-                        path=entry.path,
-                        content=content,
-                        language=entry.detected_language or "",
-                        analysis_id=analysis_input.analysis_id,
-                        configuration_fingerprint=configuration_fingerprint,
-                        max_file_size_bytes=min(
-                            analysis_input.effective_configuration.max_file_size_bytes,
-                            5 * 1024 * 1024,
-                        ),
-                        max_facts_per_artifact=self._max_facts_per_artifact,
-                    )
+            parse_artifacts.append(artifact)
+            parse_requests.append(
+                ParserRequest(
+                    artifact_id=artifact.id,
+                    path=entry.path,
+                    content=content,
+                    language=entry.detected_language or "",
+                    analysis_id=analysis_input.analysis_id,
+                    configuration_fingerprint=configuration_fingerprint,
+                    max_file_size_bytes=max_file_bytes,
+                    max_facts_per_artifact=self._max_facts_per_artifact,
                 )
+            )
+
+        parse_results: list[ParserResult] = []
+        completed_parses = 0
+
+        def report_parse_completion(index: int) -> None:
+            nonlocal completed_parses
+            completed_parses += 1
+            if report_progress is not None:
+                report_progress(
+                    processed_semantic + completed_parses,
+                    total_semantic,
+                    f"Inspected {parse_requests[index].path}",
+                )
+
+        execute_many = getattr(self._parser, "execute_many", None)
+        parse_started = time.monotonic()
+        if callable(execute_many) and parse_requests:
+            parse_results = list(
+                execute_many(
+                    tuple(parse_requests),
+                    on_complete=report_parse_completion,
+                    check_cancellation=check_cancellation,
+                )
+            )
+        else:
+            retained_artifacts: list[AnalysisArtifact] = []
+            retained_requests: list[ParserRequest] = []
+            for request_index, (artifact, request) in enumerate(
+                zip(parse_artifacts, parse_requests, strict=True)
+            ):
+                if check_cancellation is not None:
+                    check_cancellation()
+                try:
+                    parse_results.append(self._parser.execute(request))
+                    retained_artifacts.append(artifact)
+                    retained_requests.append(request)
+                    report_parse_completion(request_index)
+                except Exception as exc:
+                    entry = entries[artifact.id]
+                    diagnostic = create_parsing_diagnostic(
+                        analysis_input.analysis_id,
+                        artifact.id,
+                        entry.path,
+                        "parser_process_failed",
+                        f"Parser execution failed ({type(exc).__name__})",
+                        DiagnosticSeverity.ERROR,
+                    )
+                    diagnostics.append(diagnostic)
+                    entries[artifact.id] = replace(
+                        entry,
+                        processing_outcome=ArtifactProcessingOutcome.FAILED,
+                        reason_codes=(
+                            *entry.reason_codes,
+                            "syntax_extraction_failed",
+                        ),
+                    )
+                    processed_semantic += 1
+                    if report_progress is not None:
+                        report_progress(
+                            processed_semantic + completed_parses,
+                            total_semantic,
+                            f"Inspection failed for {entry.path}",
+                        )
+            parse_artifacts = retained_artifacts
+            parse_requests = retained_requests
+
+        parse_seconds = time.monotonic() - parse_started
+        logger.info(
+            (
+                "M2 extraction timing analysis_id=%s semantic_artifacts=%d "
+                "read_concurrency=%d read_seconds=%.3f parse_workers=%d "
+                "parse_seconds=%.3f"
+            ),
+            analysis_input.analysis_id,
+            total_semantic,
+            read_concurrency,
+            read_seconds,
+            min(
+                int(getattr(self._parser, "worker_count", 1)),
+                len(parse_requests),
+            ),
+            parse_seconds,
+        )
+
+        for artifact, parse_result in zip(parse_artifacts, parse_results, strict=True):
+            entry = entries[artifact.id]
+            if check_cancellation is not None:
+                check_cancellation()
+            try:
+                diagnostics.extend(parse_result.diagnostics)
+                document = parse_result.document
             except Exception as exc:
                 diagnostic = create_parsing_diagnostic(
                     analysis_input.analysis_id,
@@ -241,16 +388,7 @@ class RepositoryInspectionService:
                     reason_codes=(*entry.reason_codes, "syntax_extraction_failed"),
                 )
                 processed_semantic += 1
-                if report_progress is not None:
-                    report_progress(
-                        processed_semantic,
-                        total_semantic,
-                        f"Inspection failed for {entry.path}",
-                    )
                 continue
-
-            diagnostics.extend(parse_result.diagnostics)
-            document = parse_result.document
             if (
                 not parse_result.success
                 or document is None
@@ -272,12 +410,6 @@ class RepositoryInspectionService:
                 if document is not None:
                     documents.append(document)
                 processed_semantic += 1
-                if report_progress is not None:
-                    report_progress(
-                        processed_semantic,
-                        total_semantic,
-                        f"Inspected {entry.path}",
-                    )
                 continue
 
             total_facts += len(document.facts)
@@ -321,12 +453,6 @@ class RepositoryInspectionService:
                 ),
             )
             processed_semantic += 1
-            if report_progress is not None:
-                report_progress(
-                    processed_semantic,
-                    total_semantic,
-                    f"Inspected {entry.path}",
-                )
 
         ordered_entries = tuple(sorted(entries.values(), key=lambda item: item.path))
         ordered_documents = tuple(sorted(documents, key=lambda item: item.path))
@@ -341,6 +467,7 @@ class RepositoryInspectionService:
                 total_semantic,
                 "Enriching confirmed framework evidence",
             )
+        enrichment_started = time.monotonic()
         try:
             ordered_documents = self._framework_enrichment.enrich(
                 ordered_documents,
@@ -380,6 +507,7 @@ class RepositoryInspectionService:
             ordered_entries = tuple(
                 sorted(entries.values(), key=lambda item: item.path)
             )
+        enrichment_seconds = time.monotonic() - enrichment_started
 
         enriched_fact_count = sum(len(document.facts) for document in ordered_documents)
         if (
@@ -422,10 +550,10 @@ class RepositoryInspectionService:
             diagnostics,
             configuration_fingerprint,
         )
-        if (
-            len(inspection_result.to_canonical_json().encode("utf-8"))
-            > self._max_serialized_f2_bytes
-        ):
+        serialization_started = time.monotonic()
+        serialized_f2_size = len(inspection_result.to_canonical_json().encode("utf-8"))
+        serialization_seconds = time.monotonic() - serialization_started
+        if serialized_f2_size > self._max_serialized_f2_bytes:
             diagnostic = create_parsing_diagnostic(
                 analysis_input.analysis_id,
                 next(
@@ -459,6 +587,20 @@ class RepositoryInspectionService:
                 configuration_fingerprint,
                 "serialized_f2_limit_exceeded",
             )
+        logger.info(
+            (
+                "M2 finalization timing analysis_id=%s documents=%d facts=%d "
+                "enrichment_seconds=%.3f serialization_seconds=%.3f "
+                "serialized_bytes=%d total_seconds=%.3f"
+            ),
+            analysis_input.analysis_id,
+            len(ordered_documents),
+            enriched_fact_count,
+            enrichment_seconds,
+            serialization_seconds,
+            serialized_f2_size,
+            time.monotonic() - inspection_started,
+        )
         return RepositoryInspectionExecution(inspection_result, tuple(diagnostics))
 
     def prepare(self, analysis_input: AnalysisInput) -> InspectionPreparation:
