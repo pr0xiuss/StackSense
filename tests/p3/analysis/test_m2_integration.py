@@ -428,6 +428,7 @@ def test_production_registry_contains_only_real_m2_handlers_from_this_module() -
     try:
         registry = get_worker_registry()
         assert registry.registered_stages() == (
+            AnalysisStageName.INPUT_VALIDATION.value,
             AnalysisStageName.INVENTORY.value,
             AnalysisStageName.LANGUAGE_DETECTION.value,
             AnalysisStageName.FRAMEWORK_DETECTION.value,

@@ -25,6 +25,7 @@ router.use(authenticate);
 router.post(
   '/',
   validateCreateAnalysis,
+  analysisController.authorizeCreateAnalysis,
   verifyChainForCreate,
   analysisController.createAnalysis
 );

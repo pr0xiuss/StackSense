@@ -1047,6 +1047,11 @@ class IRConstructionService:
                                 metadata={
                                     "framework": fact.framework_name,
                                     "fact_type": fact.fact_type,
+                                    **{
+                                        key: fact.details[key]
+                                        for key in ("path", "mount_target")
+                                        if isinstance(fact.details.get(key), str)
+                                    },
                                 },
                             )
                         )

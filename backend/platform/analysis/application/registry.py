@@ -10,6 +10,7 @@ from backend.platform.analysis.application.execution import (
     StageExecutionResult,
 )
 from backend.platform.analysis.domain.constants import AnalysisStageName, StageStatus
+from backend.platform.errors import AnalysisConfigurationError
 
 if TYPE_CHECKING:
     pass
@@ -36,6 +37,48 @@ class StageHandlerRegistry:
     def registered_stages(self) -> tuple[str, ...]:
         """Return all registered stage names."""
         return tuple(self._handlers.keys())
+
+
+class InputValidationStageHandler(AnalysisStageHandler):
+    """Validate the immutable F1 input boundary before downstream analysis."""
+
+    @property
+    def stage_name(self) -> str:
+        return AnalysisStageName.INPUT_VALIDATION.value
+
+    def execute(self, context: ExecutionContext) -> StageExecutionResult:
+        context.check_cancellation()
+        analysis_input = context.input
+
+        if analysis_input.analysis_id != context.analysis_id:
+            raise AnalysisConfigurationError(
+                "AnalysisInput analysis_id does not match the executing analysis."
+            )
+        if analysis_input.project_id != context.project_id:
+            raise AnalysisConfigurationError(
+                "AnalysisInput project_id does not match the executing project."
+            )
+        if analysis_input.artifact_catalog.total_files != analysis_input.total_files:
+            raise AnalysisConfigurationError(
+                "AnalysisInput artifact count does not match its immutable manifest."
+            )
+        if analysis_input.artifact_catalog.total_bytes != analysis_input.total_bytes:
+            raise AnalysisConfigurationError(
+                "AnalysisInput byte count does not match its immutable manifest."
+            )
+
+        context.report_progress(1, 1, "Validated immutable analysis input.")
+        return StageExecutionResult(
+            stage_name=self.stage_name,
+            status=StageStatus.COMPLETED,
+            processed_items=1,
+            total_items=1,
+        )
+
+
+def register_input_validation_handler(registry: StageHandlerRegistry) -> None:
+    """Register the M1-owned immutable input validation stage."""
+    registry.register(InputValidationStageHandler())
 
 
 class FakeStageHandler(AnalysisStageHandler):

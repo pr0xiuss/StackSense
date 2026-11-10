@@ -155,9 +155,13 @@ class SqlAlchemyJobRepository(JobRepository):
         return [self._to_domain(m) for m in models]
 
     def find_pending_jobs(self, created_cutoff: datetime) -> list[AnalysisJob]:
-        """Find pending jobs old enough to require dispatch recovery."""
+        """Find unleased jobs old enough to require dispatch recovery."""
         stmt = select(AnalysisJobModel).where(
-            AnalysisJobModel.status == JobStatus.PENDING.value,
+            AnalysisJobModel.status.in_(
+                (JobStatus.PENDING.value, JobStatus.QUEUED.value)
+            ),
+            AnalysisJobModel.worker_id.is_(None),
+            AnalysisJobModel.started_at.is_(None),
             AnalysisJobModel.created_at < created_cutoff,
         )
         models = self._session.scalars(stmt).all()

@@ -97,12 +97,70 @@
 }
 
 .arch-canvas-toolbar {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  flex-wrap: wrap;
   gap: 0.75rem;
   margin-bottom: 1rem;
+}
+
+.arch-canvas-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.arch-canvas-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-secondary, #94A3B8);
+  font-size: 0.775rem;
+  white-space: nowrap;
+}
+
+.arch-connector-count {
+  display: inline-block;
+  width: 12.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.arch-canvas-controls button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border-medium, rgba(255, 255, 255, 0.14));
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-elevated, #162032);
+  color: var(--text-primary, #F8FAFC);
+  cursor: pointer;
+}
+
+.arch-canvas-controls button:hover,
+.arch-canvas-controls button:focus-visible {
+  border-color: var(--accent-secondary, #38BDF8);
+  outline: none;
+}
+
+.arch-canvas-controls .arch-focus-reset {
+  width: 4.5rem;
+  padding-inline: 0.7rem;
+  border-color: rgba(56, 189, 248, 0.45);
+  color: var(--accent-secondary, #38BDF8);
+}
+
+.arch-canvas-controls .arch-focus-reset:disabled {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.arch-zoom-value {
+  min-width: 2.8rem;
+  text-align: center;
+  font-family: var(--font-mono, monospace);
 }
 
 .arch-window-label {
@@ -120,18 +178,38 @@
 
 .arch-canvas-viewport {
   width: 100%;
-  height: 540px;
+  height: min(68vh, 720px);
+  min-height: 540px;
   background: radial-gradient(circle at 50% 50%, #0d1420 0%, #080c14 100%);
   border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
   border-radius: var(--radius-sm, 6px);
   overflow: auto;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
   position: relative;
+  contain: layout paint;
+}
+
+@media (max-width: 1280px) {
+  .arch-canvas-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .arch-canvas-controls {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 720px) {
+  .arch-canvas-controls {
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 0.2rem;
+  }
 }
 
 .arch-svg-canvas {
-  width: 100%;
   min-width: 600px;
-  height: 100%;
   min-height: 520px;
   display: block;
 }
@@ -139,39 +217,43 @@
 /* --------------------------------------------------------------------------
    Deterministic SVG Nodes & Connectors
    -------------------------------------------------------------------------- */
-.arch-node {
+.arch-map-node {
   cursor: pointer;
   outline: none;
-  transition: transform 150ms ease;
+  opacity: 1;
+  transition: opacity 120ms ease;
 }
 
-.arch-node:focus-visible rect {
+.arch-map-node:focus-visible rect {
   stroke: var(--accent-secondary, #38BDF8);
   stroke-width: 2.5px;
 }
 
-.arch-node rect {
-  transition: all 150ms ease;
+.arch-map-node rect {
+  transition: fill 120ms ease, stroke 120ms ease;
 }
 
-.arch-node:hover rect {
+.arch-map-node:hover rect {
   filter: brightness(1.15);
 }
 
-.arch-node.selected rect {
+.arch-map-node.selected rect {
   stroke: var(--accent-secondary, #38BDF8);
   stroke-width: 2.5px;
-  filter: drop-shadow(0 0 8px rgba(56, 189, 248, 0.4));
 }
 
-.arch-node-title {
+.arch-map-node.muted {
+  opacity: 0.2;
+}
+
+.arch-map-node-title {
   fill: #F8FAFC;
   font-family: var(--font-sans, sans-serif);
   font-size: 12px;
   font-weight: 600;
 }
 
-.arch-node-subtitle {
+.arch-map-node-subtitle {
   fill: #94A3B8;
   font-family: var(--font-mono, monospace);
   font-size: 10px;
@@ -181,12 +263,17 @@
   stroke: rgba(148, 163, 184, 0.35);
   stroke-width: 1.5px;
   fill: none;
-  transition: stroke 150ms ease;
+  opacity: 1;
+  transition: stroke 120ms ease, opacity 120ms ease;
 }
 
 .arch-connector.active {
   stroke: #38BDF8;
   stroke-width: 2px;
+}
+
+.arch-connector.muted {
+  opacity: 0.06;
 }
 
 /* --------------------------------------------------------------------------

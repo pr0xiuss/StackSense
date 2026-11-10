@@ -9,7 +9,7 @@ const {
 
 describe('AnalysisGatewayService Unit Tests', () => {
   const mockConfig = {
-    baseUrl: 'http://localhost:8000',
+    baseUrl: 'http://localhost:8000/api/v1',
     secretKey: 'mock-secret-key-at-least-16-chars',
     jsonTimeoutMs: 2000,
     sseTimeoutMs: 5000,
@@ -79,7 +79,7 @@ describe('AnalysisGatewayService Unit Tests', () => {
 
       expect(result).toEqual(mockResponseData);
       expect(mockFetch).toHaveBeenCalledWith(
-        `http://localhost:8000/analyses?project_id=${sampleProjectId}&limit=10`,
+        `http://localhost:8000/api/v1/analyses?project_id=${sampleProjectId}&limit=10`,
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({

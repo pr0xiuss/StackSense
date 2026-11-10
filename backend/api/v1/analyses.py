@@ -82,8 +82,10 @@ def create_analysis(
     require_delegated_project(context, request.project_id)
     created = service.create_analysis(request)
 
-    # Commit the durable intent before publishing. A PENDING job is recoverable if
-    # the broker call fails or the process exits before the second commit.
+    # Commit the dispatch-ready state before publishing.  Publishing first lets a
+    # fast worker race the API's PENDING -> QUEUED update, lose its RUNNING claim,
+    # acknowledge the delivery and strand the analysis forever in QUEUED.
+    # QUEUED jobs without a worker lease are recoverable by the periodic dispatcher.
     if created.active_job and created.active_job.status == JobStatus.PENDING.value:
         analysis = analysis_repo.get_by_id(created.id, created.project_id)
         if analysis:
@@ -93,6 +95,11 @@ def create_analysis(
                     AnalysisStatus.QUEUED, updated_at=now
                 )
                 analysis_repo.update(queued_analysis, expected_version=analysis.version)
+            active_job = job_repo.get_by_id(created.active_job.id)
+            if active_job and active_job.status == JobStatus.PENDING:
+                queued_job = active_job.transition_to(JobStatus.QUEUED, updated_at=now)
+                job_repo.update(queued_job, expected_version=active_job.version)
+                LifecycleEventEmitter(event_repo, created.id).emit_queued(active_job.id)
             session.commit()
 
             payload = AnalysisJobPayload(
@@ -107,13 +114,6 @@ def create_analysis(
                 raise AnalysisQueueUnavailableError(
                     details={"analysis_id": str(created.id)}
                 ) from exc
-
-            active_job = job_repo.get_by_id(created.active_job.id)
-            if active_job and active_job.status == JobStatus.PENDING:
-                queued_job = active_job.transition_to(JobStatus.QUEUED, updated_at=now)
-                job_repo.update(queued_job, expected_version=active_job.version)
-                LifecycleEventEmitter(event_repo, created.id).emit_queued(active_job.id)
-                session.commit()
 
             return service.get_analysis(created.id, created.project_id)
 

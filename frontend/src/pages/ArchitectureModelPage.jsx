@@ -8,6 +8,28 @@ import { architectureService } from '../services/architectureService.js';
 import { projectService } from '../services/projectService.js';
 import { repositoryService } from '../services/repositoryService.js';
 
+const OVERVIEW_ENTITY_LIMIT = 100;
+const OVERVIEW_RELATIONSHIP_LIMIT = 500;
+
+async function loadOverviewRelationships(versionId, projectId) {
+  const items = [];
+  let offset = 0;
+  let total = 0;
+  do {
+    const page = await architectureService.listRelationships(versionId, {
+      projectId,
+      limit: 100,
+      offset,
+    });
+    const pageItems = Array.isArray(page?.items) ? page.items : [];
+    total = typeof page?.total === 'number' ? page.total : pageItems.length;
+    items.push(...pageItems);
+    offset += pageItems.length;
+    if (pageItems.length === 0) break;
+  } while (offset < total && items.length < OVERVIEW_RELATIONSHIP_LIMIT);
+  return items.slice(0, OVERVIEW_RELATIONSHIP_LIMIT);
+}
+
 export default function ArchitectureModelPage({ projectId, repositoryId, analysisId }) {
   const [version, setVersion] = useState(null);
   const [project, setProject] = useState(null);
@@ -49,12 +71,16 @@ export default function ArchitectureModelPage({ projectId, repositoryId, analysi
       if (verData?.id) {
         setOverviewLoading(true);
         Promise.all([
-          architectureService.listEntities(verData.id, { projectId, limit: 100, offset: 0 }),
-          architectureService.listRelationships(verData.id, { projectId, limit: 100, offset: 0 }),
+          architectureService.listEntities(verData.id, {
+            projectId,
+            limit: OVERVIEW_ENTITY_LIMIT,
+            offset: 0,
+          }),
+          loadOverviewRelationships(verData.id, projectId),
         ])
           .then(([entRes, relRes]) => {
             const entList = Array.isArray(entRes?.items) ? entRes.items : [];
-            const relList = Array.isArray(relRes?.items) ? relRes.items : [];
+            const relList = Array.isArray(relRes) ? relRes : [];
             setOverviewEntities(entList);
             setOverviewRelationships(relList);
             if (entList.length > 0) {

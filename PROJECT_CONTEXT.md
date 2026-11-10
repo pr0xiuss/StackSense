@@ -14,9 +14,11 @@ published analysis results. The services communicate only through authenticated
 internal APIs and never read each other's databases.
 
 Phase 3 M1/F1 through M4/Architecture Model v1 are implemented, independently
-reviewed, corrected, verified and frozen. The current work is Phase 3 M5:
-frontend integration and basic Architecture Model visualization. The M5 plan is
-owner-approved and frozen; implementation has not started.
+reviewed, corrected, verified and frozen. Phase 3 M5 frontend integration and
+basic Architecture Model visualization has been implemented by a collaborator.
+The current work is post-implementation M5 review and remediation; the broken
+analysis-start vertical slice has been corrected and verified, while the wider
+M5 review remains open at the owner's request.
 
 ### 1.1 Authoritative sources
 
@@ -82,7 +84,7 @@ owner-approved and frozen; implementation has not started.
 | M2/F2 | **FROZEN / COMPLETE v1.0.0** | Deterministic inventory, detection, isolated Python/JS/TS/JSX/TSX parsing, framework enrichment and immutable non-persisted F2. |
 | M3/F3 | **FROZEN / COMPLETE v1.0.0** | Deterministic parser-neutral IR, document-local lexical semantics, diagnostics, validation and immutable non-persisted F3. |
 | M4 | **FROZEN / COMPLETE v1.0.0** | Canonical identity/model construction, validation, approved capacity limits, atomic publication and published-only query APIs. |
-| M5 | **PLAN APPROVED / FROZEN — IMPLEMENTATION NOT STARTED** | Express analysis gateway plus React initiation, lifecycle, findings, result exploration and basic bounded Architecture Model visualization. |
+| M5 | **IMPLEMENTED — REVIEW/REMEDIATION IN PROGRESS** | Express analysis gateway plus React initiation, lifecycle, findings, result exploration and basic bounded Architecture Model visualization. The start-analysis path is corrected and verified end to end. |
 | M6 | Planned | Cross-service/E2E evaluation, security, performance and Phase 3 closeout after M5. |
 
 ### 3.1 M1–M4 verification retained
@@ -99,7 +101,7 @@ tests rather than being duplicated here.
 
 ## 4. Current Phase Plan — Phase 3 Module 5
 
-**Status: PLAN APPROVED / FROZEN — IMPLEMENTATION NOT STARTED.**
+**Status: IMPLEMENTED — REVIEW/REMEDIATION IN PROGRESS.**
 
 The owner approved the complete four-batch plan and all four decisions in §6.1
 on 2026-11-09. The plan is now the implementation baseline. Material scope,
@@ -720,8 +722,10 @@ M5 is complete only when:
 | M5 B2 | **COMPLETE / VERIFIED** | Implemented frontend contracts (analysisContracts, architectureContracts), API services (analysisService, architectureService), apiClient streaming extension (apiStream), dark theme styling (analysis.css), AnalysesTab with pagination/status filtering, StartAnalysisModal with revision inspection, idempotency key generation and advanced options, RepositoryDetailPage tab integration, and App route precedence. Verified with clean `npm run build` (vite v8.3.1), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and clean static checks (black, ruff, mypy --strict). |
 | M5 B3 | **COMPLETE / VERIFIED** | Implemented `useAnalysisLiveStatus` hook (authoritative REST polling with SSE invalidation, 15s reconnect backoff, 3s serialized polling fallback, terminal state teardown), `AnalysisDetailPage`, `AnalysisHeader` (breadcrumbs, cancellation modal, architecture link, streaming indicator), `AnalysisProgress` (8-stage progress rail, metrics cards, indeterminate/percentage progress), `AnalysisFindings` (diagnostics, unresolved relationships, architecture conflicts with independent pagination and severity filters), `AnalysisExecution` (active worker job telemetry and stage execution table), App route mounting, and dark theme CSS. Verified with clean `npm run build` (75 modules, 2.15s), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and static checks (black, ruff, mypy --strict). |
 | M5 B4 | **COMPLETE / VERIFIED** | Implemented `ArchitectureModelPage`, `ArchitectureCanvas` (bounded partial window of max 100 entities, deterministic tier layout by kind, stable logical-ID ordering, static SVG connectors with arrowheads, keyboard selection), `ArchitectureInspector` (safe structured metadata key-values, evidence counts, namespace, IR tags), `ArchitectureCollectionTable` (typed paginated table shell for Entities, Relationships, Evidence with entity filtering, Unresolved, Conflicts), `architecture.css` dark theme design token styling, and App route integration. Verified with clean `npm run build` (81 modules, 3.96s), 100% existing frontend Node test suites, 29 Express tests, 15 Python API tests, and static checks (black, ruff, mypy --strict). |
-| M5 | **FROZEN / COMPLETE** | All 4 batches completed and verified. Express delegation boundary, streaming client, history, lifecycle, diagnostics, bounded model visualization, and published architecture collections verified. |
-| M6 | Not started | Ready to begin following verified M5 completion. |
+| M5 remediation | **ANALYSIS FLOW AND MODEL PRESENTATION FIXED / VERIFIED** | Corrected the Express gateway prefix to `/api/v1`, documented/configured both internal service credentials, registered the mandatory production `input_validation` stage, removed the API-to-worker queue-state race, preserved authorization-before-resource-lookup ordering, and repaired live-status lifecycle handling. Corrected multi-application M4 scope promotion, internal module resolution, static Express router mount composition, and the M4 boundary so lower-level frontend calls/imports are not mislabeled as unresolved architecture. Aligned frontend entity/relationship/evidence vocabulary with the canonical M4 contract and replaced the single-row canvas with a wrapped, tiered, zoomable bounded view. Canvas selection now preserves the exact scroll position before and after browser focus handling, uses fixed toolbar geometry so connector-count changes cannot reflow the viewport, and offers a direct-neighborhood focus with an explicit Show all reset. The analysis SVG node class is isolated from the landing-page preview styles; this removes the global hover transform that previously replaced SVG coordinates and caused nodes to jump to the origin or disappear. Real MongoDB/PostgreSQL/RabbitMQ/Celery verification completed all eight stages and published a 147-entity/292-relationship model before the final noise and mount-path corrections. Non-PostgreSQL Phase 3 regression: 404 passed, 3 skipped, 2 deselected; PostgreSQL rerun: 3 passed; frontend: all legacy suites plus 5 Vitest tests and production build passed; focused Python Ruff, Black and strict mypy passed; both npm audits report zero vulnerabilities. A fresh real analysis is required to regenerate immutable published results with the final corrections. |
+| Local analysis operations | **VERIFIED** | Added and installed user-level systemd worker and Beat services from `ops/systemd/`. Exactly one named worker consumes `analysis.jobs`; Beat executes the 60-second M1 dispatch-recovery schedule. Both services are enabled with automatic restart, user lingering is enabled for boot-time startup, and the PostgreSQL/RabbitMQ containers already use `unless-stopped`. A previously orphaned queued analysis was republished once and verified `RUNNING` under `stacksense-worker@pr0xius`. |
+| M5 | **IMPLEMENTED — REVIEW/REMEDIATION IN PROGRESS** | Start-analysis blocker is resolved. Do not mark M5 frozen until the owner resumes and the remaining UI/review scope is closed. |
+| M6 | Not started | Blocked on M5 review closure. |
 
 ## 6. Decisions, Risks and Required Approvals
 
@@ -759,11 +763,13 @@ No architectural decision currently blocks implementation.
 
 ## 7. Current Handoff
 
-M1–M5 are frozen and verified. Module 5 has achieved Definition of Done across all
-four batches:
-- Batch 1: Express security boundary, token isolation, upstream delegation, and query change control.
-- Batch 2: Frontend contracts, streaming API client, repository Analyses history tab, and StartAnalysisModal.
-- Batch 3: Analysis detail page, live SSE invalidation hook, stage rail, diagnostics, and cancellation.
-- Batch 4: Architecture Model page, deterministic bounded SVG canvas, inspector, and five paginated data tabs.
+M1–M4 contracts remain frozen and verified. Corrective implementation changes
+preserve F1/F2/F3 and Architecture Model schema versions. M5 is implemented but
+is undergoing independent review/remediation. The analysis-start blocker, model
+under-promotion, unresolved-noise boundary and unreadable map layout are resolved.
+The user-level Celery worker and Beat services were restarted, verified active,
+and remain enabled for login/boot startup. Existing published Architecture
+Versions remain immutable; run a new analysis to observe the final model changes.
 
-**Next action:** Implement Module 6 (or next phase module) against this verified baseline.
+**Next action:** At the owner's direction, resume the remaining M5 UI review;
+do not begin M6 or mark M5 frozen before that closure.
