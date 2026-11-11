@@ -54,15 +54,15 @@ CONSTRAINTS: Final = (
         ),
     ),
     ConstraintSpec(
-        name="architecture_projection_generation_key_unique",
+        name="projection_manifest_generation_key_unique",
         constraint_type="UNIQUENESS",
         entity_type="NODE",
-        label_or_type="ArchitectureProjectionGeneration",
+        label_or_type="ProjectionManifest",
         property_name="generation_key",
         create_query=(
-            "CREATE CONSTRAINT architecture_projection_generation_key_unique "
-            "IF NOT EXISTS FOR (generation:ArchitectureProjectionGeneration) "
-            "REQUIRE generation.generation_key IS UNIQUE"
+            "CREATE CONSTRAINT projection_manifest_generation_key_unique "
+            "IF NOT EXISTS FOR (manifest:ProjectionManifest) "
+            "REQUIRE manifest.generation_key IS UNIQUE"
         ),
     ),
     ConstraintSpec(
@@ -85,6 +85,13 @@ _SHOW_CONSTRAINTS_QUERY: Final[LiteralString] = (
     "RETURN name, type, entityType, labelsOrTypes, properties ORDER BY name"
 )
 _CONNECTIVITY_QUERY: Final[LiteralString] = "RETURN 1 AS ready"
+_LEGACY_MANIFEST_COUNT_QUERY: Final[LiteralString] = (
+    "MATCH (manifest:ArchitectureProjectionGeneration) "
+    "RETURN count(manifest) AS legacy_count"
+)
+_DROP_LEGACY_MANIFEST_CONSTRAINT_QUERY: Final[LiteralString] = (
+    "DROP CONSTRAINT architecture_projection_generation_key_unique IF EXISTS"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +174,20 @@ class Neo4jInfrastructure:
                         "Neo4j connectivity check failed."
                     )
 
+                legacy_count = session.run(
+                    Query(
+                        _LEGACY_MANIFEST_COUNT_QUERY,
+                        timeout=self._settings.neo4j_health_timeout_seconds,
+                    )
+                ).single(strict=True)
+                validate_no_legacy_manifest_data(legacy_count)
+                session.run(
+                    Query(
+                        _DROP_LEGACY_MANIFEST_CONSTRAINT_QUERY,
+                        timeout=self._settings.neo4j_health_timeout_seconds,
+                    )
+                ).consume()
+
                 for constraint in CONSTRAINTS:
                     session.run(
                         Query(
@@ -243,3 +264,20 @@ def validate_constraint_rows(
             )
 
     return tuple(sorted(by_name))
+
+
+def validate_no_legacy_manifest_data(row: Mapping[str, object] | None) -> None:
+    """Fail closed instead of dropping a constraint protecting legacy data."""
+    if row is None:
+        raise GraphSchemaCompatibilityError(
+            "Legacy Neo4j manifest compatibility check returned no result."
+        )
+    count = row.get("legacy_count")
+    if type(count) is not int or count < 0:
+        raise GraphSchemaCompatibilityError(
+            "Legacy Neo4j manifest compatibility result is invalid."
+        )
+    if count:
+        raise GraphSchemaCompatibilityError(
+            "Legacy Neo4j manifest data requires an explicit migration."
+        )

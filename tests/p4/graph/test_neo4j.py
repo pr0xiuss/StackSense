@@ -13,6 +13,7 @@ from backend.platform.graph.neo4j import (
     GraphSchemaCompatibilityError,
     Neo4jInfrastructure,
     validate_constraint_rows,
+    validate_no_legacy_manifest_data,
 )
 
 
@@ -33,6 +34,33 @@ def test_required_constraint_rows_are_accepted_deterministically() -> None:
     names = validate_constraint_rows(reversed(_valid_constraint_rows()))
 
     assert names == tuple(sorted(constraint.name for constraint in CONSTRAINTS))
+    manifest = next(
+        constraint
+        for constraint in CONSTRAINTS
+        if constraint.name == "projection_manifest_generation_key_unique"
+    )
+    assert manifest.label_or_type == "ProjectionManifest"
+    assert "ArchitectureProjectionGeneration" not in manifest.create_query
+
+
+def test_empty_legacy_manifest_schema_is_safe_to_correct() -> None:
+    validate_no_legacy_manifest_data({"legacy_count": 0})
+
+
+@pytest.mark.parametrize(
+    "row",
+    [None, {}, {"legacy_count": True}, {"legacy_count": -1}],
+)
+def test_invalid_legacy_manifest_check_fails_closed(
+    row: Mapping[str, object] | None,
+) -> None:
+    with pytest.raises(GraphSchemaCompatibilityError, match="compatibility"):
+        validate_no_legacy_manifest_data(row)
+
+
+def test_existing_legacy_manifest_data_requires_explicit_migration() -> None:
+    with pytest.raises(GraphSchemaCompatibilityError, match="explicit migration"):
+        validate_no_legacy_manifest_data({"legacy_count": 1})
 
 
 def test_missing_constraint_fails_closed() -> None:

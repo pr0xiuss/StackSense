@@ -15,7 +15,7 @@
 
 # PROJECT_CONTEXT.md — StackSense Engineering Context
 
-Last reconciled: 2026-11-11
+Last reconciled: 2026-11-12
 Current branch: `feature_mannan`
 
 ## 1. Project Overview
@@ -30,11 +30,11 @@ each other's databases.
 
 P1–P3 are implemented and frozen. P4, **Architecture Graph & Exploration**, is
 the current implementation phase. Its Architecture Baseline v1 is approved; the P4
-high-level discussion of all six modules is complete. Detailed M1 planning is
-owner-approved, and all three M1 batches are implemented and verified. The
-earlier detailed roadmap remains a preserved proposal for comparison. M1 now
-awaits independent review and explicit owner freeze approval; all later modules
-remain unstarted.
+high-level discussion of all six modules is complete. M1 and its corrected graph
+schema are verified, owner-accepted and frozen. The complete three-batch M2 plan
+is owner-approved, but implementation has not started and remains paused until
+an explicit start instruction. The earlier detailed roadmap remains a preserved
+proposal for comparison; M3–M6 remain unstarted.
 
 ### 1.1 Authority and documentation policy
 
@@ -85,7 +85,7 @@ remain unstarted.
 | P1 — Engineering Foundation | **FROZEN / COMPLETE** | Backend/frontend, persistence, queue, security, migration, testing and operational foundations. |
 | P2 — Project & Repository Platform | **FROZEN / COMPLETE** | JWT identity, projects/RBAC, repositories, immutable revisions, artifacts and ingestion. |
 | P3 — Analysis Engine & Architecture Model | **FROZEN / COMPLETE** | M1/F1 lifecycle; M2/F2 inspection; M3/F3 IR; Architecture Model v1; gateway/UI; integration/performance closeout. |
-| P4 — Architecture Graph & Exploration | **M1 FROZEN / M2 DETAILED PLAN AWAITING REVIEW** | Neo4j infrastructure, PostgreSQL lifecycle, activation, durable reconciliation, RabbitMQ routing and operational supervision are frozen; deterministic projection/verification is planned but not implemented. |
+| P4 — Architecture Graph & Exploration | **M1 FROZEN / COMPLETE; M2 THREE-BATCH PLAN OWNER APPROVED — IMPLEMENTATION NOT STARTED** | M1 lifecycle/contracts and the corrected `ProjectionManifest` schema are frozen; deterministic projection/verification is approved for implementation but remains unstarted pending an explicit start instruction. |
 | P5 — Knowledge, Search & Diagram Intelligence | **UPCOMING** | Depends on verified P4 graph; owns retrieval, search, knowledge and diagram intelligence. |
 | P6 — AI Architecture Intelligence | **UPCOMING** | Owns grounded AI explanation after deterministic retrieval. |
 | P7 — Final Product & Hardening | **UPCOMING** | Productization, deployment hardening and final acceptance. |
@@ -120,7 +120,8 @@ implementation unless change control is explicitly approved.
 4. Baseline is Neo4j Community 5.26.33 LTS and official Python driver 6.4.x,
    with exact patch/Python 3.14 verification before pinning.
 5. One shared Neo4j database enforces project/version/generation isolation.
-6. Nodes are `ArchitectureEntity`; edges are `ARCH_RELATIONSHIP`; canonical
+6. Nodes are `ArchitectureEntity`; edges are `ARCH_RELATIONSHIP`; the sole
+   operational generation-manifest label is `ProjectionManifest`; canonical
    kinds remain properties.
 7. Node/edge storage keys are deterministic, generation-scoped SHA-256 values;
    canonical IDs remain separate properties.
@@ -302,10 +303,12 @@ neighborhood containing it.
 ## 7. P4 High-Level Module Discussion
 
 **Status: COMPLETE / ACCEPTED AS THE P4 MODULE FOUNDATION.** This section
-validates the conceptual six-module structure. M1 is now frozen and complete;
-the repository-grounded detailed M2 proposal is recorded separately in Section
-7C and awaits owner approval. The preserved roadmap in Section 7B remains the
-high-level reference for modules that have not yet received detailed planning.
+validates the conceptual six-module structure. M1, including its corrected graph
+schema, is frozen and complete. The repository-grounded detailed M2 plan is
+recorded separately in Section 7C and all three batches are owner-approved;
+implementation remains unstarted. The preserved roadmap in Section 7B remains
+the high-level reference for modules that have not yet received detailed
+planning.
 
 ### M1 — Graph Infrastructure and Projection Lifecycle
 
@@ -584,11 +587,13 @@ resolved without silently changing P4 M1–M4 or the approved baseline.
 
 ## 7A. Detailed M1 Plan — Graph Infrastructure and Projection Lifecycle
 
-**Status: FROZEN / COMPLETE.** All three batches, the independent review and its
-remediation are verified. On 2026-11-11 the owner explicitly accepted M1 and
-froze P4-L1, P4-S1 and P4-W1. This section remains the implementation record;
-M2 must consume these contracts without reopening M1 or changing P4 Baseline
-v1.
+**Status: FROZEN / COMPLETE.** All three batches, the independent review, its
+remediation and the narrowly authorized manifest-schema correction are verified
+and owner-accepted. P4-L1, P4-S1, P4-W1 and the corrected
+`ProjectionManifest` graph-schema surface remain frozen at `1.0.0`. Section
+12.7 records the amendment and its acceptance. This section remains the
+implementation record; M2 must consume the contracts without reopening any
+other M1 surface or changing P4 Baseline v1.
 
 ### A. Module overview
 
@@ -1247,13 +1252,12 @@ this plan.
 | Health checks could make canonical APIs unavailable. | Separate graph health from unchanged core `/health`; graph failure only degrades graph capability. |
 | Actor/correlation data or error text could leak sensitive input. | Bounded safe fields, allowlisted failure codes, sanitized messages and negative logging tests. |
 
-Owner approval of this corrected detailed plan remains required. Three
-conditional owner gates remain: exact driver pin after the compatibility spike;
-any fallback if Community constraints or the P4-owned source adapter cannot meet
-approved guarantees; and the later browser-transport decision if the completed
-Express surface cannot carry P4 graph calls. The last gate is outside P4 M1–M4:
-it cannot authorize an Express change by implication, and React cannot bypass it
-by calling Python directly. None may be silently decided during implementation.
+This corrected detailed M1 plan was subsequently owner-approved, implemented
+and frozen. Its driver, Community-schema and P4-owned source-adapter gates were
+resolved by the verified M1 execution record. The later browser-transport
+decision remains outside P4 M1–M4: it cannot authorize an Express change by
+implication, and React cannot bypass the completed platform boundary by calling
+Python directly.
 
 ### K. M1 Definition of Done
 
@@ -1393,7 +1397,8 @@ write `ArchitectureEntity` nodes and `ARCH_RELATIONSHIP` edges scoped to exact
 project/version/generation. The verifier independently queries all candidate
 keys/endpoints/records, checks exact expected sets/counts/uniqueness/direction,
 reconstructs canonical sorted records and digest, then returns an immutable
-verification result. Manifest READY is written only after success; M1 validates
+verification result. `ProjectionManifest` READY is written only after success;
+M1 validates
 that the result still belongs to the current lease-valid attempt and candidate,
 then alone performs the PostgreSQL pointer switch. Failed generations remain
 invisible and cleanup is bounded. A stale or superseded result is merely
@@ -1671,11 +1676,13 @@ can be frozen without accepted hidden blocker.
 
 ## 7C. Detailed M2 Plan — Deterministic Graph Projection and Verification
 
-**Status: DETAILED PLAN COMPLETE — AWAITING OWNER REVIEW / IMPLEMENTATION NOT
+**Status: COMPLETE THREE-BATCH PLAN — OWNER APPROVED; IMPLEMENTATION NOT
 STARTED.** This plan was prepared from the current `feature_mannan` worktree,
 the approved P4 Baseline v1, frozen M1/P4-L1/P4-S1/P4-W1 implementation and the
-actual frozen P3 Architecture Model. It does not authorize implementation or
-freeze P4-P1.
+actual frozen P3 Architecture Model. Approval establishes all three batches as
+the implementation baseline, but the owner's current instruction is to perform
+no implementation until a separate start instruction. P4-P1 and measured
+operational limits retain their recorded post-Batch-1 approval gate.
 
 ### A. Verified repository findings
 
@@ -1698,18 +1705,28 @@ freeze P4-P1.
    `architecture_resource_id(version_id, record_type, logical_id)` function.
    M2 may reuse that function read-only and stores the derived UUID separately
    from the canonical logical ID and the generation-scoped Neo4j key.
-5. `Neo4jInfrastructure` currently owns driver creation, connectivity and the
-   three required uniqueness constraints for generation, node and relationship
-   keys. It intentionally has no projection write/read API. No scope indexes or
+5. `Neo4jInfrastructure` owns driver creation, connectivity and the three
+   required uniqueness constraints for generation, node and relationship keys.
+   Repository inspection found that frozen M1 used
+   `ArchitectureProjectionGeneration` instead of the approved sole
+   `ProjectionManifest` label. The owner authorized a narrow change-control
+   amendment; live inspection proved zero manifest/entity/relationship data,
+   and the implementation now fails closed if legacy manifest data exists,
+   removes the obsolete empty constraint, creates/verifies
+   `projection_manifest_generation_key_unique` on
+   `ProjectionManifest.generation_key`, and supports no alias label. The
+   corrected schema awaits owner re-freeze acceptance. No scope indexes or
    candidate data exist yet.
 6. Celery already routes `stacksense.execute_graph_projection` to
    `graph.projections`, but no task is registered and dispatch remains disabled.
    The current systemd graph worker consumes only `graph.maintenance`; M2 needs
    a separate execution-queue consumer before capability heartbeats can become
    ready.
-7. The M1 source, lifecycle and worker contracts are version `1.0.0`; Neo4j
-   Community `5.26.33` with Python driver `6.4.1` is verified. M2 must emit these
-   exact versions in P4-P1 and may not silently bump them.
+7. The owner retained M1 source, lifecycle, worker, projector and graph-schema
+   version `1.0.0`; Neo4j Community `5.26.33` with Python driver `6.4.1` is
+   verified. The manifest correction is an implementation repair to that
+   approved physical schema, not a logical schema-version bump. M2 must emit
+   these exact values and may not silently change them.
 8. No PostgreSQL schema change is required for M2. The current M1 attempt rows
    already persist expected/actual counts and all three expected/actual digest
    pairs needed for activation and audit.
@@ -1748,16 +1765,18 @@ The executor follows this exact boundary:
    five source counts before transformation.
 4. The deterministic mapper produces an immutable `ProjectionPlan`. No
    PostgreSQL transaction remains open while Neo4j work runs.
-5. The Neo4j adapter claims the candidate manifest with a lease-derived fence,
+5. The Neo4j adapter claims `ProjectionManifest` with a lease-derived fence and
    resets only an interrupted inactive `BUILDING` generation when ownership has
-   changed, then writes nodes and relationships in bounded transactions. Each
-   query requires the current manifest fence and `BUILDING` state.
+   changed. Every bounded mutation transaction first obtains the manifest node
+   write lock and revalidates current fence/state under that same held lock as
+   specified in E; a predicate-only query is forbidden.
 6. Between batches, the executor renews the M1 lease in a fresh PostgreSQL
    transaction. Lease loss stops further work; it never manufactures a failure
    result using a stale token.
 7. The verifier opens a new Neo4j read session and derives actual records from
    Neo4j rather than writer counters. Only an exact match conditionally changes
-   the internal manifest from `BUILDING` to `READY` and removes its fence.
+   `ProjectionManifest` from `BUILDING` to `READY` and removes its fence, inside
+   the same manifest-locked transaction that revalidates ownership.
 8. M2 translates the immutable verification result into the already frozen M1
    `VerificationReceipt`. A fresh PostgreSQL transaction calls M1 `activate`;
    M1 alone accepts or rejects it and switches the active pointer.
@@ -1799,15 +1818,19 @@ element IDs are never application identifiers.
 
 #### D2. Generation manifest
 
-One `ArchitectureProjectionGeneration` node holds only projection control and
+One `ProjectionManifest` node per generation holds only projection control and
 summary data: generation key; project/version/generation IDs; resource/attempt
 IDs for audit; source content and architecture-schema versions; graph schema,
-contract and projector versions; `BUILDING|READY`; complete source counts;
-expected and verified key-set/endpoint/payload digests; evidence-association,
-unresolved and conflict summary digests; and the temporary lease-fence hash.
-Operational timestamps may be recorded but are excluded from semantic digests.
-No raw lease token, credential, source text, unresolved descriptor or conflict
-detail is stored.
+contract and projector versions; `BUILDING|READY`; the five expected and
+verified source counts defined in D6; expected and verified
+key-set/endpoint/payload digests; independently derived expected and asserted
+actual evidence-association, unresolved and conflict summary digests; a
+monotonic operational lock epoch; and the temporary lease-fence hash.
+Operational lock/timestamp properties are excluded from semantic digests. No
+raw lease token, credential, source text, evidence payload, unresolved
+descriptor or conflict detail is stored. `ProjectionManifest` is the only
+manifest label; `ArchitectureProjectionGeneration` is not an alias or an
+additional label.
 
 #### D3. ArchitectureEntity nodes
 
@@ -1833,6 +1856,27 @@ Neo4j map-valued properties are never attempted. Unknown keys, wrong types,
 NUL/control characters, non-finite numbers, nested structures or values above
 the approved caps fail closed with a metadata-contract diagnostic. Nothing is
 silently truncated, stringified or copied wholesale.
+
+Value validation is field-semantic and rechecks the frozen P3 representation.
+`source_root` is the only filesystem/repository path in this allowlist: P3
+derives it from normalized evidence paths as a forward-slash,
+repository-relative application root. M2 accepts only non-empty NFC UTF-8
+relative components; it rejects a leading `/`, Windows drive prefix, `\\` or
+`//` UNC/network prefix, URI/file scheme, backslash, empty or `.`/`..`
+component, NUL, C0/C1 control character and any value matching P3's host-path
+guards. It does not rewrite an unsafe value into a safe-looking one.
+
+Actual frozen P3 output uses `path`, `mount_path` and `declared_path` for
+canonical HTTP route paths, not filesystem paths: `normalize_route_path`
+produces a leading `/`, forward slashes and optional meaningful trailing slash.
+For these three fields M2 therefore accepts only that exact static-route shape;
+the leading `/` is route syntax and is not treated as a POSIX filesystem root.
+It rejects drive/UNC prefixes, backslashes, URI/file schemes, NUL/control
+characters, `.` or `..` segments and host-root signatures such as `/home/`,
+`/Users/`, `/var/`, `/tmp/`, `/etc/`, `/root/`, `/usr/` and `/opt/`. No
+percent-decoding or normalization is performed to rescue a rejected value.
+Violations use the stable safe code `projection_metadata_invalid`; logs/errors
+identify only the field and rule, never the rejected value.
 
 #### D4. ARCH_RELATIONSHIP relationships
 
@@ -1868,15 +1912,56 @@ Neo4j element IDs, fence values or map iteration order participate.
 - **Payload digest:** SHA-256 of the semantic generation header, full sorted
   projected node records, full sorted projected relationship records, source
   counts and the evidence-association/unresolved/conflict summary digests.
-- **Summary digests:** SHA-256 of the frozen canonical P3 representations for
-  evidence associations, unresolved relationships and conflicts. They prove
-  intentional treatment without creating synthetic graph elements or storing
-  potentially sensitive literal details.
+- **Summary digests:** SHA-256 of canonical records independently derived from
+  the exact immutable `ArchitectureDocument`: evidence logical ID plus sorted
+  owning entity/relationship logical IDs; each unresolved-relationship logical
+  ID plus kind/status and its sorted evidence IDs; and each conflict logical ID
+  plus conflict type/subject key and sorted evidence IDs. Sensitive evidence
+  payloads, target descriptors, conflict details and source text are excluded.
 
-Expected digests come only from the immutable plan. Actual key, endpoint and
-payload digests are rebuilt only from a new Neo4j read session plus the manifest
-summary properties. The algorithms are pure and golden-vector tested across
-processes, input permutations, Unicode and empty collections.
+Expected summary records, counts and digests come only from the immutable
+document/plan and are computed before Neo4j access. The writer stores only the
+resulting assertions on `ProjectionManifest`. A fresh verifier session reads
+those assertions but never uses them to construct expected values. It
+independently reconstructs every actual projected node and relationship record,
+recomputes graph key/endpoint/payload digests, and compares the manifest claims
+against both independently derived expected summaries and independently read
+actual graph data. Missing, extra or mismatched summary fields fail
+verification. Because evidence/unresolved/conflict detail is intentionally not
+projected, their manifest properties remain assertions under verification, not
+an authoritative source or substitute for node/edge read-back. The algorithms
+are pure and golden-vector tested across processes, input permutations, Unicode
+and empty collections.
+
+#### D6. Frozen five-count boundary
+
+The exact M1 `ProjectionCounts` fields and their P3 sources are:
+
+| M1 field | Frozen P3 header field | Measure |
+|---|---|---|
+| `entities` | `ArchitectureVersionRecord.entity_count` / `ArchitectureVersionModel.entity_count` | Number of canonical `ArchitectureDocument.entities`; each becomes one `ArchitectureEntity`. |
+| `relationships` | `ArchitectureVersionRecord.relationship_count` / `ArchitectureVersionModel.relationship_count` | Number of resolved canonical `ArchitectureDocument.relationships`; each becomes one `ARCH_RELATIONSHIP`. |
+| `evidence` | `ArchitectureVersionRecord.evidence_count` / `ArchitectureVersionModel.evidence_count` | Number of canonical `ArchitectureDocument.evidence` records; evidence is summarized, not projected as nodes/edges. |
+| `unresolved` | `ArchitectureVersionRecord.unresolved_relationship_count` / `ArchitectureVersionModel.unresolved_relationship_count` | Number of `ArchitectureDocument.unresolved_relationships`; these are excluded from graph edges and summarized. |
+| `conflicts` | `ArchitectureVersionRecord.conflict_count` / `ArchitectureVersionModel.conflict_count` | Number of `ArchitectureDocument.conflicts`; these are excluded from graph elements and summarized. |
+
+`PublishedArchitectureHeader.counts` maps those five persisted P3 fields into
+`ProjectionCounts`; M1 copies them into the attempt's five
+`expected_*_count` columns. Before planning or writing, M2 loads the exact
+document and requires each header value to equal the corresponding tuple
+length, with unresolved relationships and conflicts counted one canonical
+record each. It also rechecks the frozen P3 maxima and content digest.
+
+`ProjectionManifest` stores explicit expected and asserted-actual values for all
+five fields. The verifier derives expected values from the exact document, then
+enumerates actual entity/relationship graph records. For evidence, unresolved
+and conflicts—whose raw records are deliberately absent from Neo4j—it verifies
+the manifest's asserted count and summary digest against the independently
+derived canonical source records; only after all checks succeed may those three
+verified values populate `actual_counts`. `VerificationReceipt` carries the
+unchanged frozen `expected_counts` and all-or-none `actual_counts`; it adds no
+count fields and represents a failed/incomplete verification with
+`actual_counts=None` unless a complete safe set is available.
 
 ### E. Neo4j storage, writes and concurrency
 
@@ -1885,12 +1970,36 @@ a fixed `LiteralString` with parameters, an explicit transaction timeout and
 exact project/version/generation predicates.
 
 The candidate claim stores `SHA-256(lease_token)` as an ephemeral fence; the raw
-unpredictable token never enters Neo4j, logs or task payloads. Every reset/write/
-finalize query first matches the generation manifest in `BUILDING` state and the
-current fence. A replacement lease atomically replaces the manifest fence before
-bounded cleanup/rebuild, causing all stale-worker write queries to affect zero
-rows. `READY` is immutable: later writes cannot match it. A new rebuild uses a
-new generation and never mutates the prior verified generation.
+unpredictable token never enters Neo4j, logs or task payloads. A predicate match
+alone is insufficient under Neo4j's default read-committed isolation. Every
+claim/fence-replacement, reset, write, delete and finalize transaction must first
+obtain the exclusive node write lock on the exact `ProjectionManifest`, then
+read and validate `BUILDING`, generation scope and fence while that lock remains
+held, perform its one bounded candidate mutation, and commit or roll back as one
+explicit transaction.
+
+The fixed lock query uses supported Neo4j Community semantics: after matching
+the unique `generation_key`, it updates a manifest-owned monotonic
+`lock_epoch = lock_epoch + 1`. The right-hand side directly depends on the
+property being read, which makes Neo4j acquire the manifest node write lock
+before that read; node-property write locks are held until transaction end. The
+adapter then reads state/fence and performs the bounded mutation in the same
+explicit driver transaction. All competing mutation and fence-replacement
+paths acquire this same manifest lock first and use the same lock ordering.
+Temporary/dummy lock properties are not relied upon, no APOC/Enterprise lock
+primitive is assumed, and `lock_epoch` is operational and excluded from every
+semantic digest.
+
+Consequently, if a replacement transaction locks first, it commits the new
+fence and the old worker later observes a mismatch under lock and rolls back
+without mutation or receipt. If the old transaction locks first, replacement
+blocks; the old mutation may legitimately commit before replacement, after
+which replacement acquires the lock, installs its fence and boundedly resets/
+rebuilds the still-inactive candidate. There is no ordering in which a stale
+mutation commits after a completed fence replacement. Lease loss/fence mismatch
+stops without submitting either stale success or stale failure. `READY` is
+immutable and never reset; every rebuild of a verified generation uses a new
+generation.
 
 Write order is manifest, nodes, then relationships. Node batches use
 `UNWIND` plus `MERGE` on `projection_key` and replace the complete allowlisted
@@ -1902,22 +2011,26 @@ duplicates. A replacement execution first fences the old worker, then deletes
 the interrupted candidate's relationships and nodes in bounded pages before
 rebuilding; it never uses unbounded `DETACH DELETE`.
 
-The existing uniqueness constraints remain mandatory. Efficient exact-scope
-enumeration also requires additive composite RANGE indexes on
+The corrected target uniqueness constraints are mandatory for
+`ArchitectureEntity.projection_key`, `ARCH_RELATIONSHIP.projection_key` and
+`ProjectionManifest.generation_key`. Efficient exact-scope enumeration also
+requires additive composite RANGE indexes on
 `ArchitectureEntity(project_id, architecture_version_id, generation_id)`,
 `ARCH_RELATIONSHIP(project_id, architecture_version_id, generation_id)` and
-`ArchitectureProjectionGeneration(project_id, architecture_version_id,
+`ProjectionManifest(project_id, architecture_version_id,
 generation_id)`. M2 verifies their exact shape at executor startup. These are
-physical access-path additions only: labels, relationship type, graph contract
-and `GRAPH_SCHEMA_VERSION = 1.0.0` remain unchanged. Because M1 is frozen, this
-additive-index treatment is an explicit owner approval gate; otherwise it must
-follow formal graph-schema change control rather than being silently applied.
+fixed labels/type and access paths; no other manifest label is permitted.
+The owner-approved M1 amendment corrected the manifest uniqueness constraint
+while retaining `GRAPH_SCHEMA_VERSION = 1.0.0`; real Neo4j verification passed.
+The owner also approved these three composite RANGE indexes as additive physical
+access paths, subject to exact Neo4j Community compatibility verification during
+Batch 1. They do not change labels, relationship types or graph semantics.
 
 ### F. Independent verification and P4-P1
 
 Verification never trusts `MERGE` summaries. In a fresh read session it:
 
-1. finds exactly one manifest by generation key and checks exact project,
+1. finds exactly one `ProjectionManifest` by generation key and checks exact project,
    version, generation, source, contract, schema and projector fields;
 2. enumerates all scoped nodes and relationships in deterministic key pages;
 3. checks actual counts and `count == count(DISTINCT projection_key)` in addition
@@ -1926,9 +2039,11 @@ Verification never trusts `MERGE` summaries. In a fresh read session it:
 5. proves every relationship endpoint exists, is an expected node in the same
    generation, has the expected source-to-target direction and canonical kind;
 6. rejects unexpected labels/types, scope leakage, duplicate P3 UUID/logical ID,
-   unsupported properties and manifest/source-summary mismatch;
-7. reconstructs actual records from Neo4j and independently recomputes all
-   three P4-P1 digests; and
+   unsupported properties and missing/extra/mismatched manifest summary fields;
+7. independently re-derives expected evidence-association, unresolved and
+   conflict records/counts/digests from the exact source plan, reconstructs
+   actual node/edge records from Neo4j, and recomputes all three P4-P1 digests
+   without using manifest assertions as expected inputs; and
 8. conditionally changes the still-fenced manifest from `BUILDING` to `READY`,
    stores the verified summaries and removes the fence only if every check
    passes.
@@ -1998,15 +2113,19 @@ relationships, 75,000 evidence records, 10,000 unresolved relationships, 5,000
 conflicts and 128 MiB canonical source payload. M2 rechecks them and never
 truncates.
 
-Batch 1 benchmarks the existing roadmap candidates of 500 nodes and 1,000
-relationships per transaction against small, dense and maximum representative
-fixtures. Recommended initial per-query timeout is 30 seconds, cleanup page is
-1,000 records and cleanup grace is 24 hours. Proposed safe metadata limits are
-64 UTF-8 bytes per key, 2 KiB per string, 64 values per list, 16 KiB total
-allowlisted metadata and 1 MiB total projected properties per node/relationship.
-These values are candidate defaults, not silently approved limits. The measured
-results and canonical metadata inventory must receive owner approval before
-Batch 2 writer freeze; reducing source content is not an allowed optimization.
+The following are measurement candidates only and are **not approved production
+defaults**: 500 nodes and 1,000 relationships per transaction; a 30-second
+per-query timeout; 1,000-record cleanup pages; 24-hour cleanup grace; metadata
+caps of 64 UTF-8 bytes per key, 2 KiB per string, 64 list values, 16 KiB per
+metadata record and 1 MiB total projected properties per node/relationship; and
+any worker-memory or throughput threshold derived from them. Batch 1 benchmarks
+all candidates against small, dense and maximum representative fixtures and
+reports raw evidence plus a recommendation. It does not freeze those values.
+The coding agent may not treat them as configuration defaults, and Batch 2
+writer implementation may not begin/freeze operational limits until the owner
+explicitly approves or revises the measured set. Performance optimization may
+change batching/streaming only; it cannot weaken canonical P3 source maxima,
+truncate metadata, skip records or silently omit evidence.
 
 Neo4j receives no raw source code, evidence literal payload, credential, secret,
 absolute host path, lease token or arbitrary nested metadata. The worker has no
@@ -2022,7 +2141,7 @@ the execution worker uses the existing isolated queue/prefetch model.
 | CREATE | `backend/platform/graph/projection_store.py` | Narrow Neo4j port and official-driver adapter with fixed bounded claim/reset/write/enumerate/finalize/delete operations and additive scope-index verification. |
 | CREATE | `backend/platform/graph/verification.py` | Independent read-back verifier, corruption taxonomy and internal result-to-frozen-`VerificationReceipt` translation. |
 | CREATE | `backend/platform/graph/executor.py` | P4-W1 execution coordinator, short PG units of work, source validation, lease checkpoints, failure classification, activation handoff and cleanup eligibility. It orchestrates M2 only; lifecycle remains M1. |
-| MODIFY | `backend/platform/graph/neo4j.py` | Add only a safe shared session/driver boundary needed by the M2 store; retain existing M1 initialization, constraints and graph schema version unchanged. No projection semantics enter this infrastructure file. |
+| MODIFY | `backend/platform/graph/neo4j.py` | The owner-approved M1 amendment already corrected the sole manifest label/constraint at graph schema `1.0.0`. M2 may add only the narrow reviewed driver/session and approved composite-index bootstrap/verification surface; projection semantics remain M2-owned. |
 | MODIFY | `backend/platform/graph/dependencies.py` | Compose M2 mapper/store/verifier/executor through P4-owned DI without touching frozen analysis DI. |
 | MODIFY | `backend/platform/graph/__init__.py` | Export only reviewed M2 public ports/contracts. |
 | MODIFY | `backend/worker/graph_tasks.py` | Register exact `execute_graph_projection`, lease-checkpoint execution, safe summaries and identifier-only cleanup task. |
@@ -2030,18 +2149,20 @@ the execution worker uses the existing isolated queue/prefetch model.
 | MODIFY | `backend/platform/config.py`, `.env.example` | Typed bounded batch/timeout/metadata/cleanup settings; dispatch default remains fail-closed until the execution worker is deployed. Local `.env` is not a planning artifact. |
 | CREATE | `ops/systemd/stacksense-celery-graph-projection-worker.service` | Dedicated `graph.projections` consumer with existing concurrency/prefetch settings; the frozen M1 maintenance worker remains separate. |
 | CREATE | `tests/p4/graph/test_projection.py` | Golden keys/digests, order/Unicode/empty determinism, mapping, allowlist, limits and no-synthetic-element tests. |
-| CREATE | `tests/p4/graph/test_projection_store.py` | Fixed-query, batching, idempotency, fencing, endpoint and bounded cleanup adapter tests. |
+| CREATE | `tests/p4/graph/test_projection_store.py` | Fixed-query/label/index shape, batching, idempotency, manifest-lock serialization, stale fencing, endpoint and bounded cleanup adapter tests. |
 | CREATE | `tests/p4/graph/test_verification.py` | Independent missing/extra/duplicate/scope/direction/endpoint/version/digest corruption matrix. |
 | CREATE | `tests/p4/graph/test_projection_worker.py` | Payload/acquire/source/heartbeat/retry/receipt/stale/concurrent/cleanup task behavior and queue isolation. |
-| CREATE | `tests/p4/integration/test_graph_projection_neo4j.py` | Real Community candidate coexistence, indexes, writes, verification, corruption, retry and cleanup. |
+| CREATE | `tests/p4/integration/test_graph_projection_neo4j.py` | Real Community `ProjectionManifest` constraint/index compatibility, candidate coexistence, transactional lock/fence races, writes, verification, corruption, retry and cleanup. |
 | CREATE | `tests/p4/integration/test_graph_projection_pipeline.py` | Real PostgreSQL/RabbitMQ/Celery/Neo4j execution through M1 activation and failed-rebuild preservation. |
 | CREATE | `tests/fixtures/p4/graph/` | Small, no-edge, dense, Unicode, maximal-metadata, unresolved/conflict, historical and deliberate-corruption fixtures. |
 
 No Express, frontend, P1-P3, frozen M1 model/lifecycle/persistence/source/queue
 contract, `master.txt`, GitHub workflow or Python analysis pipeline file is
 modified. No new Python dependency or PostgreSQL/Alembic migration is planned.
-Neo4j's additive indexes are the only physical schema addition and require the
-approval stated above.
+The owner-approved manifest-label amendment was accepted and re-frozen without
+reopening any other M1 surface. The three Neo4j composite scope indexes are
+approved physical additions but remain unimplemented until M2; exact Community
+compatibility must be demonstrated before their use.
 
 ### J. Three implementation batches
 
@@ -2050,15 +2171,19 @@ approval stated above.
 Implement immutable records, strict mapper, exact keys, P3 public UUID reuse,
 metadata allowlist, canonical serializers/digests, config validation and
 fixtures. Benchmark candidate batch/timeout/property caps and validate additive
-index support on Neo4j Community. Freeze the measured limits and physical-index
-treatment before writer work.
+index support on Neo4j Community. Report measurements and recommended limits;
+only the owner may approve/freeze them before writer work. The corrected M1
+graph schema is accepted/re-frozen and this detailed M2 plan is owner-approved;
+Batch 1 remains deliberately unstarted until the owner gives a separate start
+instruction.
 
 Acceptance: permutation and cross-process runs produce byte-identical records
 and digests; G1/G2 keys differ while canonical IDs match; all existing entity/
 relationship kinds map without semantic invention; unresolved/conflict inputs
 produce summaries only; unknown/unsafe/oversized metadata fails without
-truncation; golden vectors cover Unicode and empty sets; no frozen contract/file
-changes occur.
+truncation; repository-relative `source_root` and HTTP-route fields enforce their
+distinct value contracts; golden vectors cover Unicode and empty sets; no frozen
+contract/file changes occur.
 
 #### Batch 2 — Bounded writer and independent verifier
 
@@ -2072,7 +2197,9 @@ and G2 coexist; exact nodes/edges/endpoint direction are written; missing,
 extra, duplicate, cross-scope, wrong endpoint/direction/count/version/schema or
 digest corruption fails; READY is set only after successful independent read;
 failed verification remains invisible; cleanup is bounded and refuses active
-generations.
+generations. Every candidate mutation re-establishes ownership while holding the
+manifest node write lock in its own transaction; race tests prove both
+replacement-first rejection and old-commit-first reset/rebuild orderings.
 
 #### Batch 3 — M1 integration and operational closure
 
@@ -2097,6 +2224,18 @@ contract isolation; real Neo4j tests are mandatory for constraints, composite
 indexes, transaction behavior, relationship direction, fencing and corruption.
 Real PostgreSQL/RabbitMQ/Celery tests prove M1 integration rather than replacing
 it with mocks. Regression includes all frozen P1-P3 and M1 suites.
+
+The real-Neo4j concurrency suite uses deterministic barriers. In the
+replacement-first case, an old worker pauses after non-authoritative preflight
+ownership validation but before its mutation transaction; the replacement
+transaction acquires the manifest lock and commits the new fence; the old worker
+then resumes, must re-establish ownership inside its mutation transaction,
+observes the mismatch and commits no candidate change or receipt. In the reverse
+case, the old worker acquires the manifest lock, validates and pauses; the
+replacement is proven blocked, the old bounded mutation commits, then the
+replacement acquires the lock, replaces the fence and resets/rebuilds the
+inactive candidate. The test asserts that no old-fence mutation can commit after
+replacement commit, and that READY is never reset.
 
 Planned commands (implementation must record exact outcomes):
 
@@ -2136,8 +2275,9 @@ M2 is complete only when:
    their complete treatment is represented by deterministic summaries;
 5. all writes, reads and deletes are bounded, parameterized, scoped and
    idempotent; no arbitrary Cypher surface exists;
-6. a replaced lease fences the expired worker before reset/write and READY is
-   immutable;
+6. every candidate mutation serializes on the exact `ProjectionManifest` node,
+   revalidates ownership under that held lock, and a completed replacement fence
+   makes every old-fence mutation/receipt impossible; READY is immutable;
 7. independent read-back detects every required omission, duplicate, extra,
    endpoint, scope, version, count and digest corruption;
 8. failed/partial candidates never become active or query-visible, while a
@@ -2147,34 +2287,44 @@ M2 is complete only when:
 10. retry exhaustion, duplicate delivery, broker/Neo4j loss and cleanup follow
     frozen M1 semantics without new public states/events;
 11. no raw source, secrets, credentials, lease token, unsafe metadata or host
-    path enters Neo4j/logs/errors;
+    filesystem path enters Neo4j/logs/errors; repository-relative source roots
+    and canonical HTTP route paths remain semantically distinct;
 12. focused, corruption, concurrency, real-infrastructure, full regression,
     formatting, lint, typing and service-unit checks pass with recorded results;
-13. P1-P3 and frozen M1 files/contracts remain unchanged except the explicitly
-    approved additive Neo4j infrastructure surface/index treatment; and
+13. P1-P3 and frozen M1 files/contracts remain unchanged except only changes
+    separately authorized through the manifest-label/version change-control
+    gate and additive-index approval; and
 14. P4-P1, measured limits and the M2 execution record receive independent
     review and explicit owner freeze approval before M3 begins.
 
 ### M. Risks and owner decisions required before implementation
 
-1. **Additive Neo4j indexes (required):** approve the three exact scope indexes
-   as compatible physical additions under graph schema `1.0.0`, with no frozen
-   M1 semantic change. If not approved, formal graph-schema change control is
-   required before M2 can meet bounded exact read-back at scale.
-2. **Candidate operational limits (required before Batch 2):** approve or revise
+1. **Manifest label/version — RESOLVED / RE-FROZEN:** the owner authorized and
+   accepted the narrow M1 correction to sole label `ProjectionManifest` while
+   retaining `GRAPH_SCHEMA_VERSION = 1.0.0`. The empty live schema was corrected
+   and verified without alias/data migration; this M1 surface is frozen again.
+2. **Additive Neo4j indexes — APPROVED FOR BATCH 1 VERIFICATION:** the owner
+   approved the exact `ProjectionManifest`/entity/relationship composite RANGE
+   indexes as physical access paths. Batch 1 must still prove their exact shape
+   and compatibility on installed Neo4j Community before writer implementation.
+3. **Candidate operational limits — UNAPPROVED, REQUIRED BEFORE BATCH 2:** approve or revise
    the benchmarked node/edge batch sizes, 30-second per-query timeout, metadata/
    record caps, 1,000-record cleanup page and 24-hour cleanup grace. The plan
-   proposes starting values; evidence, not convenience, freezes them.
-3. **P4-P1 vocabulary (required at Batch 2 freeze):** approve the manifest
+   proposes measurement candidates only; Batch 1 evidence and explicit owner
+   approval, not convenience or coding-agent choice, freezes them. Worker memory
+   and throughput thresholds are included in this gate.
+4. **P4-P1 vocabulary — UNAPPROVED, REQUIRED BEFORE BATCH 2:** approve the manifest
    `BUILDING|READY` states, generation-key formula, strict metadata allowlist,
    three canonical digest definitions and safe failure-code set. These are M2
    contract choices, not changes to M1's receipt envelope.
 
-No unresolved contradiction with `master.txt`, the 17 approved P4 decisions or
-frozen P1-P3/M1 contracts was found. The only pre-implementation approval needed
-for Batch 1 itself is the additive-index treatment; measured operational values
-and the full P4-P1 vocabulary have explicit later freeze gates and cannot be
-silently assumed.
+No unresolved architectural contradiction remains. Frozen P1-P3, M1 lifecycle/
+receipt ownership, the no-new-Express boundary and all other approved P4
+decisions remain consistent. The complete M2 plan and all three batches are
+owner-approved, but implementation is intentionally not started pending an
+explicit start instruction. Measured operational values and the full P4-P1
+vocabulary retain their post-Batch-1 approval gates and cannot be silently
+assumed.
 
 ## 8. Dependency Graph and Implementation Order
 
@@ -2304,11 +2454,12 @@ Approval is sequential and non-transitive:
 3. **Detailed M1 planning — OWNER APPROVED.** Section 7A is the implementation
    baseline. The preserved Section 7B roadmap remains reference material, not an
    automatically approved detailed plan for M2–M6.
-4. **Detailed M2 planning — COMPLETE / AWAITING OWNER REVIEW.** Section 7C is
-   the proposed implementation baseline. Detailed M3–M6 planning is not started.
-5. **Implementation — M1 FROZEN / COMPLETE.** The owner explicitly accepted M1
-   and P4-L1/P4-S1/P4-W1 after independent review/remediation. No instruction
-   has authorized M2–M6 implementation.
+4. **Detailed M2 planning — OWNER APPROVED.** Section 7C and all three batches
+   are the approved implementation baseline. Detailed M3–M6 planning is not
+   started.
+5. **Implementation — M1 FROZEN / COMPLETE; M2 NOT STARTED.** The owner accepted
+   M1, P4-L1/P4-S1/P4-W1 and the verified manifest-label correction. No
+   instruction has started M2 or authorized M3–M6 implementation.
 
 | Work item | Status |
 |---|---|
@@ -2319,9 +2470,9 @@ Approval is sequential and non-transitive:
 | P4 M1 Batch 1 | **VERIFIED** |
 | P4 M1 Batch 2 | **VERIFIED** |
 | P4 M1 Batch 3 | **VERIFIED** |
-| P4 M1 overall | **FROZEN / COMPLETE** |
+| P4 M1 overall | **FROZEN / COMPLETE — MANIFEST-SCHEMA AMENDMENT ACCEPTED** |
 | P4-L1 / P4-S1 / P4-W1 | **FROZEN v1.0.0** |
-| P4 M2 detailed plan | **COMPLETE — AWAITING OWNER REVIEW** |
+| P4 M2 detailed plan | **OWNER APPROVED — ALL THREE BATCHES** |
 | P4 M2 implementation | **NOT STARTED** |
 | Preserved detailed roadmap | **REFERENCE PROPOSAL / NOT APPROVED AS DETAILED MODULE PLANS** |
 | Detailed M3–M6 planning | **NOT STARTED** |
@@ -2530,14 +2681,17 @@ Approval is sequential and non-transitive:
   retained as evidence and their then-current “pending” language does not
   supersede this final decision.
 - **M2 planning status:** repository inspection and the consolidated detailed
-  plan in Section 7C are complete. M2 implementation has not started and P4-P1
-  is not frozen. Plan approval, the additive Neo4j scope-index decision and the
-  recorded Batch 1 measurement gate precede writer implementation.
+  plan in Section 7C are complete, and the owner approved all three batches.
+  M2 implementation has not started and P4-P1 is not frozen. The owner accepted
+  the verified M1 `ProjectionManifest` correction at graph schema `1.0.0` and
+  approved the three additive scope indexes for later exact Batch 1
+  compatibility testing. The measured-limit and P4-P1 approval gate remains
+  mandatory after Batch 1 and before Batch 2.
 - **Frozen boundaries:** no P1-P3 or M1 lifecycle/source/queue/persistence
   contract is reopened. M2 consumes exact P4-W1/P4-S1, returns the frozen M1
   receipt envelope and never activates a generation.
-- **Next action:** owner reviews Section 7C and its three explicit approval
-  groups. Do not begin M2 Batch 1 without approval.
+- **Next action:** wait for the owner's explicit instruction to begin approved
+  M2 Batch 1. Do not implement any M2 batch yet.
 
 ### 12.6 Post-freeze CI and local Compose correction
 
@@ -2565,13 +2719,52 @@ Approval is sequential and non-transitive:
   orphans because they share the historical generic `docker` Compose project
   name. They were not removed or modified.
 
+### 12.7 Owner-approved M1 manifest-schema amendment
+
+- **Scope/status:** the owner reopened only the frozen M1 manifest label,
+  generation-key constraint and exact schema bootstrap/verification surface.
+  The correction is **IMPLEMENTED / VERIFIED / OWNER ACCEPTED / RE-FROZEN**.
+  `GRAPH_SCHEMA_VERSION` remains exactly `1.0.0`; M2 has not started.
+- **Database precondition:** before editing, real Neo4j contained the legacy
+  `architecture_projection_generation_key_unique` constraint but zero
+  `ArchitectureProjectionGeneration`, `ProjectionManifest` or
+  `ArchitectureEntity` nodes and zero relationships. No candidate/published
+  projection data or data migration existed.
+- **Correction:** `Neo4jInfrastructure` now requires the sole
+  `ProjectionManifest` label and
+  `projection_manifest_generation_key_unique` constraint. Initialization counts
+  legacy-label nodes first and fails closed if any exist; only an empty legacy
+  schema has its obsolete constraint dropped before the corrected constraint is
+  created and exactly verified. No alias label is supported.
+- **Files changed:** `backend/platform/graph/neo4j.py`,
+  `tests/p4/graph/test_neo4j.py`,
+  `tests/p4/integration/test_graph_neo4j_compatibility.py` and this handoff.
+  No PostgreSQL model/migration, lifecycle, lease/retry, receipt, activation,
+  source, queue/reconciliation, P1-P3, Express, frontend or `master.txt` change
+  was made.
+- **Verification:** focused Neo4j unit tests `20 passed`; real Neo4j Community
+  compatibility/correction tests `2 passed`; complete P4 with real PostgreSQL
+  and Neo4j `85 passed, 3 RabbitMQ-gated skips`; full repository regression
+  `834 passed, 8 skipped`; changed-file Black checks passed; Ruff passed; strict
+  Mypy passed for 203 source files; and `git diff --check` passed. Post-check
+  Neo4j has the three exact expected constraints, including
+  `ProjectionManifest.generation_key`, with zero nodes and relationships.
+- **Observed unrelated environment issue:** an additional all-infrastructure P4
+  run was `87 passed, 1 failed`: the pre-existing RabbitMQ outage test expects
+  publication to `127.0.0.1:1` to fail, but the unrestricted host environment
+  accepted it. The same probe raises `OperationalError` in the normal sandbox;
+  no frozen queue/test behavior was changed for this schema amendment.
+- **Acceptance:** on 2026-11-12 the owner acknowledged the verified correction
+  and re-froze this M1 graph-schema surface. The owner also approved the complete
+  three-batch M2 plan. Operational limits and P4-P1 remain unapproved until the
+  post-Batch-1 gate.
+
 ## 13. Current Handoff
 
 The approved architecture, frozen M1 and contracts, detailed M2 proposal,
 preserved roadmap, phase DoD, risks and verified execution records are recorded
 in this sole rolling handoff.
 
-**Next action:** review and approve or revise Section 7C, including its additive
-scope indexes, provisional measured-limit gate and P4-P1 vocabulary. Do not
-begin M2 implementation, P4-P1 freeze or detailed M3–M6 planning without
-separate explicit instruction.
+**Next action:** wait for an explicit owner instruction to begin approved M2
+Batch 1. Do not begin implementation now, freeze P4-P1, bypass the post-Batch-1
+approval gate or start detailed M3–M6 planning without explicit instruction.
