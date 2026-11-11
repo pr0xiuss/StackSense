@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -84,6 +85,39 @@ class Settings(BaseSettings):
         ge=1024,
     )
 
+    # Architecture graph infrastructure (Phase 4 Module 1 Batch 1)
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: SecretStr = SecretStr(
+        "neo4j-development-password-change-in-production"
+    )
+    neo4j_database: str = "neo4j"
+    neo4j_connection_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    neo4j_connection_acquisition_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        le=120,
+    )
+    neo4j_health_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    neo4j_max_connection_pool_size: int = Field(default=20, ge=1, le=100)
+
+    # Architecture graph scheduling (Phase 4 Module 1 Batch 3)
+    graph_queue_name: str = "graph.projections"
+    graph_maintenance_queue_name: str = "graph.maintenance"
+    graph_worker_concurrency: int = Field(default=1, ge=1, le=16)
+    graph_worker_prefetch_multiplier: int = Field(default=1, ge=1, le=16)
+    graph_broker_health_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    graph_reconciliation_interval_seconds: int = Field(default=60, ge=5)
+    graph_reconciliation_page_size: int = Field(default=100, ge=1, le=500)
+    graph_dispatch_recovery_seconds: int = Field(default=60, ge=1)
+    graph_lease_duration_seconds: int = Field(default=120, ge=10)
+    graph_heartbeat_interval_seconds: int = Field(default=30, ge=1)
+    graph_capability_ttl_seconds: int = Field(default=180, ge=10)
+    graph_retry_backoff_seconds: int = Field(default=15, ge=1)
+    graph_recovery_batch_size: int = Field(default=100, ge=1, le=500)
+    # This remains false until M2 registers the P4-W1 executor capability.
+    graph_projection_dispatch_enabled: bool = False
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )
@@ -101,6 +135,45 @@ class Settings(BaseSettings):
             return [str(p).strip() for p in v if str(p).strip()]
         return []
 
+    @field_validator("neo4j_uri")
+    @classmethod
+    def _validate_neo4j_uri(cls, value: str) -> str:
+        uri = value.strip()
+        parsed = urlsplit(uri)
+        allowed_schemes = {
+            "bolt",
+            "bolt+s",
+            "bolt+ssc",
+            "neo4j",
+            "neo4j+s",
+            "neo4j+ssc",
+        }
+        if parsed.scheme not in allowed_schemes or not parsed.hostname:
+            raise ValueError("NEO4J_URI must be a supported Neo4j URI")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("NEO4J_URI must not contain credentials")
+        return uri
+
+    @field_validator(
+        "neo4j_user",
+        "neo4j_database",
+        "graph_queue_name",
+        "graph_maintenance_queue_name",
+    )
+    @classmethod
+    def _validate_nonempty_neo4j_identifier(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("graph identifiers and queue names must not be empty")
+        return normalized
+
+    @field_validator("neo4j_password")
+    @classmethod
+    def _validate_neo4j_password(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value()) < 8:
+            raise ValueError("NEO4J_PASSWORD must contain at least 8 characters")
+        return value
+
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> Settings:
         if self.app_env.lower() in {"production", "prod"} and (
@@ -113,10 +186,21 @@ class Settings(BaseSettings):
             == "internal-platform-secret-key-change-in-production"
         ):
             raise ValueError("PLATFORM_API_SECRET_KEY must be changed in production")
+        if self.app_env.lower() in {"production", "prod"} and (
+            self.neo4j_password.get_secret_value()
+            == "neo4j-development-password-change-in-production"
+        ):
+            raise ValueError("NEO4J_PASSWORD must be changed in production")
         if self.analysis_stage_timeout_seconds > self.analysis_max_duration_seconds:
             raise ValueError(
                 "analysis stage timeout cannot exceed analysis max duration"
             )
+        if self.graph_heartbeat_interval_seconds >= self.graph_lease_duration_seconds:
+            raise ValueError("graph heartbeat interval must be shorter than its lease")
+        if self.graph_capability_ttl_seconds <= self.graph_heartbeat_interval_seconds:
+            raise ValueError("graph capability TTL must exceed its heartbeat interval")
+        if self.graph_queue_name == self.graph_maintenance_queue_name:
+            raise ValueError("graph execution and maintenance queues must be distinct")
         return self
 
     model_config = SettingsConfigDict(
