@@ -160,12 +160,17 @@ def test_claim_candidate_creates_new_manifest(
         project_id=DEFAULT_PROJECT_ID,
         architecture_version_id=DEFAULT_VERSION_ID,
         generation_id=DEFAULT_GENERATION_ID,
+        resource_id=DEFAULT_PROJECT_ID,
+        attempt_id=DEFAULT_VERSION_ID,
         lease_token="token-1",
         source_content_digest="sha-src",
         expected_counts=counts,
         expected_key_set_digest="key-digest",
         expected_endpoint_digest="ep-digest",
         expected_payload_digest="payload-digest",
+        expected_evidence_summary_digest="evidence-digest",
+        expected_unresolved_summary_digest="unresolved-digest",
+        expected_conflict_summary_digest="conflict-digest",
     )
 
     assert len(session.queries_run) == 1
@@ -173,6 +178,10 @@ def test_claim_candidate_creates_new_manifest(
     assert "MERGE (m:ProjectionManifest" in query
     assert params["state_building"] == MANIFEST_STATE_BUILDING
     assert params["fence_digest"] == compute_fence_digest("token-1")
+    assert params["resource_id"] == str(DEFAULT_PROJECT_ID)
+    assert params["attempt_id"] == str(DEFAULT_VERSION_ID)
+    assert params["projection_contract_version"] == "1.0.0"
+    assert params["expected_evidence_summary_digest"] == "evidence-digest"
 
 
 def test_claim_candidate_replaces_fence_on_existing_building_manifest(
@@ -186,6 +195,24 @@ def test_claim_candidate_replaces_fence_on_existing_building_manifest(
             "project_id": str(DEFAULT_PROJECT_ID).lower(),
             "architecture_version_id": str(DEFAULT_VERSION_ID).lower(),
             "generation_id": str(DEFAULT_GENERATION_ID).lower(),
+            "resource_id": str(DEFAULT_PROJECT_ID).lower(),
+            "attempt_id": str(DEFAULT_VERSION_ID).lower(),
+            "source_content_digest": "sha-src",
+            "source_schema_version": "1.0.0",
+            "graph_schema_version": "1.0.0",
+            "projector_version": "1.0.0",
+            "projection_contract_version": "1.0.0",
+            "expected_entities_count": 2,
+            "expected_relationships_count": 1,
+            "expected_evidence_count": 1,
+            "expected_unresolved_count": 0,
+            "expected_conflicts_count": 0,
+            "expected_key_set_digest": "key-digest",
+            "expected_endpoint_digest": "ep-digest",
+            "expected_payload_digest": "payload-digest",
+            "expected_evidence_summary_digest": "evidence-digest",
+            "expected_unresolved_summary_digest": "unresolved-digest",
+            "expected_conflict_summary_digest": "conflict-digest",
             "fence_digest": compute_fence_digest("old-token"),
         }
     ]
@@ -197,12 +224,17 @@ def test_claim_candidate_replaces_fence_on_existing_building_manifest(
         project_id=DEFAULT_PROJECT_ID,
         architecture_version_id=DEFAULT_VERSION_ID,
         generation_id=DEFAULT_GENERATION_ID,
+        resource_id=DEFAULT_PROJECT_ID,
+        attempt_id=DEFAULT_VERSION_ID,
         lease_token="new-token",
         source_content_digest="sha-src",
         expected_counts=counts,
         expected_key_set_digest="key-digest",
         expected_endpoint_digest="ep-digest",
         expected_payload_digest="payload-digest",
+        expected_evidence_summary_digest="evidence-digest",
+        expected_unresolved_summary_digest="unresolved-digest",
+        expected_conflict_summary_digest="conflict-digest",
     )
 
     assert len(session.queries_run) == 2
@@ -234,12 +266,17 @@ def test_claim_candidate_fails_if_already_ready(
             project_id=DEFAULT_PROJECT_ID,
             architecture_version_id=DEFAULT_VERSION_ID,
             generation_id=DEFAULT_GENERATION_ID,
+            resource_id=DEFAULT_PROJECT_ID,
+            attempt_id=DEFAULT_VERSION_ID,
             lease_token="token-1",
             source_content_digest="sha-src",
             expected_counts=counts,
             expected_key_set_digest="key-digest",
             expected_endpoint_digest="ep-digest",
             expected_payload_digest="payload-digest",
+            expected_evidence_summary_digest="evidence-digest",
+            expected_unresolved_summary_digest="unresolved-digest",
+            expected_conflict_summary_digest="conflict-digest",
         )
 
 
@@ -434,6 +471,9 @@ def test_finalize_manifest_transitions_to_ready(
         actual_key_set_digest="key-digest",
         actual_endpoint_digest="ep-digest",
         actual_payload_digest="payload-digest",
+        actual_evidence_summary_digest="evidence-digest",
+        actual_unresolved_summary_digest="unresolved-digest",
+        actual_conflict_summary_digest="conflict-digest",
     )
 
     assert len(session.queries_run) == 1
@@ -441,6 +481,7 @@ def test_finalize_manifest_transitions_to_ready(
     assert "m.state = $state_ready" in query
     assert params["state_ready"] == MANIFEST_STATE_READY
     assert params["fence_digest"] == compute_fence_digest("token-1")
+    assert params["actual_evidence_summary_digest"] == "evidence-digest"
 
 
 def test_finalize_manifest_raises_on_stale_fence(
@@ -462,6 +503,9 @@ def test_finalize_manifest_raises_on_stale_fence(
             actual_key_set_digest="key-digest",
             actual_endpoint_digest="ep-digest",
             actual_payload_digest="payload-digest",
+            actual_evidence_summary_digest="evidence-digest",
+            actual_unresolved_summary_digest="unresolved-digest",
+            actual_conflict_summary_digest="conflict-digest",
         )
 
 

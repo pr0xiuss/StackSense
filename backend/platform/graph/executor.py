@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from neo4j.exceptions import DriverError, Neo4jError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -35,11 +34,17 @@ from backend.platform.graph.projection import (
 )
 from backend.platform.graph.projection_store import (
     ProjectionStore,
+    ProjectionStoreUnavailableError,
     StaleFenceError,
 )
 from backend.platform.graph.queue import ProjectionWorkPayload
 from backend.platform.graph.source import SqlAlchemyPublishedArchitectureSource
-from backend.platform.graph.verification import GraphVerifier
+from backend.platform.graph.verification import (
+    GRAPH_INTERNAL_ERROR,
+    GRAPH_WRITE_UNAVAILABLE,
+    PROJECTION_SOURCE_MISSING,
+    GraphVerifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +144,7 @@ class ProjectionExecutor:
         if doc is None:
             return self._record_pre_verification_failure(
                 lease=lease,
-                failure_code="source_document_not_found",
+                failure_code=PROJECTION_SOURCE_MISSING,
                 failure_message=(
                     f"Architecture version '{payload.architecture_version_id}' "
                     "document was not found."
@@ -172,6 +177,16 @@ class ProjectionExecutor:
                 max_projected_properties_bytes=(
                     self._settings.graph_projection_max_projected_properties_bytes
                 ),
+                max_meta_key_bytes=self._settings.graph_projection_max_meta_key_bytes,
+                max_meta_string_bytes=(
+                    self._settings.graph_projection_max_meta_string_bytes
+                ),
+                max_meta_list_items=(
+                    self._settings.graph_projection_max_meta_list_items
+                ),
+                max_meta_record_bytes=(
+                    self._settings.graph_projection_max_meta_record_bytes
+                ),
             )
         except ProjectionCapacityExceededError as exc:
             return self._record_pre_verification_failure(
@@ -200,7 +215,7 @@ class ProjectionExecutor:
         except Exception:
             return self._record_pre_verification_failure(
                 lease=lease,
-                failure_code="projection_internal_error",
+                failure_code=GRAPH_INTERNAL_ERROR,
                 failure_message="Failed to build projection plan.",
                 transient=False,
                 start_time=start_time,
@@ -220,12 +235,17 @@ class ProjectionExecutor:
                 project_id=payload.project_id,
                 architecture_version_id=payload.architecture_version_id,
                 generation_id=payload.generation_id,
+                resource_id=payload.projection_id,
+                attempt_id=payload.attempt_id,
                 lease_token=lease.token,
                 source_content_digest=plan.source_content_digest,
                 expected_counts=plan.expected_counts,
                 expected_key_set_digest=plan.key_set_digest,
                 expected_endpoint_digest=plan.endpoint_digest,
                 expected_payload_digest=plan.payload_digest,
+                expected_evidence_summary_digest=plan.evidence_summary_digest,
+                expected_unresolved_summary_digest=plan.unresolved_summary_digest,
+                expected_conflict_summary_digest=plan.conflict_summary_digest,
             )
 
             # 2. Reset any candidate elements from previous attempts of same generation
@@ -247,6 +267,7 @@ class ProjectionExecutor:
                     generation_id=payload.generation_id,
                     lease_token=lease.token,
                     nodes=batch,
+                    batch_size=node_batch_size,
                 )
                 if time.monotonic() - last_heartbeat >= heartbeat_interval:
                     lease = self._refresh_lease(lease)
@@ -262,6 +283,7 @@ class ProjectionExecutor:
                     generation_id=payload.generation_id,
                     lease_token=lease.token,
                     relationships=rel_batch,
+                    batch_size=rel_batch_size,
                 )
                 if time.monotonic() - last_heartbeat >= heartbeat_interval:
                     lease = self._refresh_lease(lease)
@@ -275,10 +297,10 @@ class ProjectionExecutor:
                 generation_id=payload.generation_id,
                 execution_duration_seconds=time.monotonic() - start_time,
             )
-        except DriverError, Neo4jError:
+        except ProjectionStoreUnavailableError:
             return self._record_pre_verification_failure(
                 lease=lease,
-                failure_code="graph_write_unavailable",
+                failure_code=GRAPH_WRITE_UNAVAILABLE,
                 failure_message="Neo4j write failed or unavailable.",
                 transient=True,
                 start_time=start_time,
@@ -286,7 +308,7 @@ class ProjectionExecutor:
         except Exception:
             return self._record_pre_verification_failure(
                 lease=lease,
-                failure_code="graph_internal_error",
+                failure_code=GRAPH_INTERNAL_ERROR,
                 failure_message="Unexpected error during Neo4j projection write.",
                 transient=False,
                 start_time=start_time,
@@ -302,6 +324,9 @@ class ProjectionExecutor:
             verification_result = self._verifier.verify_candidate(
                 plan=plan,
                 lease_token=lease.token,
+                resource_id=payload.projection_id,
+                attempt_id=payload.attempt_id,
+                projection_contract_version=payload.contract_version,
             )
         except StaleFenceError:
             return ProjectionExecutionResult(
@@ -310,10 +335,10 @@ class ProjectionExecutor:
                 generation_id=payload.generation_id,
                 execution_duration_seconds=time.monotonic() - start_time,
             )
-        except DriverError, Neo4jError:
+        except ProjectionStoreUnavailableError:
             return self._record_pre_verification_failure(
                 lease=lease,
-                failure_code="graph_write_unavailable",
+                failure_code=GRAPH_WRITE_UNAVAILABLE,
                 failure_message="Neo4j unavailable during read-back verification.",
                 transient=True,
                 start_time=start_time,
@@ -322,7 +347,7 @@ class ProjectionExecutor:
             logger.exception("Unexpected verification error: %s", exc)
             return self._record_pre_verification_failure(
                 lease=lease,
-                failure_code="graph_internal_error",
+                failure_code=GRAPH_INTERNAL_ERROR,
                 failure_message="Unexpected error during read-back verification.",
                 transient=False,
                 start_time=start_time,

@@ -14,6 +14,7 @@ from neo4j.exceptions import DriverError, Neo4jError
 from backend.platform.config import Settings
 from backend.platform.graph.model import (
     GRAPH_SCHEMA_VERSION,
+    PROJECTION_CONTRACT_VERSION,
     PROJECTOR_VERSION,
     SOURCE_CONTRACT_VERSION,
     ProjectionCounts,
@@ -37,10 +38,13 @@ _CLAIM_MANIFEST_QUERY: Final[LiteralString] = (
     "    m.project_id = $project_id, "
     "    m.architecture_version_id = $architecture_version_id, "
     "    m.generation_id = $generation_id, "
+    "    m.resource_id = $resource_id, "
+    "    m.attempt_id = $attempt_id, "
     "    m.source_content_digest = $source_content_digest, "
     "    m.source_schema_version = $source_schema_version, "
     "    m.graph_schema_version = $graph_schema_version, "
     "    m.projector_version = $projector_version, "
+    "    m.projection_contract_version = $projection_contract_version, "
     "    m.expected_entities_count = $expected_entities_count, "
     "    m.expected_relationships_count = $expected_relationships_count, "
     "    m.expected_evidence_count = $expected_evidence_count, "
@@ -49,6 +53,9 @@ _CLAIM_MANIFEST_QUERY: Final[LiteralString] = (
     "    m.expected_key_set_digest = $expected_key_set_digest, "
     "    m.expected_endpoint_digest = $expected_endpoint_digest, "
     "    m.expected_payload_digest = $expected_payload_digest, "
+    "    m.expected_evidence_summary_digest = $expected_evidence_summary_digest, "
+    "    m.expected_unresolved_summary_digest = $expected_unresolved_summary_digest, "
+    "    m.expected_conflict_summary_digest = $expected_conflict_summary_digest, "
     "    m.created_at = $created_at "
     "ON MATCH SET "
     "    m.lock_epoch = coalesce(m.lock_epoch, 0) + 1 "
@@ -57,6 +64,25 @@ _CLAIM_MANIFEST_QUERY: Final[LiteralString] = (
     "       m.project_id AS project_id, "
     "       m.architecture_version_id AS architecture_version_id, "
     "       m.generation_id AS generation_id, "
+    "       m.resource_id AS resource_id, "
+    "       m.attempt_id AS attempt_id, "
+    "       m.source_content_digest AS source_content_digest, "
+    "       m.source_schema_version AS source_schema_version, "
+    "       m.graph_schema_version AS graph_schema_version, "
+    "       m.projector_version AS projector_version, "
+    "       m.projection_contract_version AS projection_contract_version, "
+    "       m.expected_entities_count AS expected_entities_count, "
+    "       m.expected_relationships_count AS expected_relationships_count, "
+    "       m.expected_evidence_count AS expected_evidence_count, "
+    "       m.expected_unresolved_count AS expected_unresolved_count, "
+    "       m.expected_conflicts_count AS expected_conflicts_count, "
+    "       m.expected_key_set_digest AS expected_key_set_digest, "
+    "       m.expected_endpoint_digest AS expected_endpoint_digest, "
+    "       m.expected_payload_digest AS expected_payload_digest, "
+    "       m.expected_evidence_summary_digest AS expected_evidence_summary_digest, "
+    "       m.expected_unresolved_summary_digest "
+    "AS expected_unresolved_summary_digest, "
+    "       m.expected_conflict_summary_digest AS expected_conflict_summary_digest, "
     "       (m.lock_epoch = 1) AS created"
 )
 
@@ -161,6 +187,9 @@ _FINALIZE_MANIFEST_QUERY: Final[LiteralString] = (
     "    m.actual_key_set_digest = $actual_key_set_digest, "
     "    m.actual_endpoint_digest = $actual_endpoint_digest, "
     "    m.actual_payload_digest = $actual_payload_digest, "
+    "    m.actual_evidence_summary_digest = $actual_evidence_summary_digest, "
+    "    m.actual_unresolved_summary_digest = $actual_unresolved_summary_digest, "
+    "    m.actual_conflict_summary_digest = $actual_conflict_summary_digest, "
     "    m.verified_at = $verified_at "
     "RETURN m.state AS state"
 )
@@ -173,10 +202,13 @@ _GET_MANIFEST_QUERY: Final[LiteralString] = (
     "       m.project_id AS project_id, "
     "       m.architecture_version_id AS architecture_version_id, "
     "       m.generation_id AS generation_id, "
+    "       m.resource_id AS resource_id, "
+    "       m.attempt_id AS attempt_id, "
     "       m.source_content_digest AS source_content_digest, "
     "       m.source_schema_version AS source_schema_version, "
     "       m.graph_schema_version AS graph_schema_version, "
     "       m.projector_version AS projector_version, "
+    "       m.projection_contract_version AS projection_contract_version, "
     "       m.fence_digest AS fence_digest, "
     "       m.lock_epoch AS lock_epoch, "
     "       m.expected_entities_count AS expected_entities_count, "
@@ -187,6 +219,10 @@ _GET_MANIFEST_QUERY: Final[LiteralString] = (
     "       m.expected_key_set_digest AS expected_key_set_digest, "
     "       m.expected_endpoint_digest AS expected_endpoint_digest, "
     "       m.expected_payload_digest AS expected_payload_digest, "
+    "       m.expected_evidence_summary_digest AS expected_evidence_summary_digest, "
+    "       m.expected_unresolved_summary_digest "
+    "AS expected_unresolved_summary_digest, "
+    "       m.expected_conflict_summary_digest AS expected_conflict_summary_digest, "
     "       m.actual_entities_count AS actual_entities_count, "
     "       m.actual_relationships_count AS actual_relationships_count, "
     "       m.actual_evidence_count AS actual_evidence_count, "
@@ -195,6 +231,9 @@ _GET_MANIFEST_QUERY: Final[LiteralString] = (
     "       m.actual_key_set_digest AS actual_key_set_digest, "
     "       m.actual_endpoint_digest AS actual_endpoint_digest, "
     "       m.actual_payload_digest AS actual_payload_digest, "
+    "       m.actual_evidence_summary_digest AS actual_evidence_summary_digest, "
+    "       m.actual_unresolved_summary_digest AS actual_unresolved_summary_digest, "
+    "       m.actual_conflict_summary_digest AS actual_conflict_summary_digest, "
     "       labels(m) AS labels"
 )
 
@@ -289,6 +328,13 @@ class ProjectionStoreError(ProjectionError):
     """Base error for projection store operations."""
 
 
+class ProjectionStoreUnavailableError(ProjectionStoreError):
+    """Raised when Neo4j cannot complete an operation and retry may succeed."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="graph_write_unavailable")
+
+
 class StaleFenceError(ProjectionStoreError):
     """Raised when manifest lock or fence check detects a stale or superseded worker."""
 
@@ -338,15 +384,21 @@ class ProjectionStore(Protocol):
         project_id: UUID,
         architecture_version_id: UUID,
         generation_id: UUID,
+        resource_id: UUID,
+        attempt_id: UUID,
         lease_token: str,
         source_content_digest: str,
         source_schema_version: str = SOURCE_CONTRACT_VERSION,
         graph_schema_version: str = GRAPH_SCHEMA_VERSION,
         projector_version: str = PROJECTOR_VERSION,
+        projection_contract_version: str = PROJECTION_CONTRACT_VERSION,
         expected_counts: ProjectionCounts,
         expected_key_set_digest: str,
         expected_endpoint_digest: str,
         expected_payload_digest: str,
+        expected_evidence_summary_digest: str,
+        expected_unresolved_summary_digest: str,
+        expected_conflict_summary_digest: str,
     ) -> None:
         """Atomically claim or fence an isolated candidate generation."""
 
@@ -396,6 +448,9 @@ class ProjectionStore(Protocol):
         actual_key_set_digest: str,
         actual_endpoint_digest: str,
         actual_payload_digest: str,
+        actual_evidence_summary_digest: str,
+        actual_unresolved_summary_digest: str,
+        actual_conflict_summary_digest: str,
     ) -> None:
         """Conditionally transition manifest from BUILDING to READY and clear fence."""
 
@@ -526,15 +581,21 @@ class Neo4jProjectionStore:
         project_id: UUID,
         architecture_version_id: UUID,
         generation_id: UUID,
+        resource_id: UUID,
+        attempt_id: UUID,
         lease_token: str,
         source_content_digest: str,
         source_schema_version: str = SOURCE_CONTRACT_VERSION,
         graph_schema_version: str = GRAPH_SCHEMA_VERSION,
         projector_version: str = PROJECTOR_VERSION,
+        projection_contract_version: str = PROJECTION_CONTRACT_VERSION,
         expected_counts: ProjectionCounts,
         expected_key_set_digest: str,
         expected_endpoint_digest: str,
         expected_payload_digest: str,
+        expected_evidence_summary_digest: str,
+        expected_unresolved_summary_digest: str,
+        expected_conflict_summary_digest: str,
     ) -> None:
         """Claim a candidate generation or install a new fence if already BUILDING."""
         gen_key = compute_generation_key(
@@ -557,10 +618,13 @@ class Neo4jProjectionStore:
                         project_id=p_id,
                         architecture_version_id=a_id,
                         generation_id=g_id,
+                        resource_id=str(resource_id).lower(),
+                        attempt_id=str(attempt_id).lower(),
                         source_content_digest=source_content_digest,
                         source_schema_version=source_schema_version,
                         graph_schema_version=graph_schema_version,
                         projector_version=projector_version,
+                        projection_contract_version=projection_contract_version,
                         expected_entities_count=expected_counts.entities,
                         expected_relationships_count=expected_counts.relationships,
                         expected_evidence_count=expected_counts.evidence,
@@ -569,6 +633,9 @@ class Neo4jProjectionStore:
                         expected_key_set_digest=expected_key_set_digest,
                         expected_endpoint_digest=expected_endpoint_digest,
                         expected_payload_digest=expected_payload_digest,
+                        expected_evidence_summary_digest=expected_evidence_summary_digest,
+                        expected_unresolved_summary_digest=expected_unresolved_summary_digest,
+                        expected_conflict_summary_digest=expected_conflict_summary_digest,
                         created_at=now_iso,
                     ).single()
 
@@ -589,6 +656,42 @@ class Neo4jProjectionStore:
                             raise ProjectionStoreScopeError(
                                 "Scope mismatch on existing ProjectionManifest"
                             )
+                        expected_immutable = {
+                            "resource_id": str(resource_id).lower(),
+                            "attempt_id": str(attempt_id).lower(),
+                            "source_content_digest": source_content_digest,
+                            "source_schema_version": source_schema_version,
+                            "graph_schema_version": graph_schema_version,
+                            "projector_version": projector_version,
+                            "projection_contract_version": projection_contract_version,
+                            "expected_entities_count": expected_counts.entities,
+                            "expected_relationships_count": (
+                                expected_counts.relationships
+                            ),
+                            "expected_evidence_count": expected_counts.evidence,
+                            "expected_unresolved_count": expected_counts.unresolved,
+                            "expected_conflicts_count": expected_counts.conflicts,
+                            "expected_key_set_digest": expected_key_set_digest,
+                            "expected_endpoint_digest": expected_endpoint_digest,
+                            "expected_payload_digest": expected_payload_digest,
+                            "expected_evidence_summary_digest": (
+                                expected_evidence_summary_digest
+                            ),
+                            "expected_unresolved_summary_digest": (
+                                expected_unresolved_summary_digest
+                            ),
+                            "expected_conflict_summary_digest": (
+                                expected_conflict_summary_digest
+                            ),
+                        }
+                        if any(
+                            row[key] != value
+                            for key, value in expected_immutable.items()
+                        ):
+                            raise ProjectionStoreStateError(
+                                "Existing ProjectionManifest immutable contract "
+                                "mismatch"
+                            )
 
                         tx.run(
                             _UPDATE_CLAIM_FENCE_QUERY,
@@ -601,7 +704,7 @@ class Neo4jProjectionStore:
         except ProjectionStoreError:
             raise
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j claim operation failed: {type(err).__name__}"
             ) from None
 
@@ -676,7 +779,7 @@ class Neo4jProjectionStore:
         except ProjectionStoreError:
             raise
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j reset operation failed: {type(err).__name__}"
             ) from None
 
@@ -740,7 +843,7 @@ class Neo4jProjectionStore:
         except ProjectionStoreError:
             raise
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j write nodes failed: {type(err).__name__}"
             ) from None
 
@@ -810,7 +913,7 @@ class Neo4jProjectionStore:
         except ProjectionStoreError:
             raise
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j write relationships failed: {type(err).__name__}"
             ) from None
 
@@ -827,6 +930,9 @@ class Neo4jProjectionStore:
         actual_key_set_digest: str,
         actual_endpoint_digest: str,
         actual_payload_digest: str,
+        actual_evidence_summary_digest: str,
+        actual_unresolved_summary_digest: str,
+        actual_conflict_summary_digest: str,
     ) -> None:
         """Conditionally transition manifest from BUILDING to READY and clear fence."""
         gen_key = compute_generation_key(
@@ -852,6 +958,9 @@ class Neo4jProjectionStore:
                         actual_key_set_digest=actual_key_set_digest,
                         actual_endpoint_digest=actual_endpoint_digest,
                         actual_payload_digest=actual_payload_digest,
+                        actual_evidence_summary_digest=actual_evidence_summary_digest,
+                        actual_unresolved_summary_digest=actual_unresolved_summary_digest,
+                        actual_conflict_summary_digest=actual_conflict_summary_digest,
                         verified_at=now_iso,
                     ).single()
 
@@ -863,7 +972,7 @@ class Neo4jProjectionStore:
         except ProjectionStoreError:
             raise
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j finalize failed: {type(err).__name__}"
             ) from None
 
@@ -882,7 +991,7 @@ class Neo4jProjectionStore:
                     return None
                 return dict(record.data())
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j get manifest failed: {type(err).__name__}"
             ) from None
 
@@ -909,7 +1018,7 @@ class Neo4jProjectionStore:
                     return 0, 0
                 return int(record["total_count"]), int(record["distinct_count"])
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j count nodes failed: {type(err).__name__}"
             ) from None
 
@@ -936,7 +1045,7 @@ class Neo4jProjectionStore:
                     return 0
                 return int(record["total_count"])
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j count any nodes failed: {type(err).__name__}"
             ) from None
 
@@ -965,7 +1074,7 @@ class Neo4jProjectionStore:
                 ).data()
                 return records
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j enumerate nodes failed: {type(err).__name__}"
             ) from None
 
@@ -992,7 +1101,7 @@ class Neo4jProjectionStore:
                     return 0, 0
                 return int(record["total_count"]), int(record["distinct_count"])
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j count relationships failed: {type(err).__name__}"
             ) from None
 
@@ -1021,7 +1130,7 @@ class Neo4jProjectionStore:
                     return 0
                 return int(record["total_count"])
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j count any relationships failed: {type(err).__name__}"
             ) from None
 
@@ -1050,7 +1159,7 @@ class Neo4jProjectionStore:
                 ).data()
                 return records
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j enumerate relationships failed: {type(err).__name__}"
             ) from None
 
@@ -1114,7 +1223,7 @@ class Neo4jProjectionStore:
                     tx.commit()
                     total_deleted += deleted
         except (DriverError, Neo4jError) as err:
-            raise ProjectionStoreError(
+            raise ProjectionStoreUnavailableError(
                 f"Neo4j delete generation failed: {type(err).__name__}"
             ) from None
 

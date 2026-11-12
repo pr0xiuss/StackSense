@@ -20,4 +20,3 @@ KillSignal=SIGTERM
 
 [Install]
 WantedBy=default.target
-

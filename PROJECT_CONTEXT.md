@@ -306,10 +306,11 @@ neighborhood containing it.
 **Status: COMPLETE / ACCEPTED AS THE P4 MODULE FOUNDATION.** This section
 validates the conceptual six-module structure. M1, including its corrected graph
 schema, is frozen and complete. The repository-grounded detailed M2 plan is
-recorded separately in Section 7C and all three batches are owner-approved;
-implementation remains unstarted. The preserved roadmap in Section 7B remains
-the high-level reference for modules that have not yet received detailed
-planning.
+recorded separately in Section 7C; its three batches are implemented, reviewed
+and accepted complete. Detailed M3 planning is recorded in Section 7D and is
+owner-approved; implementation has not started. The preserved roadmap in
+Section 7B remains the high-level reference for modules that have not yet
+received detailed planning.
 
 ### M1 — Graph Infrastructure and Projection Lifecycle
 
@@ -2321,11 +2322,543 @@ M2 is complete only when:
 
 No unresolved architectural contradiction remains. Frozen P1-P3, M1 lifecycle/
 receipt ownership, the no-new-Express boundary and all other approved P4
-decisions remain consistent. The complete M2 plan and all three batches are
-owner-approved, but implementation is intentionally not started pending an
-explicit start instruction. Measured operational values and the full P4-P1
-vocabulary retain their post-Batch-1 approval gates and cannot be silently
-assumed.
+decisions remain consistent. This section preserves M2's approved planning
+baseline; actual implementation, review and completion evidence is recorded in
+Section 12. The 2026-11-12 owner M3-planning directive accepts M2 as complete
+and authorizes the planning transition, without reopening its implementation.
+
+## 7D. Detailed M3 Plan — Graph Query and Exploration API
+
+**Planning status (2026-11-12): OWNER APPROVED — IMPLEMENTATION NOT STARTED.**
+No M3 batch is authorized to start by this approval record alone. This detailed
+plan supersedes only the provisional M3 file/batch sketch in Section 7B; it does
+not alter the approved 17-decision P4 baseline, frozen P1-P3, frozen M1 or
+completed M2 contracts.
+
+### A. Verified repository findings and boundaries
+
+1. Frozen M1 persists one `GraphProjectionResourceModel` per exact Architecture
+   Version and projection type. It carries project/repository/version scope,
+   public `PENDING|RUNNING|COMPLETED|FAILED|STALE` state and the sole
+   `active_generation_id` pointer. `GraphProjectionRepository.get_resource`
+   requires the resource UUID; the only version lookup is the private
+   `_resource_for_version`. M1 therefore does **not** expose a suitable public
+   exact-version read port for M3.
+2. M3 will add a P4-owned, read-only generation-resolution port and SQLAlchemy
+   adapter over the already frozen M1 tables. It will not add a method to the
+   M1 lifecycle repository, mutate lifecycle state, acquire locks or create a
+   second active-generation authority.
+3. M2 writes fixed `ArchitectureEntity` nodes and `ARCH_RELATIONSHIP` edges.
+   Every record contains `project_id`, `architecture_version_id`,
+   `generation_id`, `generation_key` and its generation-scoped SHA-256
+   `projection_key`. Nodes also contain the stable P3
+   `architecture_entity_id`, logical ID, semantic signature, canonical kind,
+   name, namespace, fact status, evidence logical IDs and allowlisted metadata.
+   Edges contain the stable P3 `architecture_relationship_id`, logical ID,
+   canonical kind/status, canonical source/target logical IDs and projection
+   keys, evidence logical IDs and allowlisted metadata.
+4. M2 independently verifies and finalizes a `ProjectionManifest` as `READY`
+   before M1 can activate it. PostgreSQL's active-generation pointer remains the
+   authority; the READY manifest is an additional read-side integrity preflight,
+   never an activation signal.
+5. Neo4j has uniqueness constraints on node, edge and manifest keys and
+   composite RANGE indexes on `(project_id, architecture_version_id,
+   generation_id)` for all three. There is no separate index on
+   `architecture_entity_id` or canonical kind. Node anchoring can still use the
+   scope index and exact stable-ID predicate within the frozen maximum of 25,000
+   nodes, but Batch 2 must inspect real query plans and latency. Any additional
+   index requires separate M1/M2 schema change control; M3 will not add one.
+6. The official driver is pinned to `neo4j==6.4.1`; M1 verified Community
+   5.26.33 and exposes an initialized driver through P4-owned dependency
+   composition. M3 reuses that infrastructure and fixed database selection.
+7. Existing Python APIs use synchronous FastAPI, Pydantic response models,
+   request-scoped SQLAlchemy sessions, `StackSenseError`'s structured
+   `{error:{code,message,details}}` envelope, and the trusted delegated
+   service/actor/role/project/correlation headers. Existing list APIs use
+   offset pagination; no reusable signed-cursor contract exists.
+8. Ownership is explicit and non-overlapping: M1 owns projection lifecycle,
+   status, attempts, rebuild orchestration and active-generation activation; M3
+   owns only read-only P4-Q1 graph-query contracts and execution over M1-selected
+   verified generations; M4 owns FastAPI routes that compose M1 lifecycle/
+   rebuild services with M3 read services, delegated-context/RBAC integration,
+   OpenAPI and final HTTP error mapping (P4-D1). This detailed ownership rule
+   controls over provisional high-level wording in Sections 7/7B. M3 does not
+   create/register public routes, expose a rebuild operation, mutate lifecycle
+   state or modify frozen P3 delegated-auth code. React continues to call only
+   the existing Express-facing boundary; no Express work is authorized here.
+
+### B. Objective, ownership and non-goals
+
+M3 exposes a transport-neutral, deterministic application capability over one
+verified exact Architecture Version generation. It owns request/response DTOs,
+generation resolution, safe cursor encoding, controlled graph reads, result
+mapping, traversal semantics, query limits, query-layer errors and observability.
+
+M1 remains the sole owner of lifecycle/status resources, attempts, automatic or
+manual rebuild execution, leases, verification handoff and activation. M4 later
+owns the FastAPI transport and composes M1 status/rebuild capabilities with M3
+read-only queries; it must not move either responsibility into the other module.
+M3 does not write Neo4j, schedule or rebuild projections, project or verify
+candidates, activate generations, change projection state, query unverified
+generations, modify P3 Architecture Models, expose arbitrary Cypher, implement
+browser authentication, add Express/FastAPI routes, provide search/impact/AI
+semantics, or plan M4-M6. Neo4j remains a rebuildable projection; PostgreSQL and
+the published Architecture Model remain authoritative.
+
+### C. P4-Q1 contracts
+
+#### C1. Common scope and DTO vocabulary
+
+- `GraphReadScope`: exact `project_id`, `architecture_version_id`, captured
+  `generation_id`, resource state (`COMPLETED` or `STALE`), graph/projector
+  versions and verified counts. A caller never supplies `generation_id` for an
+  initial read; M3 resolves it from PostgreSQL. A continuation cursor must match
+  the currently active generation exactly.
+- **Pagination invariant:** every operation that emits or accepts a cursor
+  (`graph window`, `neighborhood`, `dependencies`, `dependents` and
+  `containment`) binds that cursor to the exact captured `generation_id`.
+  Continuation always re-resolves the active generation first; a mismatch is
+  `graph_generation_changed`. M3 never silently restarts, rebases a cursor or
+  returns page one from another generation.
+- `GraphNode`: P3 `architecture_entity_id`, logical ID, canonical kind, name,
+  namespace, fact status, semantic signature, evidence logical IDs and only the
+  already-projected safe metadata. Neo4j element IDs and projection keys are
+  internal ordering/lookup values and are not public identities.
+- `GraphEdge`: P3 `architecture_relationship_id`, logical ID, actual canonical
+  kind/status, source/target `architecture_entity_id`, evidence logical IDs and
+  safe metadata. Direction always remains canonical source to target.
+- `GraphSubgraph`: exact version/generation, deterministic node/edge tuples,
+  requested depth/direction/kinds, loaded counts, `truncated`, and opaque
+  `next_cursor` when meaningful. Nodes are unique by stable entity UUID and
+  edges by stable relationship UUID.
+- `GraphPath`/`GraphPathResult`: ordered node and directed-edge sequences plus
+  exact scope; maximum 25 paths. They describe static canonical relationships,
+  not runtime execution or impact certainty.
+- Ordering is byte-deterministic by lowercase generation-scoped projection key;
+  ties are impossible under M2 uniqueness constraints. Public output is then
+  mapped to stable P3 UUIDs without exposing the key.
+- Canonical relationship kinds remain exactly `contains` plus the approved
+  dependency set: `depends_on`, `imports`, `calls`, `exposes`, `consumes`,
+  `produces`, `connects_to`, `persists_to`, `uses`, `extends`, `implements`,
+  and `routes_to`. M3 creates no vocabulary.
+
+#### C2. Common validation and limits
+
+- Defaults: depth 1, nodes 100, edges 200, paths 5, timeout 2 seconds and page
+  size 50. Hard maxima: depth 5, nodes 500, edges 1,000, paths 25, timeout 5
+  seconds and page size 100. Requests outside these bounds fail before Neo4j.
+- Directions are closed enums (`incoming`, `outgoing`, `both`) and relationship
+  kinds are enum values, never Cypher fragments. Entity/version/project IDs are
+  UUIDs. Duplicate kinds are normalized into canonical enum order.
+- Every query uses fixed label/type names and parameters for all data values.
+  Where Cypher cannot parameterize a bounded depth, the adapter selects one of
+  five audited literal templates after enum/integer validation; it never
+  interpolates caller text.
+- One monotonic operation deadline starts before initial PostgreSQL generation
+  resolution and is capped at five seconds. It covers cursor validation,
+  PostgreSQL reads, connection acquisition, every Neo4j query, result streaming/
+  iteration, deduplication, mapping/serialization preparation and the final
+  PostgreSQL pointer verification. Every database call receives only the
+  remaining budget. Neo4j uses both a server-side transaction/query timeout and
+  a deadline cancellation guard that cancels/closes the active session and
+  rolls back server work when time expires; PostgreSQL reads use a remaining-
+  budget statement timeout and rollback on expiry. An application timer alone
+  is insufficient. Mapping/iteration checks the same deadline, and expiration
+  at any point—including final pointer verification—returns
+  `graph_query_timeout` with no partial response. Limit termination remains
+  explicit; it never silently drops records while claiming completeness.
+
+#### C3. Generation resolution and consistency
+
+1. M4 will authorize the delegated project before invoking M3. M3 independently
+   looks up the exact `(project_id, architecture_version_id, projection_type)`
+   resource through its read-only adapter.
+2. Only `COMPLETED` or exact-version `STALE` resources with a non-null active
+   generation and complete activation summary are readable. `PENDING`,
+   `RUNNING`, `FAILED`, missing resources and candidates are not queryable.
+3. The Neo4j adapter requires the matching `ProjectionManifest` to be `READY`
+   and to match project/version/generation/schema/projector scope. Every node,
+   edge and both relationship endpoints repeat the same three scope predicates.
+4. The service captures one generation at request start. A concurrent rebuild
+   continues serving the captured, immutable verified generation while G2 is
+   being built. After query materialization it re-reads the PostgreSQL pointer;
+   if it changed, the result is discarded with `graph_generation_changed` so
+   the caller retries against the new generation. It never combines G1 and G2.
+5. Every paginated operation validates the cursor's signed generation against
+   a fresh PostgreSQL resolution before Neo4j access and rechecks the pointer
+   before returning. If either check differs, it rejects continuation with
+   `graph_generation_changed`; it never restarts at the new generation or
+   converts the request into an initial page. Exact-version `STALE` reads are
+   allowed when that resource retains a verified active generation; M3 never
+   substitutes a newer/current version.
+
+### D. Seven operation designs
+
+#### D1. Graph window
+
+- **Purpose:** deterministic bounded initial overview, not a complete export.
+- **Input:** exact version/project scope; node/edge limits, page size, optional
+  canonical-kind filters and cursor.
+- **Semantics:** keyset-page nodes by projection key, then return the induced
+  canonical edges whose endpoints are in that node window. If the edge cap is
+  reached, the cursor retains the immutable node-window bounds plus the last
+  edge key; after those edges finish it advances the node key. Endpoints are
+  therefore never dangling and repeated nodes across an edge continuation are
+  intentional/deduplicable.
+- **Output:** `GraphSubgraph`, manifest total counts, loaded counts and explicit
+  truncation. A verified zero-node graph returns `200` with empty tuples.
+- **Tests:** empty/isolated/dense graphs, node and edge continuation, stable
+  repeat reads, endpoint closure, kind filtering, hard limits and scope leaks.
+
+#### D2. Node detail
+
+- **Purpose:** retrieve one exact projected entity for inspector/detail use.
+- **Input:** version/project and stable P3 `architecture_entity_id` UUID.
+- **Semantics:** match within all three scope predicates; return projected safe
+  properties only. No traversal and no pagination.
+- **Output:** `GraphNode` with exact scope; missing/out-of-scope is the same safe
+  `graph_node_not_found` result to avoid existence disclosure.
+- **Tests:** every projected field, metadata allowlist, wrong scope/generation,
+  absent node and refusal to expose projection/internal IDs.
+
+#### D3. Neighborhood
+
+- **Purpose:** generic bounded structural expansion around a node.
+- **Input:** entity UUID, `incoming|outgoing|both`, depth, node/edge limits,
+  optional relationship kinds and cursor.
+- **Semantics:** default kinds are the 12 non-containment dependency kinds.
+  `contains` participates only when the caller explicitly requests it; this is
+  the only generic operation allowed to opt into it. Results retain actual kind
+  and canonical edge direction even for incoming/both traversal. Reachable edge
+  candidates are deduplicated and keyset-ordered by `(minimum_depth,
+  relationship_projection_key, neighbor_projection_key)`.
+- **Output:** start node plus bounded discovered nodes/edges and continuation.
+  An existing node with no matches returns the start node and no edges.
+- **Tests:** three directions, depths 1-5, cycles/self-edges, duplicate paths,
+  explicit/implicit containment, deterministic pagination and dense fan-out.
+
+#### D4. Dependencies
+
+- **Purpose:** answer what the selected entity statically depends on.
+- **Input:** entity UUID, depth, optional subset of the approved 12 dependency
+  kinds, node/edge limits and cursor.
+- **Semantics:** outgoing canonical traversal only. `contains` is rejected.
+  Edge kinds are not collapsed to `depends_on`.
+- **Output/tests:** neighborhood-shaped `GraphSubgraph`; test all 12 kinds,
+  mixed kinds, direction, multi-hop cycles, empty results and containment
+  rejection.
+
+#### D5. Dependents
+
+- **Purpose:** answer what statically depends on the selected entity.
+- **Input/output:** same bounded contract as dependencies.
+- **Semantics:** incoming traversal over the same 12-kind allowlist while each
+  returned edge remains serialized source-to-target. `contains` is rejected.
+- **Tests:** mirror dependencies plus proof that incoming traversal never swaps
+  endpoint identities or edge direction.
+
+#### D6. Containment
+
+- **Purpose:** navigate canonical architecture hierarchy independently from
+  dependency semantics.
+- **Input:** entity UUID, `parents|children|both`, depth, node/edge limits and
+  cursor.
+- **Semantics:** only `contains`; parent-to-child is canonical outgoing
+  direction, so parents traverse incoming and children outgoing. It shares the
+  bounded traversal engine but not the dependency-kind API.
+- **Output/tests:** bounded subgraph; direct/deep parent/child, multiple parents,
+  cycles as corrupt-but-bounded data, empty hierarchy, direction and proof that
+  non-containment edges never appear.
+
+#### D7. Bounded paths
+
+- **Purpose:** find deterministic directed static paths between two stable
+  entity UUIDs in one generation.
+- **Input:** source/target UUID, max depth, path limit, optional subset of the
+  12 non-containment kinds and timeout.
+- **Semantics:** directed source-to-target simple paths only; `contains` is
+  excluded so containment remains a distinct capability. Fixed depth-selected
+  controlled templates scope every node and edge. Results order by hop count,
+  then the byte sequence of edge projection keys and node projection keys.
+  Source equal to target returns one deterministic zero-edge path.
+- **Output:** at most 25 paths with all nodes/edges materialized once per path;
+  no path is a successful empty result. Timeout never returns an implied
+  complete result.
+- **Tests:** no/one/multiple paths, cycles, ordering, kind filters, equal
+  endpoints, max depth/path cap, dense alternatives, timeout and cross-scope
+  decoys.
+
+### E. Cursor security and stable pagination
+
+- Generation binding is a mandatory invariant for every paginated operation,
+  not an operation-specific option. A valid signature does not make a cursor
+  reusable after M1 changes the active pointer. M3 compares the signed
+  `generation_id` with the freshly resolved active generation before retrieval
+  and again after materialization; any mismatch rejects the continuation. No
+  adapter or service may silently discard the cursor and restart pagination.
+- The opaque format is `base64url(canonical-json-payload).base64url(hmac)` with
+  padding omitted. The signature is HMAC-SHA256 over the encoded payload using
+  a dedicated `graph_query_cursor_secret_key`, never the JWT, service-token or
+  Neo4j credential. Verification uses `hmac.compare_digest` before trusting any
+  field; encoded cursor size is capped.
+- Payload v1 contains cursor contract version, issued/expiry timestamps,
+  project/version/generation UUIDs, operation name, SHA-256 query fingerprint
+  and operation-specific last stable position. Window positions may contain
+  node-window bounds and last edge key; traversal positions contain depth/edge/
+  neighbor keys. These are internal opaque ordering keys, not public graph IDs.
+- The fingerprint is SHA-256 over canonical JSON of all semantics affecting
+  results: operation, direction, normalized kinds, depth, limits/page size and
+  endpoint IDs. Project/version/generation are also explicit payload fields for
+  fail-closed diagnostics.
+- Invalid encoding/version/signature is `graph_cursor_invalid`; expiry is
+  `graph_cursor_expired`; project/version/operation/fingerprint mismatch is
+  `graph_cursor_scope_mismatch`; inactive generation is
+  `graph_generation_changed`. None reveals the decoded attacker payload.
+- Recommended v1 TTL is 15 minutes and the production secret must contain at
+  least 32 bytes. Rotating the one active secret intentionally invalidates
+  short-lived outstanding cursors; multi-key grace rotation is deferred unless
+  operations demonstrate a need. TTL and rotation behavior require owner
+  approval at the Batch 1 P4-Q1 freeze.
+
+### F. Internal architecture and data flow
+
+```text
+authorized exact project/version request (M4 later)
+  -> GraphQueryService starts the single monotonic operation deadline
+  -> GraphQueryService validates P4-Q1 request
+  -> GraphGenerationReader resolves PostgreSQL active generation
+  -> CursorCodec validates/binds continuation, if present
+  -> GraphQueryRepository runs fixed, scoped Neo4j templates under the
+     remaining server-side timeout and cancellation guard
+  -> result iteration/mapper validates scope/properties and builds immutable
+     DTOs while checking the same deadline
+  -> generation pointer is re-read under the remaining PostgreSQL timeout
+  -> bounded P4-Q1 result or typed safe failure
+```
+
+- `GraphQueryService` owns validation, deadline, generation double-read,
+  cursor/fingerprint coordination, materialization caps and telemetry. Its one
+  deadline budget is passed through every layer; nested repositories do not
+  start independent timeout windows.
+- `GraphGenerationReader` is a read-only port; its SQLAlchemy adapter is the
+  only M3 component aware of M1 tables.
+- `GraphQueryRepository` is a read-only port. `Neo4jGraphQueryRepository` owns
+  fixed queries, remaining-budget connection/query/transaction timeout,
+  deadline-triggered session cancellation/rollback, manifest preflight and
+  strict record mapping. Application code never handles raw Cypher. A timed-out
+  operation must terminate database work rather than merely stop awaiting it.
+- Shared one-hop/dedup/keyset primitives support neighborhood, dependency,
+  dependent and containment operations, but each public operation has a
+  separate service method and allowlist/direction policy. Window and paths use
+  dedicated implementations because their pagination and complexity differ.
+- M3 emits structured query-start/completion/failure logs with operation,
+  correlation ID, scope IDs, generation, duration, returned counts,
+  truncation and safe code. It never logs cursor contents, Cypher, credentials,
+  metadata values or Neo4j records. The repository currently has no metrics
+  exporter; M3 exposes a small observer callback/default logging observer so a
+  later operational integration can record duration/count/timeout/error metrics
+  without changing query semantics or adding a dependency now.
+
+### G. Error taxonomy and degradation
+
+| M3 code | Meaning | Proposed M4 HTTP mapping |
+|---|---|---|
+| `graph_projection_not_found` | No exact project/version projection resource | 404 |
+| `graph_projection_not_ready` | Exact resource has no readable active generation | 409 |
+| `graph_node_not_found` | Anchor/node absent in authorized exact scope | 404 |
+| `graph_cursor_invalid` / `graph_cursor_scope_mismatch` | Malformed, tampered or mismatched cursor | 422 |
+| `graph_cursor_expired` | Valid cursor exceeded TTL | 410 |
+| `graph_generation_changed` | Pointer changed during read or since cursor | 409 |
+| `graph_query_limit_exceeded` | Request exceeds approved bounds | 422 |
+| `graph_query_timeout` | Whole-operation deadline exhausted; database work cancelled/rolled back | 504 |
+| `graph_unavailable` | Neo4j/driver unavailable | 503 |
+| `graph_schema_incompatible` | READY manifest/record violates frozen schema | 503 |
+| `graph_query_integrity_error` | Same-generation/scope/referential invariant failed | 500 |
+
+M3 owns these safe typed meanings; M4 owns final `StackSenseError`/HTTP mapping
+and the existing error envelope. Driver messages, stack traces, query text,
+credentials and record contents never enter public details. A Neo4j failure
+degrades graph capability only and does not make canonical P3 APIs unavailable.
+
+### H. Exact file-change plan
+
+All paths below are proposed P4-owned changes verified against the current tree.
+No migration, dependency, Neo4j schema or frozen M1/M2/P1-P3 file change is
+planned.
+
+| Action/path | Ownership and responsibility |
+|---|---|
+| CREATE `backend/platform/graph/query_contracts.py` | M3 immutable request/result DTOs, closed direction/kind enums, approved defaults/hard limits and safe P4-Q1 serialization. |
+| CREATE `backend/platform/graph/cursor.py` | M3 canonical payload, HMAC-SHA256 Base64URL codec, fingerprinting, expiry/size/scope validation and typed cursor failures. |
+| CREATE `backend/platform/graph/query_repository.py` | M3 generation-read and graph-query ports, SQLAlchemy exact-version read adapter, fixed controlled Cypher adapter, manifest preflight and strict row mapping. |
+| CREATE `backend/platform/graph/query_service.py` | M3 seven-operation application service, deadline/cap enforcement, generation double-read, cursor coordination and structured observer hook. |
+| CREATE `backend/platform/graph/query_health.py` | M3 query capability probe/result independent of frozen M1 health DTO; M4 may compose it later. |
+| MODIFY `backend/platform/graph/dependencies.py` | Add P4-owned M3 read repository/cursor/query-service providers while reusing the initialized M1 Neo4j infrastructure. No P3 DI change. |
+| MODIFY `backend/platform/config.py` | Add approved query defaults/hard-cap validation, dedicated cursor secret and TTL; no lifecycle/projection setting changes. |
+| MODIFY `.env.example` | Document only the new M3 query/cursor variables with a safe development placeholder and production rotation warning. |
+| CREATE `tests/p4/graph/test_query_contracts.py` | DTO/enums/defaults/maxima, canonical output and invalid input. |
+| CREATE `tests/p4/graph/test_cursor.py` | Determinism, tamper/expiry/scope/generation/fingerprint/size rejection and secret separation. |
+| CREATE `tests/p4/graph/test_query_service.py` | All seven semantics, generation double-read, caps, errors, truncation, empty behavior and telemetry using fakes. |
+| CREATE `tests/p4/graph/test_query_isolation.py` | Adversarial project/version/generation decoys and result-mapper fail-closed checks. |
+| CREATE `tests/p4/integration/test_graph_query_neo4j.py` | Real Community 5.26.33 schema/query plans, all operations, cursors, dense/cyclic graphs, timeouts and concurrent G1/G2 visibility. |
+| CREATE `tests/p4/integration/test_graph_query_postgres.py` | Real PostgreSQL COMPLETED/STALE resolution, unreadable states, pointer changes and exact-version behavior. |
+| CREATE `tests/p4/graph/test_query_performance.py` | Reproducible named fixtures and recorded duration/materialization/concurrency measurements; never a substitute for real-Neo4j evidence. |
+| DO NOT MODIFY `backend/api/**`, `express/**`, `frontend/**` | P4-D1 FastAPI transport belongs to M4; Express/frontend are outside M3 and the no-new-Express rule remains binding. |
+| DO NOT MODIFY M1/M2/P1-P3 graph, analysis, persistence, migration or schema files | M3 consumes their frozen records/contracts read-only. |
+
+### I. Three implementation batches and approval gates
+
+#### Batch 1 — P4-Q1 foundation, generation reads and secure cursors
+
+**Scope:** create contracts/errors, limit validation, exact-version generation
+reader, cursor codec/fingerprints, settings and fakes. Freeze exact DTO fields,
+operation semantics, cursor TTL/rotation and error vocabulary.
+
+**Tests:** contract/cursor/service-generation unit tests; real PostgreSQL state
+resolution for COMPLETED, STALE and unreadable states; production-secret
+validation; formatting, Ruff and MyPy on changed files.
+
+**Acceptance:** no M1 port/schema change; exact version/project required; only a
+verified active generation resolves; every cursor-bearing operation rejects an
+inactive generation without restarting; cursor tampering/expiry/scope changes
+fail closed; all defaults/maxima match the approved baseline.
+
+**Owner gate:** independently review and freeze P4-Q1 DTO names, 15-minute TTL,
+rotation behavior, neighborhood explicit-containment behavior, path
+non-containment policy and error codes before Batch 2.
+
+#### Batch 2 — Controlled query engine and independent real-Neo4j proof
+
+**Scope:** implement manifest preflight, node/window queries, shared bounded
+traversal, dependencies/dependents, containment, paths, strict mapping,
+whole-operation deadline/result caps, actual Neo4j cancellation/rollback and
+deterministic generation-bound keyset continuation.
+
+**Tests:** repository/service/isolation suites and real Neo4j for all kinds,
+directions, cycles, density, pagination, same-scope endpoints, READY-only
+visibility, cursor rejection after every operation's generation switch, timeout
+during execution/iteration/mapping/final pointer verification, proof that timed-
+out database work is cancelled, server outage and G1/G2 coexistence. Use
+`EXPLAIN` and representative `PROFILE` only in controlled test infrastructure
+to record scope-index use and anchor/traversal costs.
+
+**Acceptance:** all Cypher is fixed and parameterized; every match scopes
+project/version/generation and both endpoints; candidate/corrupt data cannot
+leak; node/edge/path limits and the single five-second end-to-end deadline
+cannot be bypassed; timed-out Neo4j/PostgreSQL work is terminated/rolled back;
+results are deterministic across repeats; no internal IDs are exposed.
+
+**Owner gate:** review real Community 5.26.33 query plans and named-hardware
+measurements (p50/p95/max duration, materialized records, memory and concurrent
+load). If stable-ID anchoring cannot meet the hard timeout, stop for explicit
+schema/index change control rather than modifying frozen M1/M2.
+
+#### Batch 3 — Composition, degradation and M3 freeze
+
+**Scope:** add P4-owned DI, query health, observer/logging, full generation
+double-read behavior, cross-module regression and final P4-Q1 handoff for M4.
+Do not register FastAPI routes; M4 consumes the frozen service/DTO/error
+contract.
+
+**Tests:** dependency lifecycle/driver closure, health degradation, correlation
+logging without sensitive fields, pointer switch during query, cursor after
+switch for every paginated operation, historical STALE read, deadline expiry at
+each operation phase, real PostgreSQL+Neo4j integration, full P4 and repository
+regression plus Black/Ruff/MyPy.
+
+**Acceptance:** Neo4j loss is explicit and isolated; G1 remains readable during
+G2 construction; a pointer switch never produces mixed output; M4 can compose
+all seven operations without redefining DTOs; no Express/frontend/API route or
+frozen source changes; execution evidence and deviations are recorded.
+
+**Owner gate:** independent M3 review and explicit P4-Q1/P4-H1 freeze approval
+before detailed M4 implementation planning begins.
+
+### J. Test, performance and security strategy
+
+- Fakes prove service decisions, cursor cryptography and failure mapping; they
+  cannot close Neo4j semantics, query plans, timeout or isolation gates.
+- Real PostgreSQL proves exact lifecycle resolution and pointer races. Real
+  Neo4j 5.26.33 proves labels/types, indexes, relationship direction, endpoint
+  scope, deterministic pages, dense/cyclic traversal and driver timeout.
+- Fixtures cover empty, isolated, mixed-kind, deep containment, cyclic, dense,
+  Unicode, multiple projects, multiple versions, coexisting G1/G2, corrupt
+  endpoints/scope and READY/BUILDING manifests.
+- Performance runs report rather than invent capacity claims. They exercise
+  default and maximum request bounds, dense fan-out, depth 5, 25 paths, many
+  concurrent readers and pointer switches. The immutable safety acceptance is
+  that one deadline stops the entire M3 operation by 5 seconds—including final
+  pointer verification—and server-side timeout plus cancellation/rollback ends
+  database work. No response exceeds 500 nodes, 1,000 edges or 25 paths;
+  tighter latency/SLO claims require owner approval from measured evidence.
+- Query plans must begin from exact scope/anchor predicates and never scan
+  unrelated projects/versions. Expensive risks are depth-5 variable paths,
+  high-degree `both` traversal, induced edges in dense windows, distinct/dedup
+  work and stable-ID anchor filtering without a dedicated index.
+- Cursor input size, filter cardinality, enum values and repeated parameters are
+  bounded before persistence access. Authorization occurs in M4 before M3, but
+  M3 still requires exact project/version and filters every retrieval, providing
+  defense in depth without duplicating RBAC authority.
+
+### K. Critical-question resolutions
+
+1. **Suitable M1 active-generation interface?** No. Evidence: public
+   `GraphProjectionRepository` has only resource-ID lookup; version lookup is
+   private. Use the M3 read-only adapter over frozen tables, not an M1 change.
+2. **Does M2 schema support all queries?** Functionally yes: scope properties,
+   endpoint keys, canonical kinds and scope indexes exist. Stable-ID anchoring
+   lacks its own index, so performance is a measured Batch 2 risk, not grounds
+   for an unapproved schema change.
+3. **Are fields projected?** Yes for public node/edge identity, kind, direction,
+   status, evidence references and safe metadata. Literal evidence/source text
+   is intentionally absent; M3 must not reconstruct or invent it.
+4. **Can cursors avoid M1/M2 changes?** Yes. All required binding inputs come
+   from the M3 generation read and request, and projection keys already provide
+   immutable keyset order.
+5. **Stable pagination?** Signed operation-specific positions over immutable
+   projection keys; no offset or Neo4j element ID. Window uses node bounds plus
+   edge position; traversals use depth/edge/neighbor position. Every paginated
+   operation signs the captured generation and rejects continuation after an
+   active-pointer change; none silently restarts.
+6. **Same verified generation guarantee?** PostgreSQL pointer capture, READY
+   manifest preflight, full scope predicates on nodes/edges/endpoints, strict
+   mapper validation and a PostgreSQL pointer re-read before return.
+7. **Pointer changes during execution?** Discard the captured result and return
+   `graph_generation_changed`; the caller restarts. G1 remains physically safe
+   during the request under the approved generation coexistence/cleanup model.
+8. **Shared versus separate queries?** Neighborhood/dependency/dependent/
+   containment share bounded traversal mechanics but retain separate policies;
+   window, node detail and paths require dedicated algorithms.
+9. **Expensive patterns?** Dense fan-out, bidirectional depth 5, path
+   enumeration, induced dense-window edges and unindexed stable-ID anchors.
+   Fixed templates, deadlines, caps, keyset ordering and real benchmarks bound
+   but do not erase those costs.
+10. **M4 dependency?** M4 must map P4-Q1 services/errors to delegated FastAPI
+    routes and freeze P4-D1 without redefining DTOs. No M3 dependency on new
+    Express functionality exists; browser transport remains the already-recorded
+    later owner gate.
+
+### L. M3 Definition of Done, risks and decisions
+
+M3 is complete only when all seven operations meet the frozen P4-Q1 contract;
+COMPLETED and exact-version STALE resources are readable; candidates and
+unreadable states are not; every returned record is from one READY active
+generation; scope isolation, direction and containment separation are proven;
+cursors and hard limits fail closed; real infrastructure/performance/concurrency
+evidence proves the single five-second deadline covers execution, iteration,
+mapping and final pointer verification and actually cancels/rolls back timed-out
+database work; no frozen/Express/API-route code changed; and independent review
+plus owner freeze approval is recorded.
+
+The owner approved the implementation baseline choices for: (a) exact P4-Q1
+DTO field names, (b) the 15-minute cursor TTL and invalidate-on-secret-rotation
+policy, (c) explicit-only `contains` in generic neighborhoods, (d)
+non-containment-only bounded paths, and (e) the safe error vocabulary/mappings.
+They remain subject to implementation evidence and the planned P4-Q1 freeze
+gate; plan approval does not mark the contract implemented or frozen. No other
+architectural decision blocks implementation. The dedicated stable-ID index is
+**not** proposed; it becomes a change-control question only if real Batch 2
+evidence proves the frozen schema inadequate.
 
 ## 8. Dependency Graph and Implementation Order
 
@@ -2456,11 +2989,18 @@ Approval is sequential and non-transitive:
    baseline. The preserved Section 7B roadmap remains reference material, not an
    automatically approved detailed plan for M2–M6.
 4. **Detailed M2 planning — OWNER APPROVED.** Section 7C and all three batches
-   are the approved implementation baseline. Detailed M3–M6 planning is not
-   started.
-5. **Implementation — M1 FROZEN / COMPLETE; M2 NOT STARTED.** The owner accepted
-   M1, P4-L1/P4-S1/P4-W1 and the verified manifest-label correction. No
-   instruction has started M2 or authorized M3–M6 implementation.
+   are the approved implementation baseline and are implemented, reviewed and
+   complete.
+5. **Detailed M3 planning — OWNER APPROVED.** Section 7D and its three batches
+   are the approved implementation baseline. M3 implementation is not started;
+   a separate implementation instruction is still required. Detailed M4–M6
+   planning is not started.
+6. **Implementation — M1 FROZEN / COMPLETE; M2 IMPLEMENTED / REVIEWED /
+   COMPLETE.** The owner accepted M1, P4-L1/P4-S1/P4-W1 and the manifest-label
+   correction, then identified the remediated M2 implementation as complete in
+   the 2026-11-12 M3 planning authorization. The M3 plan is now approved, while
+   P4-Q1 remains unimplemented and unfrozen until its implementation/review
+   gates are satisfied.
 
 | Work item | Status |
 |---|---|
@@ -2474,10 +3014,12 @@ Approval is sequential and non-transitive:
 | P4 M1 overall | **FROZEN / COMPLETE — MANIFEST-SCHEMA AMENDMENT ACCEPTED** |
 | P4-L1 / P4-S1 / P4-W1 | **FROZEN v1.0.0** |
 | P4 M2 detailed plan | **OWNER APPROVED — ALL THREE BATCHES** |
-| P4 M2 implementation | **NOT STARTED** |
+| P4 M2 implementation | **IMPLEMENTED / REVIEWED / COMPLETE** |
+| P4 M3 detailed plan | **OWNER APPROVED — ALL THREE BATCHES** |
+| P4 M3 implementation | **NOT STARTED** |
 | Preserved detailed roadmap | **REFERENCE PROPOSAL / NOT APPROVED AS DETAILED MODULE PLANS** |
-| Detailed M3–M6 planning | **NOT STARTED** |
-| M2–M6 implementation | **NOT STARTED** |
+| Detailed M4–M6 planning | **NOT STARTED** |
+| M4–M6 implementation | **NOT STARTED** |
 
 ### 12.1 M1 Batch 1 execution record
 
@@ -2762,6 +3304,10 @@ Approval is sequential and non-transitive:
 
 ### 12.8 Phase 4 Module 2 (M2) Batch 1 — Deterministic P4-P1 foundation implementation and verification
 
+> Historical collaborator execution record. The independent remediation and
+> verification record in Section 12.11 supersedes contradictory implementation,
+> benchmark, approval and verification claims below.
+
 - **Scope/status:** M2 Batch 1 is **IMPLEMENTED / VERIFIED / PENDING POST-BATCH-1 GATE APPROVAL**.
   Delivered the deterministic projection foundation, canonical serializers, pure SHA-256
   key generators, strict metadata allowlists with caps, semantic path validation, summary
@@ -2769,17 +3315,17 @@ Approval is sequential and non-transitive:
   bounded candidate operational settings.
 - **Components & Deliverables:**
   1. `backend/platform/graph/projection.py`: Pure, deterministic in-memory transformation
-     engine converting PostgreSQL Architecture Model v1 (`ArchitectureModelDocument`) into
+     engine converting PostgreSQL Architecture Model v1 (`ArchitectureDocument`) into
      immutable projection records (`ProjectedNodeRecord`, `ProjectedRelationshipRecord`,
      `ProjectionPlan`, `ProjectionSummaryDigests`). Implements pure key formulas:
-     - Node key: `sha256(f"proj:{project_id}:{architecture_version_id}:{generation_id}:node:{entity.canonical_id}".encode("utf-8")).hexdigest()`
-     - Edge key: `sha256(f"proj:{project_id}:{architecture_version_id}:{generation_id}:edge:{relationship.canonical_id}".encode("utf-8")).hexdigest()`
-     - Generation key: `sha256(f"proj:{project_id}:{architecture_version_id}:{generation_id}".encode("utf-8")).hexdigest()`
-     Reuses P3 public UUIDs (`entity.id`, `relationship.id`), enforces strict per-kind
-     metadata allowlists (`ArchitectureEntityKind`, `ArchitectureRelationshipKind`), caps
-     metadata at 16 KiB per record and 1 MiB per string property, validates `source_root`
+     - Node key: `sha256(project_id || NUL || architecture_version_id || NUL || generation_id || NUL || NFC(entity.logical_id))`.
+     - Edge key: `sha256(project_id || NUL || architecture_version_id || NUL || generation_id || NUL || NFC(relationship.logical_id))`.
+     - Generation key: `sha256(project_id || NUL || architecture_version_id || NUL || generation_id)`.
+     Derives stable P3 resource UUIDs from version and logical identity, enforces the
+     shared approved metadata allowlist, caps metadata at 16 KiB per record and 2 KiB
+     per string by default, validates `source_root`
      as repository-relative and HTTP route static paths as starting with `/`, asserts full
-     referential integrity (raising `ReferentialIntegrityError` if an edge references a
+     referential integrity (raising `ProjectionContractError` if an edge references a
      missing entity), summarizes unresolved references and conflicts into digests without
      projecting synthetic graph elements, and computes deterministic digests
      (`key_set_digest`, `endpoint_digest`, `payload_digest`, summary digests).
@@ -2826,7 +3372,9 @@ Approval is sequential and non-transitive:
   - Unresolved references and conflicts are captured exclusively in summary digests and never projected as Neo4j nodes or edges.
   - No generation activation or pointer switching in M2.
 - **Post-Batch-1 Gate:**
-  - Candidate operational limits (500 nodes/tx, 1,000 rels/tx, 30s timeout, 1 MiB property cap, 16 KiB metadata cap) and P4-P1 vocabulary accepted by owner for Batch 2 execution.
+  - Candidate operational limits and the complete P4-P1 vocabulary remain
+    **PENDING EXPLICIT OWNER APPROVAL**. Implementation values are measurement
+    candidates and are not frozen production defaults.
 
 ### 12.9 Phase 4 Module 2 (M2) Batch 2 — Bounded writer and independent verifier implementation and verification
 
@@ -2951,11 +3499,77 @@ Approval is sequential and non-transitive:
     (activation belongs solely to M1 `lifecycle.activate(receipt)`).
   - Unresolved references and conflicts are never projected as Neo4j nodes or edges.
 
+### 12.11 M2 independent review remediation and completion status
+
+- **Status (2026-11-12):** all confirmed code defects from the independent M2
+  review are remediated and focused verification passes. The subsequent owner
+  M3-planning directive records M2 as implemented, reviewed and complete and
+  authorizes planning to proceed against its current contracts. No M2 contract
+  or implementation is reopened by M3 planning.
+- **Production lifecycle correction:** the Celery graph worker now initializes
+  and schema-verifies one process-owned `Neo4jInfrastructure` instance before
+  advertising execution readiness, reuses its driver, and closes it on worker
+  shutdown. The FastAPI provider is request-scoped, initializes before yielding,
+  and always closes; it no longer caches an unhashable `Settings` argument.
+- **Retry correction:** Neo4j driver failures are translated to the typed
+  `ProjectionStoreUnavailableError`. Store and verifier availability failures
+  propagate to the executor and are recorded as transient
+  `graph_write_unavailable` lifecycle failures instead of terminal failed
+  verification receipts. Stale fences remain fenced no-ops.
+- **Manifest completeness correction:** `ProjectionManifest` now records
+  resource/attempt audit IDs, projection contract version, source/graph/projector
+  versions, five expected and actual counts, expected and actual key-set,
+  endpoint, payload, evidence-summary, unresolved-summary and conflict-summary
+  digests, plus lock/fence state. Reclaims validate immutable contract fields.
+  Independent read-back validates the expected assertions and confirms the
+  finalized READY manifest and actual summary assertions before returning a
+  successful frozen M1 `VerificationReceipt`; the receipt envelope is unchanged.
+- **Capacity correction:** the mapper now enforces the frozen 128 MiB canonical
+  source limit, propagates configured metadata key/string/list/record limits,
+  enforces projected-property limits, and passes configured node/relationship
+  batch sizes to the store. Exceeding a limit fails closed without truncation.
+- **Vocabulary and hygiene:** missing sources use
+  `projection_source_missing`; unexpected mapper failures use
+  `graph_internal_error`; trailing-whitespace defects in the systemd/fixture
+  files were removed.
+- **Reproducible reference measurement:** the committed reference workload in
+  `tests/p4/graph/test_projection_benchmark.py` constructs 2,500 entities and
+  5,000 relationships. On the current Python 3.14 development environment it
+  produced a 2,033,635-byte canonical source and completed deterministic
+  transformation in **1.1354 seconds**. This remains the recorded measurement,
+  not a general production throughput claim.
+- **Verified commands/results:**
+  - `pytest tests/p4/graph -q --tb=short`: **159 tests covered** by the final
+    full P4 run, including the reproducible workload and worker lifecycle
+    regression.
+  - Focused real PostgreSQL/Neo4j integration suite (lifecycle, projection store,
+    and complete pipeline): **10 passed in 5.39s**.
+  - Full `pytest tests/p4 -q --tb=short` with local PostgreSQL/Neo4j access:
+    **169 passed, 5 skipped in 12.05s**.
+  - Full repository `pytest -q --tb=short`: **919 passed, 8 skipped, 1
+    failed in 472.61s**. The sole failure is the frozen P3 benchmark
+    `test_m2_benchmark_synthetic_and_boundary_files`, whose process-wide
+    `ru_maxrss` was 559.36 MiB against its 512 MiB assertion. An isolated rerun
+    produced the same 559.36 MiB result. No frozen P3 code/test was altered;
+    this pre-existing/environment-sensitive memory gate remains separately
+    unresolved and is not caused by an M2 projection assertion.
+  - `ruff check` for graph, worker and changed P4 tests: **passed**.
+  - `mypy backend/platform/graph backend/worker/graph_tasks.py`: **passed, 16
+    source files**.
+- **Boundaries preserved:** no P1-P3 frozen implementation or contract, Express,
+  frontend, PostgreSQL M1 lifecycle schema, activation pointer, queue payload or
+  frozen VerificationReceipt field was changed. M1 alone activates a verified
+  candidate.
+
 ## 13. Current Handoff
 
-The approved architecture, frozen M1 and contracts, verified M2 (Batches 1, 2, and 3) implementations,
-preserved roadmap, phase DoD, risks and verified execution records are recorded in this sole rolling handoff.
+The approved architecture, frozen M1 contracts, completed M2 implementation,
+approved detailed M3 plan, preserved roadmap, phase DoD, risks and verified
+execution records are recorded in this sole rolling handoff.
 
-**Next action:** present the M2 Batch 3 completion report to the owner. Module 2 (Architecture Graph
-Projection Engine) is fully implemented and verified. Proceed to Module 3 (Graph Read APIs & Express
-Integration Gateway) upon instruction. Do not start detailed M3–M6 planning without explicit instruction.
+**Current status:** M1 is frozen; M2 is implemented, reviewed and complete; M3
+planning and all three batches are owner-approved; M3 implementation has not
+started; detailed M4–M6 planning has not started.
+
+**Next action:** wait for a separate explicit instruction to begin M3 Batch 1.
+Do not start any M3 batch or detailed M4–M6 planning from plan approval alone.

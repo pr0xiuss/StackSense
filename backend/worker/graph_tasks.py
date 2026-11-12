@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from functools import lru_cache
 from uuid import UUID, uuid4
 
-from celery import Task
+from celery import Task, signals
 from sqlalchemy.orm import Session
 
 from backend.platform.config import Settings, get_settings
 from backend.platform.dependency_injection import get_database_engine
 from backend.platform.graph.executor import ProjectionExecutor
 from backend.platform.graph.lifecycle import GraphProjectionReconciler
-from backend.platform.graph.neo4j import Neo4jInfrastructure
+from backend.platform.graph.neo4j import GraphInfrastructureError, Neo4jInfrastructure
 from backend.platform.graph.persistence import SqlAlchemyGraphProjectionRepository
 from backend.platform.graph.projection_store import Neo4jProjectionStore
 from backend.platform.graph.queue import (
@@ -62,6 +63,12 @@ def graph_runtime_heartbeat_task(task: Task, capability: str) -> dict[str, bool]
             settings.graph_projection_dispatch_enabled
             and GRAPH_EXECUTION_TASK_NAME in app.tasks
         )
+        if ready:
+            try:
+                _get_task_neo4j_infrastructure()
+            except GraphInfrastructureError:
+                logger.exception("Graph projection infrastructure is not ready")
+                ready = False
     else:
         raise ValueError("unsupported graph heartbeat capability")
     with Session(get_database_engine()) as session:
@@ -116,7 +123,7 @@ def get_task_projection_executor(
 ) -> ProjectionExecutor:
     """Instantiate a production projection executor."""
     configured = settings or get_settings()
-    infra = Neo4jInfrastructure(configured)
+    infra = _get_task_neo4j_infrastructure()
     store = Neo4jProjectionStore(infra.driver, configured)
     verifier = GraphVerifier(store=store)
     return ProjectionExecutor(
@@ -124,6 +131,23 @@ def get_task_projection_executor(
         store=store,
         verifier=verifier,
     )
+
+
+@lru_cache(maxsize=1)
+def _get_task_neo4j_infrastructure() -> Neo4jInfrastructure:
+    """Initialize one schema-verified Neo4j driver per Celery worker process."""
+    infrastructure = Neo4jInfrastructure(get_settings())
+    infrastructure.initialize()
+    return infrastructure
+
+
+@signals.worker_shutdown.connect
+@signals.worker_process_shutdown.connect
+def _close_task_neo4j_infrastructure(**_: object) -> None:
+    """Close the process-owned Neo4j driver during graceful worker shutdown."""
+    if _get_task_neo4j_infrastructure.cache_info().currsize:
+        _get_task_neo4j_infrastructure().close()
+        _get_task_neo4j_infrastructure.cache_clear()
 
 
 @celery_app.task(

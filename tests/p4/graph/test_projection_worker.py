@@ -8,7 +8,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from neo4j.exceptions import DriverError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -24,6 +23,7 @@ from backend.platform.graph.executor import (
 from backend.platform.graph.lifecycle import GraphProjectionLifecycle
 from backend.platform.graph.model import (
     GRAPH_SCHEMA_VERSION,
+    PROJECTION_CONTRACT_VERSION,
     PROJECTOR_VERSION,
     SOURCE_CONTRACT_VERSION,
     ActivationDisposition,
@@ -44,6 +44,7 @@ from backend.platform.graph.projection import (
     compute_generation_key,
 )
 from backend.platform.graph.projection_store import (
+    ProjectionStoreUnavailableError,
     StaleFenceError,
     compute_fence_digest,
 )
@@ -58,6 +59,7 @@ from backend.platform.graph.source import (
 )
 from backend.platform.graph.verification import GraphVerifier
 from backend.platform.projects.infra.base import Base
+from backend.worker import graph_tasks
 from backend.worker.celery_app import celery_app
 from backend.worker.graph_tasks import (
     cleanup_graph_generation_task,
@@ -106,18 +108,26 @@ class InMemoryProjectionStore:
         project_id: UUID,
         architecture_version_id: UUID,
         generation_id: UUID,
+        resource_id: UUID,
+        attempt_id: UUID,
         lease_token: str,
         source_content_digest: str,
         source_schema_version: str = SOURCE_CONTRACT_VERSION,
         graph_schema_version: str = GRAPH_SCHEMA_VERSION,
         projector_version: str = PROJECTOR_VERSION,
+        projection_contract_version: str = PROJECTION_CONTRACT_VERSION,
         expected_counts: ProjectionCounts,
         expected_key_set_digest: str,
         expected_endpoint_digest: str,
         expected_payload_digest: str,
+        expected_evidence_summary_digest: str,
+        expected_unresolved_summary_digest: str,
+        expected_conflict_summary_digest: str,
     ) -> None:
         if self.fail_write_with_driver_error:
-            raise DriverError("Simulated Neo4j driver connection error")
+            raise ProjectionStoreUnavailableError(
+                "Simulated Neo4j driver connection error"
+            )
         gen_key = compute_generation_key(
             project_id, architecture_version_id, generation_id
         )
@@ -129,6 +139,8 @@ class InMemoryProjectionStore:
             "project_id": str(project_id).lower(),
             "architecture_version_id": str(architecture_version_id).lower(),
             "generation_id": str(generation_id).lower(),
+            "resource_id": str(resource_id).lower(),
+            "attempt_id": str(attempt_id).lower(),
             "state": MANIFEST_STATE_BUILDING,
             "fence_digest": self.claimed_fence_digest,
             "lock_epoch": self.lock_epoch,
@@ -136,6 +148,7 @@ class InMemoryProjectionStore:
             "source_schema_version": source_schema_version,
             "graph_schema_version": graph_schema_version,
             "projector_version": projector_version,
+            "projection_contract_version": projection_contract_version,
             "expected_entities_count": expected_counts.entities,
             "expected_relationships_count": expected_counts.relationships,
             "expected_evidence_count": expected_counts.evidence,
@@ -144,6 +157,9 @@ class InMemoryProjectionStore:
             "expected_key_set_digest": expected_key_set_digest,
             "expected_endpoint_digest": expected_endpoint_digest,
             "expected_payload_digest": expected_payload_digest,
+            "expected_evidence_summary_digest": expected_evidence_summary_digest,
+            "expected_unresolved_summary_digest": expected_unresolved_summary_digest,
+            "expected_conflict_summary_digest": expected_conflict_summary_digest,
         }
 
     def reset_candidate(
@@ -171,10 +187,14 @@ class InMemoryProjectionStore:
         generation_id: UUID,
         lease_token: str,
         nodes: list[ProjectedNodeRecord],
+        batch_size: int = 500,
     ) -> int:
+        del batch_size
         self._check_fence(lease_token)
         if self.fail_write_with_driver_error:
-            raise DriverError("Simulated Neo4j driver connection error")
+            raise ProjectionStoreUnavailableError(
+                "Simulated Neo4j driver connection error"
+            )
         for node in nodes:
             self.nodes[node.projection_key] = node
         return len(nodes)
@@ -187,10 +207,14 @@ class InMemoryProjectionStore:
         generation_id: UUID,
         lease_token: str,
         relationships: list[ProjectedRelationshipRecord],
+        batch_size: int = 1000,
     ) -> int:
+        del batch_size
         self._check_fence(lease_token)
         if self.fail_write_with_driver_error:
-            raise DriverError("Simulated Neo4j driver connection error")
+            raise ProjectionStoreUnavailableError(
+                "Simulated Neo4j driver connection error"
+            )
         for rel in relationships:
             self.relationships[rel.projection_key] = rel
         return len(relationships)
@@ -206,6 +230,9 @@ class InMemoryProjectionStore:
         actual_key_set_digest: str,
         actual_endpoint_digest: str,
         actual_payload_digest: str,
+        actual_evidence_summary_digest: str,
+        actual_unresolved_summary_digest: str,
+        actual_conflict_summary_digest: str,
     ) -> None:
         self._check_fence(lease_token)
         assert self.manifest is not None
@@ -219,6 +246,11 @@ class InMemoryProjectionStore:
         self.manifest["actual_key_set_digest"] = actual_key_set_digest
         self.manifest["actual_endpoint_digest"] = actual_endpoint_digest
         self.manifest["actual_payload_digest"] = actual_payload_digest
+        self.manifest["actual_evidence_summary_digest"] = actual_evidence_summary_digest
+        self.manifest["actual_unresolved_summary_digest"] = (
+            actual_unresolved_summary_digest
+        )
+        self.manifest["actual_conflict_summary_digest"] = actual_conflict_summary_digest
 
     def get_manifest(self, generation_key: str) -> dict[str, Any] | None:
         if self.manifest and self.manifest["generation_key"] == generation_key:
@@ -429,7 +461,6 @@ def test_executor_successful_projection(sqlite_engine: Any, test_env: Any) -> No
     try:
 
         class _PatchedSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -500,7 +531,6 @@ def test_executor_source_document_missing(sqlite_engine: Any, test_env: Any) -> 
     try:
 
         class _MissingSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -511,7 +541,7 @@ def test_executor_source_document_missing(sqlite_engine: Any, test_env: Any) -> 
 
         result = executor.execute(payload, worker_id="worker-test")
         assert result.status == "failed"
-        assert result.failure_code == "source_document_not_found"
+        assert result.failure_code == "projection_source_missing"
 
         # Check attempt marked FAILED in PG
         with Session(sqlite_engine) as session:
@@ -519,7 +549,7 @@ def test_executor_source_document_missing(sqlite_engine: Any, test_env: Any) -> 
             att = repo.get_attempt(payload.attempt_id)
             assert att is not None
             assert att.state == ProjectionAttemptState.FAILED
-            assert att.failure_code == "source_document_not_found"
+            assert att.failure_code == "projection_source_missing"
     finally:
         exec_module.SqlAlchemyPublishedArchitectureSource = orig_source
 
@@ -540,7 +570,6 @@ def test_executor_source_digest_mismatch(sqlite_engine: Any, test_env: Any) -> N
     try:
 
         class _PatchedSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -572,7 +601,6 @@ def test_executor_stale_fence_returns_fenced(sqlite_engine: Any, test_env: Any) 
     try:
 
         class _PatchedSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -609,7 +637,6 @@ def test_executor_neo4j_transient_error_records_retrying(
     try:
 
         class _PatchedSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -646,7 +673,6 @@ def test_executor_verification_failure_records_failed_receipt(
     try:
 
         class _PatchedSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -836,7 +862,6 @@ def test_celery_execute_graph_projection_task_success() -> None:
     )
 
     class _MockExecutor:
-
         def execute(self, payload: Any, worker_id: str) -> Any:
             assert payload.generation_id == gen_id
             return fake_result
@@ -859,6 +884,36 @@ def test_celery_execute_graph_projection_task_success() -> None:
     assert summary["relationships_written"] == 5
 
 
+def test_task_executor_initializes_reuses_and_closes_neo4j(monkeypatch: Any) -> None:
+    settings = Settings()
+    events: list[str] = []
+
+    class FakeInfrastructure:
+        def __init__(self, configured: Settings) -> None:
+            assert configured is settings
+            self.driver = object()
+
+        def initialize(self) -> None:
+            events.append("initialize")
+
+        def close(self) -> None:
+            events.append("close")
+
+    graph_tasks._get_task_neo4j_infrastructure.cache_clear()
+    monkeypatch.setattr(graph_tasks, "get_settings", lambda: settings)
+    monkeypatch.setattr(graph_tasks, "Neo4jInfrastructure", FakeInfrastructure)
+
+    first = graph_tasks.get_task_projection_executor(settings)
+    second = graph_tasks.get_task_projection_executor(settings)
+
+    assert isinstance(first, ProjectionExecutor)
+    assert isinstance(second, ProjectionExecutor)
+    assert events == ["initialize"]
+
+    graph_tasks._close_task_neo4j_infrastructure()
+    assert events == ["initialize", "close"]
+
+
 def test_celery_cleanup_graph_generation_task_success() -> None:
     gen_id = uuid4()
     fake_result = CleanupResult(
@@ -868,7 +923,6 @@ def test_celery_cleanup_graph_generation_task_success() -> None:
     )
 
     class _MockExecutor:
-
         def cleanup_generation(self, **kwargs: Any) -> Any:
             assert kwargs["generation_id"] == gen_id
             return fake_result

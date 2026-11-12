@@ -58,6 +58,7 @@ from backend.platform.graph.projection_store import (
     ProjectionStoreError,
     ProjectionStoreScopeError,
     ProjectionStoreStateError,
+    ProjectionStoreUnavailableError,
     StaleFenceError,
     compute_fence_digest,
 )
@@ -120,6 +121,7 @@ __all__ = [
     "ProjectionSourceMismatchError",
     "ProjectionStore",
     "ProjectionStoreError",
+    "ProjectionStoreUnavailableError",
     "ProjectionStoreScopeError",
     "ProjectionStoreStateError",
     "ProjectionSummaryDigests",
