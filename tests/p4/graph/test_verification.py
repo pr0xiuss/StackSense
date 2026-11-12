@@ -9,6 +9,7 @@ import pytest
 
 from backend.platform.graph.model import (
     GRAPH_SCHEMA_VERSION,
+    PROJECTION_CONTRACT_VERSION,
     PROJECTOR_VERSION,
     SOURCE_CONTRACT_VERSION,
     ProjectionCounts,
@@ -20,6 +21,7 @@ from backend.platform.graph.projection import (
     build_projection_plan,
 )
 from backend.platform.graph.projection_store import (
+    ProjectionStoreUnavailableError,
     StaleFenceError,
     compute_fence_digest,
 )
@@ -30,7 +32,6 @@ from backend.platform.graph.verification import (
     GRAPH_VERIFICATION_KEY_MISMATCH,
     GRAPH_VERIFICATION_PAYLOAD_MISMATCH,
     GRAPH_VERIFICATION_SCOPE_MISMATCH,
-    GRAPH_WRITE_UNAVAILABLE,
     PROJECTION_CONTRACT_MISMATCH,
     PROJECTION_SOURCE_MISMATCH,
     GraphVerifier,
@@ -55,6 +56,7 @@ class FakeProjectionStore:
         self.manifest_source_schema_version = SOURCE_CONTRACT_VERSION
         self.manifest_graph_schema_version = GRAPH_SCHEMA_VERSION
         self.manifest_projector_version = PROJECTOR_VERSION
+        self.manifest_projection_contract_version = PROJECTION_CONTRACT_VERSION
         self.manifest_project_id = str(plan.project_id).lower()
         self.manifest_architecture_version_id = str(
             plan.architecture_version_id
@@ -70,6 +72,14 @@ class FakeProjectionStore:
         self.manifest_expected_key_set_digest = plan.key_set_digest
         self.manifest_expected_endpoint_digest = plan.endpoint_digest
         self.manifest_expected_payload_digest = plan.payload_digest
+        self.manifest_expected_evidence_summary_digest = plan.evidence_summary_digest
+        self.manifest_expected_unresolved_summary_digest = (
+            plan.unresolved_summary_digest
+        )
+        self.manifest_expected_conflict_summary_digest = plan.conflict_summary_digest
+        self.manifest_actual_evidence_summary_digest: str | None = None
+        self.manifest_actual_unresolved_summary_digest: str | None = None
+        self.manifest_actual_conflict_summary_digest: str | None = None
 
         # Graph node and edge data (sorted copies from plan)
         self.nodes_data: list[dict[str, Any]] = [
@@ -110,6 +120,7 @@ class FakeProjectionStore:
             "source_schema_version": self.manifest_source_schema_version,
             "graph_schema_version": self.manifest_graph_schema_version,
             "projector_version": self.manifest_projector_version,
+            "projection_contract_version": self.manifest_projection_contract_version,
             "expected_entities_count": self.manifest_expected_entities_count,
             "expected_relationships_count": self.manifest_expected_relationships_count,
             "expected_evidence_count": self.manifest_expected_evidence_count,
@@ -118,6 +129,24 @@ class FakeProjectionStore:
             "expected_key_set_digest": self.manifest_expected_key_set_digest,
             "expected_endpoint_digest": self.manifest_expected_endpoint_digest,
             "expected_payload_digest": self.manifest_expected_payload_digest,
+            "expected_evidence_summary_digest": (
+                self.manifest_expected_evidence_summary_digest
+            ),
+            "expected_unresolved_summary_digest": (
+                self.manifest_expected_unresolved_summary_digest
+            ),
+            "expected_conflict_summary_digest": (
+                self.manifest_expected_conflict_summary_digest
+            ),
+            "actual_evidence_summary_digest": (
+                self.manifest_actual_evidence_summary_digest
+            ),
+            "actual_unresolved_summary_digest": (
+                self.manifest_actual_unresolved_summary_digest
+            ),
+            "actual_conflict_summary_digest": (
+                self.manifest_actual_conflict_summary_digest
+            ),
         }
 
     def count_nodes(
@@ -203,11 +232,19 @@ class FakeProjectionStore:
         actual_key_set_digest: str,
         actual_endpoint_digest: str,
         actual_payload_digest: str,
+        actual_evidence_summary_digest: str,
+        actual_unresolved_summary_digest: str,
+        actual_conflict_summary_digest: str,
     ) -> None:
         if self.fail_finalize_stale:
             raise StaleFenceError("Finalize fence mismatch")
         self.manifest_state = MANIFEST_STATE_READY
         self.fence_digest = None
+        self.manifest_actual_evidence_summary_digest = actual_evidence_summary_digest
+        self.manifest_actual_unresolved_summary_digest = (
+            actual_unresolved_summary_digest
+        )
+        self.manifest_actual_conflict_summary_digest = actual_conflict_summary_digest
 
     # Dummy implementations for Protocol completeness
     def claim_candidate(self, **kwargs: Any) -> None:
@@ -558,10 +595,23 @@ def test_verification_fails_if_manifest_finalize_loses_fence(
     store.fail_finalize_stale = True
     verifier = GraphVerifier(store=store)
 
-    result = verifier.verify_candidate(plan=plan, lease_token="valid-token")
-    assert result.verified is False
-    assert result.failure_code == GRAPH_WRITE_UNAVAILABLE
-    assert "finalization failed" in str(result.failure_message).lower()
+    with pytest.raises(StaleFenceError, match="fence mismatch"):
+        verifier.verify_candidate(plan=plan, lease_token="valid-token")
+
+
+def test_verification_propagates_transient_store_unavailability(
+    plan: ProjectionPlan,
+) -> None:
+    store = FakeProjectionStore(plan)
+
+    def unavailable(_: str) -> dict[str, Any] | None:
+        raise ProjectionStoreUnavailableError("Neo4j unavailable")
+
+    store.get_manifest = unavailable  # type: ignore[method-assign]
+    verifier = GraphVerifier(store=store)
+
+    with pytest.raises(ProjectionStoreUnavailableError, match="unavailable"):
+        verifier.verify_candidate(plan=plan, lease_token="valid-token")
 
 
 def test_failed_receipt_summaries_match_is_false(plan: ProjectionPlan) -> None:

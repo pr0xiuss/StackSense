@@ -1,7 +1,7 @@
 """P4-owned graph infrastructure composition providers."""
 
+from collections.abc import Generator
 from datetime import timedelta
-from functools import lru_cache
 
 from fastapi import Depends
 from sqlalchemy import select
@@ -101,12 +101,16 @@ def get_graph_projection_lifecycle(
     return GraphProjectionLifecycle(repository)
 
 
-@lru_cache
 def get_neo4j_infrastructure(
     settings: Settings = Depends(get_application_settings),
-) -> Neo4jInfrastructure:
-    """Provide cached Neo4j infrastructure adapter."""
-    return Neo4jInfrastructure(settings)
+) -> Generator[Neo4jInfrastructure]:
+    """Provide an initialized request-scoped adapter and always close its driver."""
+    infrastructure = Neo4jInfrastructure(settings)
+    infrastructure.initialize()
+    try:
+        yield infrastructure
+    finally:
+        infrastructure.close()
 
 
 def get_projection_store(

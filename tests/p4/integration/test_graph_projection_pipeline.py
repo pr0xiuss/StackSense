@@ -210,7 +210,6 @@ def test_real_pipeline_full_execution_and_m1_activation(
     try:
 
         class _RealTestSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -301,7 +300,6 @@ def test_real_pipeline_failed_rebuild_preserves_prior_active_generation(
     try:
 
         class _RealTestSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -424,7 +422,6 @@ def test_real_pipeline_cleanup_eligible_generation(
     try:
 
         class _RealTestSource:
-
             def __init__(self, s: Any) -> None:
                 pass
 
@@ -438,10 +435,11 @@ def test_real_pipeline_cleanup_eligible_generation(
 
         # Create obsolete/failed generation G2 in Neo4j and PG
         g2_id = uuid4()
+        g2_attempt_id = uuid4()
         with Session(engine) as session:
             session.add(
                 GraphProjectionAttemptModel(
-                    id=uuid4(),
+                    id=g2_attempt_id,
                     resource_id=payload.projection_id,
                     generation_id=g2_id,
                     attempt_number=2,
@@ -472,12 +470,17 @@ def test_real_pipeline_cleanup_eligible_generation(
             project_id=project_id,
             architecture_version_id=version_id,
             generation_id=g2_id,
+            resource_id=payload.projection_id,
+            attempt_id=g2_attempt_id,
             lease_token="temp-token",
             source_content_digest=plan2.source_content_digest,
             expected_counts=plan2.expected_counts,
             expected_key_set_digest=plan2.key_set_digest,
             expected_endpoint_digest=plan2.endpoint_digest,
             expected_payload_digest=plan2.payload_digest,
+            expected_evidence_summary_digest=plan2.evidence_summary_digest,
+            expected_unresolved_summary_digest=plan2.unresolved_summary_digest,
+            expected_conflict_summary_digest=plan2.conflict_summary_digest,
         )
         store.write_nodes(
             project_id=project_id,

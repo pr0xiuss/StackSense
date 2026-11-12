@@ -528,6 +528,43 @@ def test_frozen_five_count_verification() -> None:
     assert exc.value.code == "projection_source_mismatch"
 
 
+def test_projection_plan_enforces_source_payload_limit() -> None:
+    doc = small_document()
+
+    with pytest.raises(ProjectionCapacityExceededError) as exc:
+        build_projection_plan(
+            doc,
+            generation_id=DEFAULT_GENERATION_ID,
+            max_source_bytes=doc.canonical_payload_size - 1,
+        )
+
+    assert exc.value.code == "projection_capacity_exceeded"
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit_value"),
+    (
+        ("max_meta_key_bytes", 4),
+        ("max_meta_string_bytes", 3),
+        ("max_meta_list_items", 1),
+        ("max_meta_record_bytes", 8),
+    ),
+)
+def test_projection_plan_propagates_metadata_limits(
+    limit_name: str, limit_value: int
+) -> None:
+    doc = small_document()
+
+    with pytest.raises(ProjectionCapacityExceededError) as exc:
+        build_projection_plan(
+            doc,
+            generation_id=DEFAULT_GENERATION_ID,
+            **{limit_name: limit_value},
+        )
+
+    assert exc.value.code == "projection_capacity_exceeded"
+
+
 def test_golden_digests_stability() -> None:
     """Golden vectors to guarantee no regressions in digest algorithms."""
     doc = small_document()

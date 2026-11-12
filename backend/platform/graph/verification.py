@@ -16,6 +16,7 @@ from backend.platform.graph.model import (
 )
 from backend.platform.graph.projection import (
     MANIFEST_STATE_BUILDING,
+    MANIFEST_STATE_READY,
     ProjectedNodeRecord,
     ProjectedRelationshipRecord,
     ProjectionPlan,
@@ -26,6 +27,7 @@ from backend.platform.graph.projection import (
 from backend.platform.graph.projection_store import (
     ProjectionStore,
     ProjectionStoreError,
+    ProjectionStoreUnavailableError,
     StaleFenceError,
     compute_fence_digest,
 )
@@ -119,6 +121,9 @@ class GraphVerifier:
         *,
         plan: ProjectionPlan,
         lease_token: str,
+        resource_id: UUID | None = None,
+        attempt_id: UUID | None = None,
+        projection_contract_version: str = PROJECTION_CONTRACT_VERSION,
         source_content_digest: str | None = None,
         source_schema_version: str = SOURCE_CONTRACT_VERSION,
         graph_schema_version: str = GRAPH_SCHEMA_VERSION,
@@ -134,6 +139,8 @@ class GraphVerifier:
         # 1. Inspect ProjectionManifest
         try:
             manifest = self._store.get_manifest(plan.generation_key)
+        except ProjectionStoreUnavailableError:
+            raise
         except ProjectionStoreError as err:
             return self._fail(
                 plan,
@@ -192,6 +199,31 @@ class GraphVerifier:
                 message="ProjectionManifest scope fields mismatch",
             )
 
+        if (
+            resource_id is not None
+            and manifest.get("resource_id") != str(resource_id).lower()
+        ):
+            return self._fail(
+                plan,
+                code=PROJECTION_CONTRACT_MISMATCH,
+                message="Manifest resource_id mismatch",
+            )
+        if (
+            attempt_id is not None
+            and manifest.get("attempt_id") != str(attempt_id).lower()
+        ):
+            return self._fail(
+                plan,
+                code=PROJECTION_CONTRACT_MISMATCH,
+                message="Manifest attempt_id mismatch",
+            )
+        if manifest.get("projection_contract_version") != projection_contract_version:
+            return self._fail(
+                plan,
+                code=PROJECTION_CONTRACT_MISMATCH,
+                message="Manifest projection_contract_version mismatch",
+            )
+
         # Validate versions and source digest
         if manifest.get("source_schema_version") != source_schema_version:
             return self._fail(
@@ -219,6 +251,20 @@ class GraphVerifier:
                 plan,
                 code=PROJECTION_SOURCE_MISMATCH,
                 message="Manifest source_content_digest mismatch",
+            )
+
+        if (
+            manifest.get("expected_evidence_summary_digest")
+            != plan.evidence_summary_digest
+            or manifest.get("expected_unresolved_summary_digest")
+            != plan.unresolved_summary_digest
+            or manifest.get("expected_conflict_summary_digest")
+            != plan.conflict_summary_digest
+        ):
+            return self._fail(
+                plan,
+                code=PROJECTION_CONTRACT_MISMATCH,
+                message="Manifest expected summary digests mismatch source plan",
             )
 
         # Validate expected counts in manifest
@@ -262,6 +308,8 @@ class GraphVerifier:
                 architecture_version_id=plan.architecture_version_id,
                 generation_id=plan.generation_id,
             )
+        except ProjectionStoreUnavailableError:
+            raise
         except ProjectionStoreError as err:
             return self._fail(
                 plan,
@@ -308,6 +356,8 @@ class GraphVerifier:
                     cursor=node_cursor,
                     page_size=1000,
                 )
+            except ProjectionStoreUnavailableError:
+                raise
             except ProjectionStoreError as err:
                 return self._fail(
                     plan,
@@ -392,6 +442,8 @@ class GraphVerifier:
                 architecture_version_id=plan.architecture_version_id,
                 generation_id=plan.generation_id,
             )
+        except ProjectionStoreUnavailableError:
+            raise
         except ProjectionStoreError as err:
             return self._fail(
                 plan,
@@ -439,6 +491,8 @@ class GraphVerifier:
                     cursor=rel_cursor,
                     page_size=1000,
                 )
+            except ProjectionStoreUnavailableError:
+                raise
             except ProjectionStoreError as err:
                 return self._fail(
                     plan,
@@ -612,18 +666,43 @@ class GraphVerifier:
                 actual_key_set_digest=actual_key_set_digest,
                 actual_endpoint_digest=actual_endpoint_digest,
                 actual_payload_digest=actual_payload_digest,
+                actual_evidence_summary_digest=plan.evidence_summary_digest,
+                actual_unresolved_summary_digest=plan.unresolved_summary_digest,
+                actual_conflict_summary_digest=plan.conflict_summary_digest,
             )
         except StaleFenceError:
-            return self._fail(
-                plan,
-                code=GRAPH_WRITE_UNAVAILABLE,
-                message="Manifest finalization failed: fence mismatch or lost",
-            )
+            raise
+        except ProjectionStoreUnavailableError:
+            raise
         except ProjectionStoreError as err:
             return self._fail(
                 plan,
                 code=GRAPH_WRITE_UNAVAILABLE,
                 message=f"Manifest finalization failed: {err}",
+            )
+
+        finalized_manifest = self._store.get_manifest(plan.generation_key)
+        if (
+            finalized_manifest is None
+            or finalized_manifest.get("state") != MANIFEST_STATE_READY
+        ):
+            return self._fail(
+                plan,
+                code=GRAPH_VERIFICATION_SCOPE_MISMATCH,
+                message="Finalized ProjectionManifest is not READY",
+            )
+        if (
+            finalized_manifest.get("actual_evidence_summary_digest")
+            != plan.evidence_summary_digest
+            or finalized_manifest.get("actual_unresolved_summary_digest")
+            != plan.unresolved_summary_digest
+            or finalized_manifest.get("actual_conflict_summary_digest")
+            != plan.conflict_summary_digest
+        ):
+            return self._fail(
+                plan,
+                code=GRAPH_VERIFICATION_PAYLOAD_MISMATCH,
+                message="Finalized ProjectionManifest summary digests mismatch",
             )
 
         # All checks passed successfully!

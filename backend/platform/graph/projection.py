@@ -807,6 +807,11 @@ def build_projection_plan(
     *,
     generation_id: UUID,
     expected_counts: ProjectionCounts | None = None,
+    max_source_bytes: int = MAX_SERIALIZED_SOURCE_BYTES,
+    max_meta_key_bytes: int = MAX_META_KEY_BYTES,
+    max_meta_string_bytes: int = MAX_META_STRING_BYTES,
+    max_meta_list_items: int = MAX_META_LIST_ITEMS,
+    max_meta_record_bytes: int = MAX_META_RECORD_BYTES,
     max_projected_properties_bytes: int = MAX_PROJECTED_PROPERTIES_BYTES,
 ) -> ProjectionPlan:
     """Build immutable projection plan from an ArchitectureDocument."""
@@ -814,6 +819,12 @@ def build_projection_plan(
         raise ProjectionContractError(
             f"Unsupported schema version: {doc.architecture_schema_version}",
             code="graph_schema_incompatible",
+        )
+
+    if doc.canonical_payload_size > max_source_bytes:
+        raise ProjectionCapacityExceededError(
+            "Architecture document canonical payload exceeds maximum byte capacity",
+            code="projection_capacity_exceeded",
         )
 
     # Recheck frozen P3 hard maxima
@@ -891,7 +902,13 @@ def build_projection_plan(
 
         stable_entity_id = architecture_resource_id(version_id, "entity", logical_id)
 
-        meta_props = normalize_metadata(entity.metadata)
+        meta_props = normalize_metadata(
+            entity.metadata,
+            max_key_bytes=max_meta_key_bytes,
+            max_string_bytes=max_meta_string_bytes,
+            max_list_items=max_meta_list_items,
+            max_record_bytes=max_meta_record_bytes,
+        )
 
         canonical_kind_val = (
             entity.kind.value
@@ -1013,7 +1030,13 @@ def build_projection_plan(
         src_node = entity_by_logical_id[src_id]
         tgt_node = entity_by_logical_id[tgt_id]
 
-        meta_props = normalize_metadata(rel.metadata)
+        meta_props = normalize_metadata(
+            rel.metadata,
+            max_key_bytes=max_meta_key_bytes,
+            max_string_bytes=max_meta_string_bytes,
+            max_list_items=max_meta_list_items,
+            max_record_bytes=max_meta_record_bytes,
+        )
 
         canonical_kind_val = (
             rel.kind.value

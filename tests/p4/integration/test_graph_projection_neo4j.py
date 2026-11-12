@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import SecretStr
@@ -17,6 +17,7 @@ from backend.platform.graph.neo4j import Neo4jInfrastructure
 from backend.platform.graph.projection import (
     MANIFEST_STATE_BUILDING,
     MANIFEST_STATE_READY,
+    ProjectionPlan,
     build_projection_plan,
 )
 from backend.platform.graph.projection_store import (
@@ -30,6 +31,32 @@ from backend.platform.graph.verification import (
 from tests.fixtures.p4.graph.fixtures import (
     small_document,
 )
+
+
+def _claim_candidate(
+    store: Neo4jProjectionStore,
+    plan: ProjectionPlan,
+    lease_token: str,
+    *,
+    resource_id: UUID | None = None,
+    attempt_id: UUID | None = None,
+) -> None:
+    store.claim_candidate(
+        project_id=plan.project_id,
+        architecture_version_id=plan.architecture_version_id,
+        generation_id=plan.generation_id,
+        resource_id=resource_id or uuid4(),
+        attempt_id=attempt_id or uuid4(),
+        lease_token=lease_token,
+        source_content_digest=plan.source_content_digest,
+        expected_counts=plan.expected_counts,
+        expected_key_set_digest=plan.key_set_digest,
+        expected_endpoint_digest=plan.endpoint_digest,
+        expected_payload_digest=plan.payload_digest,
+        expected_evidence_summary_digest=plan.evidence_summary_digest,
+        expected_unresolved_summary_digest=plan.unresolved_summary_digest,
+        expected_conflict_summary_digest=plan.conflict_summary_digest,
+    )
 
 
 def _integration_settings() -> Settings:
@@ -73,17 +100,7 @@ def test_real_neo4j_full_projection_and_verification(
 
     try:
         # 1. Claim candidate
-        store.claim_candidate(
-            project_id=plan.project_id,
-            architecture_version_id=plan.architecture_version_id,
-            generation_id=plan.generation_id,
-            lease_token=lease_token,
-            source_content_digest=plan.source_content_digest,
-            expected_counts=plan.expected_counts,
-            expected_key_set_digest=plan.key_set_digest,
-            expected_endpoint_digest=plan.endpoint_digest,
-            expected_payload_digest=plan.payload_digest,
-        )
+        _claim_candidate(store, plan, lease_token)
 
         manifest_before = store.get_manifest(plan.generation_key)
         assert manifest_before is not None
@@ -164,17 +181,7 @@ def test_real_neo4j_candidate_coexistence(
 
     try:
         # Write and verify G1
-        store.claim_candidate(
-            project_id=p1.project_id,
-            architecture_version_id=p1.architecture_version_id,
-            generation_id=p1.generation_id,
-            lease_token=t1,
-            source_content_digest=p1.source_content_digest,
-            expected_counts=p1.expected_counts,
-            expected_key_set_digest=p1.key_set_digest,
-            expected_endpoint_digest=p1.endpoint_digest,
-            expected_payload_digest=p1.payload_digest,
-        )
+        _claim_candidate(store, p1, t1)
         store.write_nodes(
             project_id=p1.project_id,
             architecture_version_id=p1.architecture_version_id,
@@ -193,17 +200,7 @@ def test_real_neo4j_candidate_coexistence(
         assert res1.verified is True
 
         # Write and verify G2 in the same project and version
-        store.claim_candidate(
-            project_id=p2.project_id,
-            architecture_version_id=p2.architecture_version_id,
-            generation_id=p2.generation_id,
-            lease_token=t2,
-            source_content_digest=p2.source_content_digest,
-            expected_counts=p2.expected_counts,
-            expected_key_set_digest=p2.key_set_digest,
-            expected_endpoint_digest=p2.endpoint_digest,
-            expected_payload_digest=p2.payload_digest,
-        )
+        _claim_candidate(store, p2, t2)
         store.write_nodes(
             project_id=p2.project_id,
             architecture_version_id=p2.architecture_version_id,
@@ -263,19 +260,17 @@ def test_real_neo4j_transactional_fence_race(
 
     token_old = "worker-token-old"
     token_new = "worker-token-new"
+    resource_id = uuid4()
+    attempt_id = uuid4()
 
     try:
         # Worker 1 claims candidate
-        store.claim_candidate(
-            project_id=plan.project_id,
-            architecture_version_id=plan.architecture_version_id,
-            generation_id=plan.generation_id,
-            lease_token=token_old,
-            source_content_digest=plan.source_content_digest,
-            expected_counts=plan.expected_counts,
-            expected_key_set_digest=plan.key_set_digest,
-            expected_endpoint_digest=plan.endpoint_digest,
-            expected_payload_digest=plan.payload_digest,
+        _claim_candidate(
+            store,
+            plan,
+            token_old,
+            resource_id=resource_id,
+            attempt_id=attempt_id,
         )
 
         # Worker 1 writes nodes
@@ -288,16 +283,12 @@ def test_real_neo4j_transactional_fence_race(
         )
 
         # Worker 2 supersedes claim with token_new
-        store.claim_candidate(
-            project_id=plan.project_id,
-            architecture_version_id=plan.architecture_version_id,
-            generation_id=plan.generation_id,
-            lease_token=token_new,
-            source_content_digest=plan.source_content_digest,
-            expected_counts=plan.expected_counts,
-            expected_key_set_digest=plan.key_set_digest,
-            expected_endpoint_digest=plan.endpoint_digest,
-            expected_payload_digest=plan.payload_digest,
+        _claim_candidate(
+            store,
+            plan,
+            token_new,
+            resource_id=resource_id,
+            attempt_id=attempt_id,
         )
 
         # Worker 1 attempts relationship write -> rejected with StaleFenceError!
@@ -354,17 +345,7 @@ def test_real_neo4j_deliberate_corruption_detection(
 
     try:
         # Write candidate
-        store.claim_candidate(
-            project_id=plan.project_id,
-            architecture_version_id=plan.architecture_version_id,
-            generation_id=plan.generation_id,
-            lease_token=token,
-            source_content_digest=plan.source_content_digest,
-            expected_counts=plan.expected_counts,
-            expected_key_set_digest=plan.key_set_digest,
-            expected_endpoint_digest=plan.endpoint_digest,
-            expected_payload_digest=plan.payload_digest,
-        )
+        _claim_candidate(store, plan, token)
         store.write_nodes(
             project_id=plan.project_id,
             architecture_version_id=plan.architecture_version_id,
@@ -418,17 +399,7 @@ def test_real_neo4j_idempotent_retry_and_cleanup(
 
     try:
         # Write once
-        store.claim_candidate(
-            project_id=plan.project_id,
-            architecture_version_id=plan.architecture_version_id,
-            generation_id=plan.generation_id,
-            lease_token=token,
-            source_content_digest=plan.source_content_digest,
-            expected_counts=plan.expected_counts,
-            expected_key_set_digest=plan.key_set_digest,
-            expected_endpoint_digest=plan.endpoint_digest,
-            expected_payload_digest=plan.payload_digest,
-        )
+        _claim_candidate(store, plan, token)
         store.write_nodes(
             project_id=plan.project_id,
             architecture_version_id=plan.architecture_version_id,
