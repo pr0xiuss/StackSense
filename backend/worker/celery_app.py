@@ -58,6 +58,9 @@ celery_app.conf.update(
         "stacksense.graph_runtime_heartbeat": {
             "queue": settings.graph_maintenance_queue_name
         },
+        "stacksense.cleanup_graph_generation": {
+            "queue": settings.graph_maintenance_queue_name
+        },
         "stacksense.execute_graph_projection": {"queue": settings.graph_queue_name},
     },
     beat_schedule=beat_schedule,

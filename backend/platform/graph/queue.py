@@ -42,6 +42,7 @@ class CelerySender(Protocol):
 
 
 GRAPH_EXECUTION_TASK_NAME = "stacksense.execute_graph_projection"
+GRAPH_CLEANUP_TASK_NAME = "stacksense.cleanup_graph_generation"
 
 
 class InMemoryProjectionPublisher:
@@ -78,6 +79,7 @@ class CeleryProjectionPublisher:
 
 __all__ = [
     "CeleryProjectionPublisher",
+    "GRAPH_CLEANUP_TASK_NAME",
     "GRAPH_EXECUTION_TASK_NAME",
     "InMemoryProjectionPublisher",
     "ProjectionPublisher",

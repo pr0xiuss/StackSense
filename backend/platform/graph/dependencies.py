@@ -1,6 +1,7 @@
 """P4-owned graph infrastructure composition providers."""
 
 from datetime import timedelta
+from functools import lru_cache
 
 from fastapi import Depends
 from sqlalchemy import select
@@ -12,12 +13,18 @@ from backend.platform.dependency_injection import (
     get_application_settings,
     get_database_session,
 )
+from backend.platform.graph.executor import ProjectionExecutor
 from backend.platform.graph.health import GraphHealthService
 from backend.platform.graph.lifecycle import GraphProjectionLifecycle
+from backend.platform.graph.neo4j import Neo4jInfrastructure
 from backend.platform.graph.persistence import (
     GraphProjectionResourceModel,
     GraphRuntimeCapabilityModel,
     SqlAlchemyGraphProjectionRepository,
+)
+from backend.platform.graph.projection_store import (
+    Neo4jProjectionStore,
+    ProjectionStore,
 )
 from backend.platform.graph.repository import GraphProjectionRepository
 from backend.platform.graph.runtime import (
@@ -29,6 +36,7 @@ from backend.platform.graph.source import (
     PublishedArchitectureSource,
     SqlAlchemyPublishedArchitectureSource,
 )
+from backend.platform.graph.verification import GraphVerifier
 
 
 def get_graph_health_service(
@@ -91,3 +99,39 @@ def get_graph_projection_lifecycle(
 ) -> GraphProjectionLifecycle:
     """Provide lifecycle orchestration without modifying P3 composition."""
     return GraphProjectionLifecycle(repository)
+
+
+@lru_cache
+def get_neo4j_infrastructure(
+    settings: Settings = Depends(get_application_settings),
+) -> Neo4jInfrastructure:
+    """Provide cached Neo4j infrastructure adapter."""
+    return Neo4jInfrastructure(settings)
+
+
+def get_projection_store(
+    settings: Settings = Depends(get_application_settings),
+    infra: Neo4jInfrastructure = Depends(get_neo4j_infrastructure),
+) -> ProjectionStore:
+    """Provide bounded Neo4j projection store."""
+    return Neo4jProjectionStore(infra.driver, settings)
+
+
+def get_graph_verifier(
+    store: ProjectionStore = Depends(get_projection_store),
+) -> GraphVerifier:
+    """Provide independent candidate graph verifier."""
+    return GraphVerifier(store=store)
+
+
+def get_projection_executor(
+    settings: Settings = Depends(get_application_settings),
+    store: ProjectionStore = Depends(get_projection_store),
+    verifier: GraphVerifier = Depends(get_graph_verifier),
+) -> ProjectionExecutor:
+    """Provide P4-W1 projection execution coordinator."""
+    return ProjectionExecutor(
+        settings=settings,
+        store=store,
+        verifier=verifier,
+    )

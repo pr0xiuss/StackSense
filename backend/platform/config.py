@@ -118,6 +118,21 @@ class Settings(BaseSettings):
     # This remains false until M2 registers the P4-W1 executor capability.
     graph_projection_dispatch_enabled: bool = False
 
+    # Architecture graph projection candidates (Phase 4 Module 2 Batch 1)
+    # Measurement candidates only; not frozen production defaults.
+    graph_projection_node_batch_size: int = Field(default=500, ge=1, le=5000)
+    graph_projection_relationship_batch_size: int = Field(default=1000, ge=1, le=10000)
+    graph_projection_query_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    graph_projection_cleanup_page_size: int = Field(default=1000, ge=1, le=5000)
+    graph_projection_cleanup_grace_seconds: int = Field(default=86400, ge=60)
+    graph_projection_max_meta_key_bytes: int = Field(default=64, ge=1, le=256)
+    graph_projection_max_meta_string_bytes: int = Field(default=2048, ge=1, le=65536)
+    graph_projection_max_meta_list_items: int = Field(default=64, ge=1, le=1000)
+    graph_projection_max_meta_record_bytes: int = Field(default=16384, ge=1, le=1048576)
+    graph_projection_max_projected_properties_bytes: int = Field(
+        default=1048576, ge=1024, le=10485760
+    )
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )
