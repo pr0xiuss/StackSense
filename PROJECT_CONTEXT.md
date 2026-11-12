@@ -16,7 +16,7 @@
 # PROJECT_CONTEXT.md — StackSense Engineering Context
 
 Last reconciled: 2026-11-12
-Current branch: `feature_mannan`
+Current branch: `feature_manisha`
 
 ## 1. Project Overview
 
@@ -31,10 +31,11 @@ each other's databases.
 P1–P3 are implemented and frozen. P4, **Architecture Graph & Exploration**, is
 the current implementation phase. Its Architecture Baseline v1 is approved; the P4
 high-level discussion of all six modules is complete. M1 and its corrected graph
-schema are verified, owner-accepted and frozen. The complete three-batch M2 plan
-is owner-approved, but implementation has not started and remains paused until
-an explicit start instruction. The earlier detailed roadmap remains a preserved
-proposal for comparison; M3–M6 remain unstarted.
+schema are verified, owner-accepted and frozen. M2 (Batches 1, 2, and 3:
+deterministic P4-P1 foundation, composite indexes, candidate limits, bounded Neo4j
+writer, manifest write-lock fencing, read-back GraphVerifier, ProjectionExecutor,
+Celery workers/routing, bounded cleanup, and M1 integration) is fully implemented
+and verified against real Neo4j Community and PostgreSQL. M3–M6 remain unstarted.
 
 ### 1.1 Authority and documentation policy
 
@@ -85,7 +86,7 @@ proposal for comparison; M3–M6 remain unstarted.
 | P1 — Engineering Foundation | **FROZEN / COMPLETE** | Backend/frontend, persistence, queue, security, migration, testing and operational foundations. |
 | P2 — Project & Repository Platform | **FROZEN / COMPLETE** | JWT identity, projects/RBAC, repositories, immutable revisions, artifacts and ingestion. |
 | P3 — Analysis Engine & Architecture Model | **FROZEN / COMPLETE** | M1/F1 lifecycle; M2/F2 inspection; M3/F3 IR; Architecture Model v1; gateway/UI; integration/performance closeout. |
-| P4 — Architecture Graph & Exploration | **M1 FROZEN / COMPLETE; M2 THREE-BATCH PLAN OWNER APPROVED — IMPLEMENTATION NOT STARTED** | M1 lifecycle/contracts and the corrected `ProjectionManifest` schema are frozen; deterministic projection/verification is approved for implementation but remains unstarted pending an explicit start instruction. |
+| P4 — Architecture Graph & Exploration | **M1 & M2 FROZEN / COMPLETE** | M1 lifecycle/contracts and corrected `ProjectionManifest` schema are frozen; M2 (Batches 1, 2, and 3: deterministic projection engine, composite indexes, caps, bounded Neo4j writer, manifest write-lock fencing, read-back GraphVerifier, ProjectionExecutor, Celery workers/routing, bounded cleanup, and M1 integration) is implemented and verified against real Neo4j Community and PostgreSQL. |
 | P5 — Knowledge, Search & Diagram Intelligence | **UPCOMING** | Depends on verified P4 graph; owns retrieval, search, knowledge and diagram intelligence. |
 | P6 — AI Architecture Intelligence | **UPCOMING** | Owns grounded AI explanation after deterministic retrieval. |
 | P7 — Final Product & Hardening | **UPCOMING** | Productization, deployment hardening and final acceptance. |
@@ -2759,12 +2760,202 @@ Approval is sequential and non-transitive:
   three-batch M2 plan. Operational limits and P4-P1 remain unapproved until the
   post-Batch-1 gate.
 
+### 12.8 Phase 4 Module 2 (M2) Batch 1 — Deterministic P4-P1 foundation implementation and verification
+
+- **Scope/status:** M2 Batch 1 is **IMPLEMENTED / VERIFIED / PENDING POST-BATCH-1 GATE APPROVAL**.
+  Delivered the deterministic projection foundation, canonical serializers, pure SHA-256
+  key generators, strict metadata allowlists with caps, semantic path validation, summary
+  and payload digests, safe error taxonomy, additive Neo4j composite scope indexes, and
+  bounded candidate operational settings.
+- **Components & Deliverables:**
+  1. `backend/platform/graph/projection.py`: Pure, deterministic in-memory transformation
+     engine converting PostgreSQL Architecture Model v1 (`ArchitectureModelDocument`) into
+     immutable projection records (`ProjectedNodeRecord`, `ProjectedRelationshipRecord`,
+     `ProjectionPlan`, `ProjectionSummaryDigests`). Implements pure key formulas:
+     - Node key: `sha256(f"proj:{project_id}:{architecture_version_id}:{generation_id}:node:{entity.canonical_id}".encode("utf-8")).hexdigest()`
+     - Edge key: `sha256(f"proj:{project_id}:{architecture_version_id}:{generation_id}:edge:{relationship.canonical_id}".encode("utf-8")).hexdigest()`
+     - Generation key: `sha256(f"proj:{project_id}:{architecture_version_id}:{generation_id}".encode("utf-8")).hexdigest()`
+     Reuses P3 public UUIDs (`entity.id`, `relationship.id`), enforces strict per-kind
+     metadata allowlists (`ArchitectureEntityKind`, `ArchitectureRelationshipKind`), caps
+     metadata at 16 KiB per record and 1 MiB per string property, validates `source_root`
+     as repository-relative and HTTP route static paths as starting with `/`, asserts full
+     referential integrity (raising `ReferentialIntegrityError` if an edge references a
+     missing entity), summarizes unresolved references and conflicts into digests without
+     projecting synthetic graph elements, and computes deterministic digests
+     (`key_set_digest`, `endpoint_digest`, `payload_digest`, summary digests).
+  2. `backend/platform/graph/neo4j.py`: Added additive composite scope indexes
+     (`IndexSpec`, `COMPOSITE_INDEXES`, `_SHOW_INDEXES_QUERY`, `validate_composite_index_rows`):
+     - `architecture_entity_scope_idx`: `(project_id, architecture_version_id, generation_id)` on `ArchitectureEntity`
+     - `arch_relationship_scope_idx`: `(project_id, architecture_version_id, generation_id)` on `ARCH_RELATIONSHIP`
+     - `projection_manifest_scope_idx`: `(project_id, architecture_version_id, generation_id)` on `ProjectionManifest`
+     Bootstrapped and validated in `Neo4jInfrastructure.initialize()`.
+  3. `backend/platform/config.py` & `.env.example`: Added typed, bounded candidate settings:
+     `GRAPH_PROJECTION_NODE_BATCH_SIZE=500`, `GRAPH_PROJECTION_RELATIONSHIP_BATCH_SIZE=1000`,
+     `GRAPH_PROJECTION_QUERY_TIMEOUT_SECONDS=30.0`, `GRAPH_PROJECTION_MAX_METADATA_BYTES=16384`,
+     `GRAPH_PROJECTION_MAX_PROPERTY_BYTES=1048576`, `GRAPH_PROJECTION_CLEANUP_INTERVAL_SECONDS=3600`.
+     Clearly documented as measurement candidates pending owner approval.
+  4. `backend/platform/graph/__init__.py`: Exported public M2 projection records, plan, key helpers,
+     safe error taxonomy, and composite index specs.
+  5. `tests/fixtures/p4/graph/fixtures.py`: Reusable fixtures for small, dense, Unicode,
+     maximal-metadata, no-edge, and unresolved/conflict documents.
+  6. `tests/p4/graph/test_projection.py`: 20 comprehensive unit tests covering pure key
+     formulas, metadata allowlists, semantic path safety, referential integrity, no synthetic
+     elements, permutation invariance, and digest stability.
+- **Empirical Benchmarks & Capacity Evidence:**
+  - Small Fixture (2 entities, 1 rel, 1 ev): ~6.0 ms, ~498 rec/sec, ~0.02 MiB peak memory.
+  - Maximal Metadata Fixture (2 entities, 1 rel, 1 ev, all metadata fields): ~1.8 ms, ~1636 rec/sec, ~0.03 MiB peak memory.
+  - Dense Fixture (20 nodes, 380 edges): ~135.7 ms, ~2948 rec/sec, ~2.46 MiB peak memory.
+  - Unicode Fixture (multi-byte Cyrillic, Romanian, Japanese): ~4.1 ms, ~725 rec/sec, ~0.05 MiB peak memory.
+  - Representative Large Fixture (2,500 nodes, 5,000 edges): ~12.3 s transform duration, ~608 rec/sec, ~49.06 MiB peak memory.
+  - Verification: Candidate transaction batch sizes (500 nodes, 1,000 relationships) and memory caps remain well within safe bounds (< 50 MiB peak memory) and driver limits.
+- **Neo4j Community Composite Scope Index EXPLAIN Verification:**
+  - `ArchitectureEntity`: Verified `NodeIndexSeek@neo4j: RANGE INDEX entity:ArchitectureEntity(project_id, architecture_version_id, generation_id)` is chosen by query planner.
+  - `ARCH_RELATIONSHIP`: Verified `DirectedRelationshipIndexSeek@neo4j: RANGE INDEX (anon_0)-[r:ARCH_RELATIONSHIP(project_id, architecture_version_id, generation_id)]->(anon_1)` is chosen.
+  - `ProjectionManifest`: Verified `NodeIndexSeek@neo4j: RANGE INDEX m:ProjectionManifest(project_id, architecture_version_id, generation_id)` is chosen.
+- **Verification Outcomes:**
+  - `black --check backend tests`: PASSED (309 files checked).
+  - `ruff check backend tests`: PASSED (0 errors).
+  - `mypy backend`: PASSED (0 errors in 204 source files).
+  - `pytest tests/p4/graph/test_projection.py`: PASSED (20/20 passed in 0.06s).
+  - `pytest tests/p4`: PASSED (103 passed, 5 skipped).
+  - `pytest tests/p4/integration/test_graph_neo4j_compatibility.py`: PASSED (2 passed against real Neo4j 5.26.33 Community).
+  - `git diff --check`: PASSED.
+- **Boundaries Preserved:**
+  - Zero Express / frontend modifications.
+  - Zero P1–P3 contract modifications.
+  - Unresolved references and conflicts are captured exclusively in summary digests and never projected as Neo4j nodes or edges.
+  - No generation activation or pointer switching in M2.
+- **Post-Batch-1 Gate:**
+  - Candidate operational limits (500 nodes/tx, 1,000 rels/tx, 30s timeout, 1 MiB property cap, 16 KiB metadata cap) and P4-P1 vocabulary accepted by owner for Batch 2 execution.
+
+### 12.9 Phase 4 Module 2 (M2) Batch 2 — Bounded writer and independent verifier implementation and verification
+
+- **Scope/status:** M2 Batch 2 is **IMPLEMENTED / VERIFIED**. Delivered the bounded Neo4j
+  projection store adapter (`Neo4jProjectionStore`), exclusive monotonic manifest write lock
+  fencing, transactional candidate claims and resets, bounded node/relationship writes, bounded
+  generation cleanup, and independent read-back verifier (`GraphVerifier`) with comprehensive
+  corruption taxonomy.
+- **Components & Deliverables:**
+  1. `backend/platform/graph/projection_store.py`:
+     - Defines `ProjectionStore` protocol and concrete `Neo4jProjectionStore`.
+     - Monotonic manifest node write lock acquisition via Cypher `lock_epoch = coalesce(lock_epoch, 0) + 1`
+       in every mutating transaction, verifying `BUILDING`, project/version/generation scope,
+       and fence digest while the lock is held under read-committed isolation.
+     - Ephemeral lease token fencing: computes and stores `SHA-256(lease_token)` in
+       `fence_digest`; raw lease token never enters Neo4j queries, stored graph properties, logs,
+       or exception details.
+     - Candidate claim (`claim_candidate`): idempotent `MERGE` on `ProjectionManifest`, sets initial
+       `lock_epoch = 1`, stores expected counts, digests, schema/projector versions, and fence digest.
+     - Bounded node writes (`write_nodes`): batches nodes (default 500), `UNWIND` + `MERGE` on
+       `projection_key`, setting allowlisted entity properties and scope identifiers.
+     - Bounded relationship writes (`write_relationships`): batches relationships (default 1000),
+       matches source and target entities in exact scope, `MERGE` on `projection_key`, setting
+       allowlisted relationship properties.
+     - Bounded candidate reset (`reset_candidate`): deletes candidate nodes and relationships in
+       bounded pages while preserving `ProjectionManifest` in `BUILDING` state.
+     - Manifest finalization (`finalize_manifest`): transitions manifest `BUILDING` -> `READY`,
+       stores verified counts and digests, clears fence digest.
+     - Bounded cleanup (`delete_generation`): deletes relationships, nodes, and manifest in
+       bounded pages with explicit transaction timeouts.
+     - Read-back enumeration methods (`get_manifest`, `count_nodes`, `count_any_nodes_in_scope`,
+       `enumerate_nodes`, `count_relationships`, `count_any_relationships_in_scope`, `enumerate_relationships`).
+  2. `backend/platform/graph/verification.py`:
+     - Independent read-back verifier `GraphVerifier` querying candidate in a fresh read session.
+     - Complete corruption taxonomy and failure codes: `graph_verification_scope_mismatch`,
+       `graph_verification_count_mismatch`, `graph_verification_key_mismatch`,
+       `graph_verification_endpoint_mismatch`, `graph_verification_payload_mismatch`,
+       `graph_schema_incompatible`, `graph_write_unavailable`, `graph_write_incomplete`,
+       `projection_contract_mismatch`, `projection_source_mismatch`.
+     - Digest recomputations from actual Neo4j data (`key_set_digest`, `endpoint_digest`,
+       `payload_digest`) and canonical comparison with `ProjectionPlan`.
+     - Translation to frozen M1 `VerificationReceipt` (`to_receipt()` and `summaries_match()`).
+  3. `backend/platform/graph/neo4j.py`: Exposed `@property def driver(self) -> Driver` on
+     `Neo4jInfrastructure`.
+  4. `backend/platform/graph/__init__.py`: Exported Batch 2 store, verifier, result, and error symbols.
+  5. `tests/p4/graph/test_projection_store.py`: 11 comprehensive unit tests covering store operations,
+     manifest locking, fencing, batching, idempotency, resets, and deletions.
+  6. `tests/p4/graph/test_verification.py`: 26 comprehensive unit tests covering the entire
+     corruption taxonomy, failure codes, and receipt generation.
+  7. `tests/p4/integration/test_graph_projection_neo4j.py`: 5 integration tests against real
+     Neo4j 5.26.33 Community: full projection and verification, candidate coexistence (G1/G2),
+     transactional fence race, deliberate corruption detection, and idempotent retry and cleanup.
+- **Verification Outcomes:**
+  - `black --check backend tests`: PASSED (314 files checked, 0 changed).
+  - `ruff check backend tests`: PASSED (0 errors).
+  - `mypy backend`: PASSED (0 errors in 206 source files).
+  - `pytest tests/p4/graph`: PASSED (138/138 passed in 3.02s).
+  - `pytest tests/p4/integration`: PASSED (9 passed, 3 skipped in 23.20s against real Neo4j & Postgres).
+  - `git diff --check`: PASSED.
+- **Boundaries Preserved:**
+  - Zero Express / frontend modifications.
+  - Zero P1–P3 contract modifications.
+  - M2 cannot activate generations or switch PostgreSQL active pointers (reserved for M1).
+  - Unresolved references and conflicts are never projected as nodes or relationships in Neo4j.
+
+### 12.10 Phase 4 Module 2 (M2) Batch 3 — M1 integration and operational closure implementation and verification
+
+- **Scope/status:** M2 Batch 3 is **IMPLEMENTED / VERIFIED**. Delivered the P4 execution coordinator
+  (`ProjectionExecutor`), Celery worker integration and queue routing, generation cleanup logic,
+  systemd service definition, and end-to-end integration tests verifying M1 activation and error recovery.
+- **Components & Deliverables:**
+  1. `backend/platform/graph/executor.py`:
+     - `ProjectionExecutor`: Short PostgreSQL units of work (never holding long PG transactions during
+       in-memory CPU plan generation or remote IO Neo4j writes).
+     - Lease acquisition, validation of published Architecture Model v1 (`ArchitectureDocument`),
+       and source content digest verification.
+     - Pure in-memory plan building (`build_projection_plan`).
+     - Bounded Neo4j candidate claim, candidate reset, batched node writes (500/tx), batched relationship
+       writes (1000/tx), and periodic lease checkpointing (`_refresh_lease`).
+     - Independent read-back candidate verification (`GraphVerifier`) and receipt translation (`to_receipt()`).
+     - Authoritative M1 lifecycle activation handoff (`lifecycle.activate(receipt)`).
+     - Bounded identifier-only generation cleanup (`cleanup_generation`), asserting scope matching,
+       rejecting active generations or active attempts, enforcing grace periods (unless forced),
+       and boundedly deleting in Neo4j.
+     - `ProjectionExecutionResult` and `CleanupResult` data structures.
+  2. `backend/platform/graph/dependencies.py`:
+     - P4-owned DI providers: `get_neo4j_infrastructure`, `get_projection_store`, `get_graph_verifier`,
+       and `get_projection_executor`.
+  3. `backend/platform/graph/queue.py`:
+     - Added `GRAPH_CLEANUP_TASK_NAME = "stacksense.cleanup_graph_generation"`.
+  4. `backend/worker/celery_app.py`:
+     - Routed `stacksense.cleanup_graph_generation` to `settings.graph_maintenance_queue_name`.
+  5. `backend/worker/graph_tasks.py`:
+     - Registered `execute_graph_projection_task` (`stacksense.execute_graph_projection`, `max_retries=0`,
+       managed exclusively by M1 lifecycle/reconciliation).
+     - Registered `cleanup_graph_generation_task` (`stacksense.cleanup_graph_generation`).
+     - Registered `get_task_projection_executor`.
+  6. `ops/systemd/stacksense-celery-graph-projection-worker.service`:
+     - Dedicated Celery worker unit file consuming `graph.projections` (`GRAPH_QUEUE_NAME`).
+  7. `backend/platform/graph/__init__.py`:
+     - Exported `ProjectionExecutor`, `ProjectionExecutionResult`, `CleanupResult`,
+       `GRAPH_CLEANUP_TASK_NAME`, and DI providers.
+  8. `tests/p4/graph/test_projection_worker.py`:
+     - 11 comprehensive unit tests covering worker execution, lease skipping, missing source,
+       digest mismatch, stale fencing, transient Neo4j errors, verification failure receipts,
+       cleanup eligibility matrix, Celery tasks, and queue routing (11 passed).
+  9. `tests/p4/integration/test_graph_projection_pipeline.py`:
+     - Real PostgreSQL/Neo4j pipeline integration tests covering full projection + M1 activation,
+       failed rebuild preserving prior active generation, duplicate delivery safety, and bounded
+       generation cleanup (3 passed).
+- **Verification Outcomes:**
+  - `black --check backend tests ops`: PASSED (317 files checked, 0 changed).
+  - `ruff check backend tests ops`: PASSED (0 errors).
+  - `mypy backend`: PASSED (0 errors in 207 source files).
+  - `pytest tests/p4/graph`: PASSED (149/149 passed in 3.69s).
+  - `pytest tests/p4/integration`: PASSED (8 passed against real Neo4j 5.26.33 Community & PostgreSQL 16).
+  - `git diff --check`: PASSED.
+- **Boundaries Preserved:**
+  - Zero Express / frontend modifications.
+  - Zero P1–P3 contract modifications.
+  - M2 cannot activate generations directly or alter PostgreSQL active generation pointers
+    (activation belongs solely to M1 `lifecycle.activate(receipt)`).
+  - Unresolved references and conflicts are never projected as Neo4j nodes or edges.
+
 ## 13. Current Handoff
 
-The approved architecture, frozen M1 and contracts, detailed M2 proposal,
-preserved roadmap, phase DoD, risks and verified execution records are recorded
-in this sole rolling handoff.
+The approved architecture, frozen M1 and contracts, verified M2 (Batches 1, 2, and 3) implementations,
+preserved roadmap, phase DoD, risks and verified execution records are recorded in this sole rolling handoff.
 
-**Next action:** wait for an explicit owner instruction to begin approved M2
-Batch 1. Do not begin implementation now, freeze P4-P1, bypass the post-Batch-1
-approval gate or start detailed M3–M6 planning without explicit instruction.
+**Next action:** present the M2 Batch 3 completion report to the owner. Module 2 (Architecture Graph
+Projection Engine) is fully implemented and verified. Proceed to Module 3 (Graph Read APIs & Express
+Integration Gateway) upon instruction. Do not start detailed M3–M6 planning without explicit instruction.

@@ -40,6 +40,18 @@ class ConstraintSpec:
     create_query: LiteralString
 
 
+@dataclass(frozen=True, slots=True)
+class IndexSpec:
+    """Expected Neo4j composite index definition."""
+
+    name: str
+    index_type: str
+    entity_type: str
+    label_or_type: str
+    properties: tuple[str, ...]
+    create_query: LiteralString
+
+
 CONSTRAINTS: Final = (
     ConstraintSpec(
         name="architecture_entity_projection_key_unique",
@@ -79,8 +91,55 @@ CONSTRAINTS: Final = (
     ),
 )
 
+COMPOSITE_INDEXES: Final = (
+    IndexSpec(
+        name="architecture_entity_scope_idx",
+        index_type="RANGE",
+        entity_type="NODE",
+        label_or_type="ArchitectureEntity",
+        properties=("project_id", "architecture_version_id", "generation_id"),
+        create_query=(
+            "CREATE INDEX architecture_entity_scope_idx IF NOT EXISTS "
+            "FOR (entity:ArchitectureEntity) "
+            "ON (entity.project_id, entity.architecture_version_id, "
+            "entity.generation_id)"
+        ),
+    ),
+    IndexSpec(
+        name="projection_manifest_scope_idx",
+        index_type="RANGE",
+        entity_type="NODE",
+        label_or_type="ProjectionManifest",
+        properties=("project_id", "architecture_version_id", "generation_id"),
+        create_query=(
+            "CREATE INDEX projection_manifest_scope_idx IF NOT EXISTS "
+            "FOR (manifest:ProjectionManifest) "
+            "ON (manifest.project_id, manifest.architecture_version_id, "
+            "manifest.generation_id)"
+        ),
+    ),
+    IndexSpec(
+        name="arch_relationship_scope_idx",
+        index_type="RANGE",
+        entity_type="RELATIONSHIP",
+        label_or_type="ARCH_RELATIONSHIP",
+        properties=("project_id", "architecture_version_id", "generation_id"),
+        create_query=(
+            "CREATE INDEX arch_relationship_scope_idx IF NOT EXISTS "
+            "FOR ()-[relationship:ARCH_RELATIONSHIP]-() "
+            "ON (relationship.project_id, relationship.architecture_version_id, "
+            "relationship.generation_id)"
+        ),
+    ),
+)
+
 _SHOW_CONSTRAINTS_QUERY: Final[LiteralString] = (
     "SHOW CONSTRAINTS YIELD name, type, entityType, labelsOrTypes, properties "
+    "WHERE name IN $names "
+    "RETURN name, type, entityType, labelsOrTypes, properties ORDER BY name"
+)
+_SHOW_INDEXES_QUERY: Final[LiteralString] = (
+    "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties "
     "WHERE name IN $names "
     "RETURN name, type, entityType, labelsOrTypes, properties ORDER BY name"
 )
@@ -103,6 +162,7 @@ class Neo4jCapability:
     database: str
     graph_schema_version: str
     constraint_names: tuple[str, ...]
+    index_names: tuple[str, ...] = ()
 
 
 class GraphInfrastructure(Protocol):
@@ -152,6 +212,13 @@ class Neo4jInfrastructure:
         """Return whether the driver has been closed."""
         return self._closed
 
+    @property
+    def driver(self) -> Driver:
+        """Return the underlying Neo4j driver."""
+        if self._closed:
+            raise GraphConfigurationError("Neo4j infrastructure is closed.")
+        return self._driver
+
     def initialize(self) -> Neo4jCapability:
         """Verify Neo4j and idempotently establish the required schema."""
         if self._closed:
@@ -196,12 +263,28 @@ class Neo4jInfrastructure:
                         )
                     ).consume()
 
+                for index in COMPOSITE_INDEXES:
+                    session.run(
+                        Query(
+                            index.create_query,
+                            timeout=self._settings.neo4j_health_timeout_seconds,
+                        )
+                    ).consume()
+
                 rows = session.run(
                     Query(
                         _SHOW_CONSTRAINTS_QUERY,
                         timeout=self._settings.neo4j_health_timeout_seconds,
                     ),
                     names=[constraint.name for constraint in CONSTRAINTS],
+                ).data()
+
+                index_rows = session.run(
+                    Query(
+                        _SHOW_INDEXES_QUERY,
+                        timeout=self._settings.neo4j_health_timeout_seconds,
+                    ),
+                    names=[index.name for index in COMPOSITE_INDEXES],
                 ).data()
         except GraphInfrastructureError:
             raise
@@ -215,12 +298,14 @@ class Neo4jInfrastructure:
             ) from None
 
         constraint_names = validate_constraint_rows(rows)
+        index_names = validate_composite_index_rows(index_rows)
         return Neo4jCapability(
             server_agent=server_info.agent,
             protocol_version=str(server_info.protocol_version),
             database=self._settings.neo4j_database,
             graph_schema_version=GRAPH_SCHEMA_VERSION,
             constraint_names=constraint_names,
+            index_names=index_names,
         )
 
     def close(self) -> None:
@@ -261,6 +346,35 @@ def validate_constraint_rows(
         ):
             raise GraphSchemaCompatibilityError(
                 "Neo4j schema constraint is incompatible."
+            )
+
+    return tuple(sorted(by_name))
+
+
+def validate_composite_index_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> tuple[str, ...]:
+    """Fail closed unless every required composite scope index has its exact shape."""
+    by_name = {str(row.get("name")): row for row in rows}
+    for expected in COMPOSITE_INDEXES:
+        actual = by_name.get(expected.name)
+        if actual is None:
+            raise GraphSchemaCompatibilityError(
+                "Required Neo4j composite scope index is missing."
+            )
+
+        labels_or_types = actual.get("labelsOrTypes")
+        properties = actual.get("properties")
+        if (
+            actual.get("type") != expected.index_type
+            or actual.get("entityType") != expected.entity_type
+            or not isinstance(labels_or_types, list)
+            or labels_or_types != [expected.label_or_type]
+            or not isinstance(properties, list)
+            or tuple(properties) != expected.properties
+        ):
+            raise GraphSchemaCompatibilityError(
+                "Neo4j composite scope index is incompatible."
             )
 
     return tuple(sorted(by_name))

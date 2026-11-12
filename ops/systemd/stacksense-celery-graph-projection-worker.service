@@ -1,0 +1,23 @@
+[Unit]
+Description=StackSense graph projection execution Celery worker
+Documentation=file://%h/dev/projects/StackSense/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/projects/StackSense
+Environment=GRAPH_WORKER_CONCURRENCY=1
+Environment=GRAPH_WORKER_PREFETCH_MULTIPLIER=1
+Environment=GRAPH_QUEUE_NAME=graph.projections
+EnvironmentFile=-%h/dev/projects/StackSense/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/dev/projects/StackSense/venv/bin/celery -A backend.worker.celery_app:celery_app worker --loglevel=info --hostname=stacksense-graph-projection@%H --queues=${GRAPH_QUEUE_NAME} --concurrency=${GRAPH_WORKER_CONCURRENCY} --prefetch-multiplier=${GRAPH_WORKER_PREFETCH_MULTIPLIER}
+Restart=always
+RestartSec=5
+TimeoutStopSec=120
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target
+
