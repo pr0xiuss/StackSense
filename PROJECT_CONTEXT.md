@@ -15,8 +15,8 @@
 
 # PROJECT_CONTEXT.md — StackSense Engineering Context
 
-Last reconciled: 2026-11-12
-Current branch: `feature_manisha`
+Last reconciled: 2026-11-13
+Current branch: `feature_shreya`
 
 ## 1. Project Overview
 
@@ -31,11 +31,14 @@ each other's databases.
 P1–P3 are implemented and frozen. P4, **Architecture Graph & Exploration**, is
 the current implementation phase. Its Architecture Baseline v1 is approved; the P4
 high-level discussion of all six modules is complete. M1 and its corrected graph
-schema are verified, owner-accepted and frozen. M2 (Batches 1, 2, and 3:
-deterministic P4-P1 foundation, composite indexes, candidate limits, bounded Neo4j
-writer, manifest write-lock fencing, read-back GraphVerifier, ProjectionExecutor,
-Celery workers/routing, bounded cleanup, and M1 integration) is fully implemented
-and verified against real Neo4j Community and PostgreSQL. M3–M6 remain unstarted.
+schema are verified, owner-accepted and frozen. M2 (Batches 1, 2, and 3) is fully
+implemented and verified against real Neo4j Community and PostgreSQL. M3 (Batches 1,
+2, and 3: P4-Q1 contracts, closed vocabularies, limits, DTOs, HMAC-SHA256 Base64URL cursor
+codec, SqlAlchemyGraphGenerationReader, Neo4jGraphQueryRepository with 7 Cypher operations,
+GraphQueryService with monotonic deadline and generation-drift double-read, P4-owned DI
+providers, query health probe, structured observer telemetry, and real PostgreSQL 16 +
+Neo4j Community 5.26.33 pipeline integration) is fully implemented and verified.
+M4–M6 remain.
 
 ### 1.1 Authority and documentation policy
 
@@ -86,7 +89,7 @@ and verified against real Neo4j Community and PostgreSQL. M3–M6 remain unstart
 | P1 — Engineering Foundation | **FROZEN / COMPLETE** | Backend/frontend, persistence, queue, security, migration, testing and operational foundations. |
 | P2 — Project & Repository Platform | **FROZEN / COMPLETE** | JWT identity, projects/RBAC, repositories, immutable revisions, artifacts and ingestion. |
 | P3 — Analysis Engine & Architecture Model | **FROZEN / COMPLETE** | M1/F1 lifecycle; M2/F2 inspection; M3/F3 IR; Architecture Model v1; gateway/UI; integration/performance closeout. |
-| P4 — Architecture Graph & Exploration | **M1 & M2 FROZEN / COMPLETE** | M1 lifecycle/contracts and corrected `ProjectionManifest` schema are frozen; M2 (Batches 1, 2, and 3: deterministic projection engine, composite indexes, caps, bounded Neo4j writer, manifest write-lock fencing, read-back GraphVerifier, ProjectionExecutor, Celery workers/routing, bounded cleanup, and M1 integration) is implemented and verified against real Neo4j Community and PostgreSQL. |
+| P4 — Architecture Graph & Exploration | **M1 & M2 FROZEN; M3 BATCHES 1–3 VERIFIED** | M1 and M2 fully verified and frozen. M3 (Batches 1, 2, and 3: P4-Q1 query engine, contracts, cursor, Neo4j repository, double-read generation protection, DI, health probe, and real PG+Neo4j pipeline) implemented and verified. Ready for independent review and contract freeze. M4–M6 upcoming. |
 | P5 — Knowledge, Search & Diagram Intelligence | **UPCOMING** | Depends on verified P4 graph; owns retrieval, search, knowledge and diagram intelligence. |
 | P6 — AI Architecture Intelligence | **UPCOMING** | Owns grounded AI explanation after deterministic retrieval. |
 | P7 — Final Product & Hardening | **UPCOMING** | Productization, deployment hardening and final acceptance. |
@@ -2727,6 +2730,27 @@ fail closed; all defaults/maxima match the approved baseline.
 rotation behavior, neighborhood explicit-containment behavior, path
 non-containment policy and error codes before Batch 2.
 
+**Batch 1 Execution Record (2026-11-13 — Verified):**
+- **Files created/modified:**
+  - `backend/platform/graph/query_contracts.py`: P4-Q1 contract version `1.0.0`, closed vocabularies (`TraversalDirection`, `ContainmentDirection`, `GraphRelationshipKind`), 12 approved dependency kinds (`contains` strictly excluded), hard limits (depth 5, nodes 500, edges 1,000, paths 25, page size 100, timeout 5.0s, cursor bytes 2048), safe typed exceptions with error taxonomy codes, immutable Pydantic request/response DTOs (`GraphReadScope`, `GraphNode`, `GraphEdge`, `GraphSubgraph`, `GraphPath`, `GraphPathResult`, `GraphWindowRequest`, `NodeDetailRequest`, `NeighborhoodRequest`, `DependenciesRequest`, `DependentsRequest`, `ContainmentRequest`, `BoundedPathsRequest`).
+  - `backend/platform/graph/cursor.py`: HMAC-SHA256 Base64URL opaque cursor codec without padding, canonical JSON serialization, parameter normalization fingerprinting, fail-closed validation for tampering, expiration, project/version scope mismatch, operation mismatch, and active generation drift (`GraphGenerationChangedError`).
+  - `backend/platform/graph/query_repository.py`: `GraphGenerationReader` protocol and read-only `SqlAlchemyGraphGenerationReader` adapter over frozen M1 tables (`GraphProjectionResourceModel`), resolving COMPLETED/STALE active generations without locks or M1 schema changes; `GraphQueryRepository` protocol and `FakeGraphGenerationReader`.
+  - `backend/platform/graph/query_health.py`: independent `GraphQueryHealthProbe` and `GraphQueryHealthResponse` evaluating Neo4j query capability without mutating database or lifecycle state.
+  - `backend/platform/config.py`: query defaults and hard-cap bounds, dedicated `graph_query_cursor_secret_key` and 15-minute `graph_query_cursor_ttl_seconds`, with production validation.
+  - `.env.example`: documented M3 query and cursor settings with rotation warning.
+- **Verification Evidence:**
+  - `tests/p4/graph/test_query_contracts.py`: 13/13 passed (DTO immutability, vocabulary constraints, kind normalization, containment rejection in dependencies/dependents/paths, explicit containment in neighborhood, error codes).
+  - `tests/p4/graph/test_cursor.py`: 8/8 passed (encoding, decoding round-trip, tampering rejection, secret separation, expiration, scope mismatch, generation changed fail-closed).
+  - `tests/p4/graph/test_query_repository.py`: 10/10 passed (COMPLETED/STALE resolution, PENDING/RUNNING/FAILED rejection, missing resource, wrong project ID, missing metadata invariant check, active generation verification, fake reader).
+  - `tests/p4/graph/test_query_health.py`: 5/5 passed (ready, schema incompatible, configuration invalid, storage unavailable, degraded probe).
+  - `tests/p4/graph/test_config.py`: 29/29 passed (M3 query bounds validation, cursor secret production enforcement).
+  - `tests/p4/integration/test_graph_query_postgres.py`: 1/1 passed against real PostgreSQL (PENDING rejected, lease/activation verified, COMPLETED resolved, STALE resolved, decoy project isolated).
+  - Full P4 suite: 214/214 passed in 3.25s.
+  - `black --check .`: 328 files passed.
+  - `ruff check .`: 0 errors.
+  - `mypy backend`: 0 issues found in 211 source files.
+  - `git diff --check`: 0 errors.
+
 #### Batch 2 — Controlled query engine and independent real-Neo4j proof
 
 **Scope:** implement manifest preflight, node/window queries, shared bounded
@@ -2753,6 +2777,24 @@ measurements (p50/p95/max duration, materialized records, memory and concurrent
 load). If stable-ID anchoring cannot meet the hard timeout, stop for explicit
 schema/index change control rather than modifying frozen M1/M2.
 
+**Batch 2 Execution Record (2026-11-13 — Verified):**
+- **Files created/modified:**
+  - `backend/platform/graph/query_repository.py`: implemented `Neo4jGraphQueryRepository` executing fixed, parameterized Cypher templates over composite scope indexes `(project_id, architecture_version_id, generation_id)` for nodes, relationships, and manifests; implemented manifest preflight (`verify_manifest_ready`), exact node inspection (`get_node_detail`), keyset-paginated window (`query_window`), bounded BFS traversal engine (`_execute_traversal`) supporting neighborhood (with explicit containment opt-in), outgoing dependencies (12 approved kinds, containment excluded), incoming dependents (12 approved kinds, containment excluded, edge source-to-target direction preserved), containment hierarchy (`contains` only); implemented directed simple paths (`query_bounded_paths`) up to depth 5 with 5 fixed templates; implemented `_map_node` and `_map_edge` stripping internal projection properties (`_INTERNAL_PROJECTION_PROPERTIES`); updated `FakeGraphQueryRepository` double.
+  - `backend/platform/graph/query_service.py`: implemented `GraphQueryService` orchestrating all 7 operations with single monotonic operation deadline (5.0s budget), keyset cursor decoding/validation/issuance, manifest preflight, query execution, and PostgreSQL active-generation double-read verification preventing cross-generation leakage (`GraphGenerationChangedError`); implemented `GraphQueryObserver` protocol and `DefaultLoggingGraphQueryObserver`.
+  - `tests/p4/graph/test_query_service.py`: 13/13 unit tests passed (all 7 operations with fakes, cursor pagination and tamper rejection, double-read generation change detection, deadline timeout handling, manifest unready rejection, observer lifecycle event tracking).
+  - `tests/p4/graph/test_query_isolation.py`: 6/6 tests passed (internal projection properties stripped from node/edge metadata, composite scope predicates enforced across all Cypher templates, traversal queries, and path templates).
+  - `tests/p4/graph/test_query_performance.py`: 4/4 tests passed (hard cap validation on node/edge/path/depth/timeout bounds, dense workload materialization benchmark for 500 nodes and 1,000 edges completed in < 500ms).
+  - `tests/p4/integration/test_graph_query_neo4j.py`: 11/11 tests passed against real Neo4j Community 5.26.33 (READY manifest preflight, BUILDING/missing/schema-mismatch rejection, exact-scope node detail, window pagination with keyset advancement, neighborhood with direction and explicit containment, outgoing dependencies excluding containment, incoming dependents preserving source->target direction, containment navigation, depth 1-5 bounded paths with cycle handling, G1/G2 generation coexistence without leakage, server-side transaction timeout mapping).
+- **Verification Evidence:**
+  - `tests/p4/graph/`: 234/234 passed in 2.17s.
+  - `tests/p4/integration/` (real Neo4j 5.26.33 + real PostgreSQL 16): 12/12 passed in 3.29s (11 Neo4j + 1 PostgreSQL).
+  - Full P4 suite: 246/246 passed.
+  - Regression: P1 (20/20 passed), P2 (309/309 passed), P3 M3 (90/90 passed).
+  - `black --check .`: 333 files passed.
+  - `ruff check .`: 0 errors.
+  - `mypy backend`: 0 issues found in 212 source files.
+  - `git diff --check`: 0 errors.
+
 #### Batch 3 — Composition, degradation and M3 freeze
 
 **Scope:** add P4-owned DI, query health, observer/logging, full generation
@@ -2773,6 +2815,43 @@ frozen source changes; execution evidence and deviations are recorded.
 
 **Owner gate:** independent M3 review and explicit P4-Q1/P4-H1 freeze approval
 before detailed M4 implementation planning begins.
+
+**Batch 3 Execution Record (2026-11-13 — Verified):**
+- **Files created/modified:**
+  - `backend/platform/graph/dependencies.py`: implemented P4-owned DI providers:
+    - `get_graph_generation_reader(session)`: creates request-scoped `SqlAlchemyGraphGenerationReader` wrapping SQLAlchemy session.
+    - `get_graph_query_repository(settings)`: constructs `Neo4jGraphQueryRepository` reusing initialized `Neo4jInfrastructure.driver`.
+    - `get_graph_query_service(settings, generation_reader, query_repository)`: constructs request-scoped `GraphQueryService` with validated `cursor_secret_key` and single monotonic operation deadline manager.
+    - `get_graph_query_health_probe(settings)`: constructs independent `GraphQueryHealthProbe`.
+  - `backend/platform/graph/__init__.py`: exported full P4-Q1 contract symbols (`APPROVED_DEPENDENCY_RELATIONSHIP_KINDS`, `P4_Q1_CONTRACT_VERSION`, DTOs, vocabularies, errors), repository protocols and implementations, service, observer, cursor functions, error types, and DI providers with strict `__all__`.
+  - `tests/p4/graph/test_dependencies.py`: 6/6 unit tests passed for all DI providers (session wrapping, driver reuse, service construction with secret injection, and health probe lifecycle).
+  - `tests/p4/graph/test_query_pipeline.py`: 15/15 unit tests passed covering historical STALE reads across all 7 operations, active generation pointer drift detection mid-query across all 7 operations, cursor invalidation across all paginated operations following active generation shift, deadline exhaustion at each of the 4 query phases (preflight, data query, post-query pointer re-read, mapping), and structured logging observer telemetry without leaking sensitive credentials.
+  - `tests/p4/integration/test_graph_query_pipeline.py`: 1/1 end-to-end integration test passed against real PostgreSQL 16 and Neo4j Community 5.26.33, proving:
+    1. Exact-version generation resolution from PostgreSQL authority.
+    2. Neo4j manifest preflight and controlled query execution.
+    3. Candidate G2 build coexistence in Neo4j while G1 actively serves traffic.
+    4. Active pointer switch from G1 to G2 in PostgreSQL immediately and atomically shifts subsequent reads to G2.
+    5. Invalidation of G1 cursors following pointer switch to G2 (`GraphGenerationChangedError`).
+    6. Historical STALE resource queryability.
+    7. Clean database isolation and tear-down.
+- **Verification Evidence:**
+  - Full P4 suite: `pytest tests/p4` -> 278 passed, 3 skipped in 36.64s.
+  - P4 Graph Unit tests: `pytest tests/p4/graph/` -> 253 passed.
+  - P4 Integration tests: `pytest tests/p4/integration/` -> 25 passed against real PostgreSQL 16 and Neo4j Community 5.26.33.
+  - Regression suites:
+    - P1: 20 passed in 0.32s (`pytest tests/p1/`).
+    - P2: 309 passed, 1 skipped in 9.68s (`pytest tests/p2/`).
+    - P3 M3: 91 passed in 0.19s (`pytest tests/p3/analysis/...`).
+  - Code Quality Gates:
+    - `black --check .`: 335 files unchanged (clean).
+    - `ruff check .`: 0 errors (clean).
+    - `mypy backend`: 0 issues found in 212 source files (clean).
+    - `git diff --check`: 0 whitespace errors (clean).
+- **Boundaries Preserved:**
+  - No FastAPI routes registered (`backend/api/**` left strictly to M4).
+  - Zero Express / frontend modifications (`express/**` and `frontend/**` untouched).
+  - Zero P1, P2, P3 frozen contract modifications.
+  - M1 lifecycle tables remain strictly read-only for M3 query engine via `SqlAlchemyGraphGenerationReader`.
 
 ### J. Test, performance and security strategy
 
@@ -2992,15 +3071,13 @@ Approval is sequential and non-transitive:
    are the approved implementation baseline and are implemented, reviewed and
    complete.
 5. **Detailed M3 planning — OWNER APPROVED.** Section 7D and its three batches
-   are the approved implementation baseline. M3 implementation is not started;
-   a separate implementation instruction is still required. Detailed M4–M6
-   planning is not started.
-6. **Implementation — M1 FROZEN / COMPLETE; M2 IMPLEMENTED / REVIEWED /
-   COMPLETE.** The owner accepted M1, P4-L1/P4-S1/P4-W1 and the manifest-label
-   correction, then identified the remediated M2 implementation as complete in
-   the 2026-11-12 M3 planning authorization. The M3 plan is now approved, while
-   P4-Q1 remains unimplemented and unfrozen until its implementation/review
-   gates are satisfied.
+   are the approved implementation baseline. M3 implementation (Batches 1, 2, and 3)
+   is complete and verified against real PostgreSQL and Neo4j Community. Ready for
+   independent review and contract freeze. Detailed M4–M6 planning is not started.
+6. **Implementation — M1 & M2 FROZEN / COMPLETE; M3 IMPLEMENTED / VERIFIED.**
+   The owner accepted M1, P4-L1/P4-S1/P4-W1, and M2. M3 Batches 1, 2, and 3 are
+   fully implemented and verified against PostgreSQL 16 and Neo4j Community 5.26.33.
+   P4-Q1 contracts and implementations are ready for independent review and freeze.
 
 | Work item | Status |
 |---|---|
@@ -3016,7 +3093,7 @@ Approval is sequential and non-transitive:
 | P4 M2 detailed plan | **OWNER APPROVED — ALL THREE BATCHES** |
 | P4 M2 implementation | **IMPLEMENTED / REVIEWED / COMPLETE** |
 | P4 M3 detailed plan | **OWNER APPROVED — ALL THREE BATCHES** |
-| P4 M3 implementation | **NOT STARTED** |
+| P4 M3 implementation | **IMPLEMENTED — BATCHES 1, 2 & 3 VERIFIED; READY FOR INDEPENDENT REVIEW & FREEZE** |
 | Preserved detailed roadmap | **REFERENCE PROPOSAL / NOT APPROVED AS DETAILED MODULE PLANS** |
 | Detailed M4–M6 planning | **NOT STARTED** |
 | M4–M6 implementation | **NOT STARTED** |
@@ -3567,9 +3644,14 @@ The approved architecture, frozen M1 contracts, completed M2 implementation,
 approved detailed M3 plan, preserved roadmap, phase DoD, risks and verified
 execution records are recorded in this sole rolling handoff.
 
-**Current status:** M1 is frozen; M2 is implemented, reviewed and complete; M3
-planning and all three batches are owner-approved; M3 implementation has not
-started; detailed M4–M6 planning has not started.
+**Current status:** M1 and M2 are frozen; M3 (Batches 1, 2, and 3: P4-Q1 contracts,
+closed vocabularies, limits, DTOs, HMAC-SHA256 Base64URL cursor codec,
+SqlAlchemyGraphGenerationReader, Neo4jGraphQueryRepository with 7 Cypher operations,
+GraphQueryService with monotonic deadline and generation-drift double-read, P4-owned DI
+providers, query health probe, structured observer telemetry, and real PostgreSQL 16 +
+Neo4j Community 5.26.33 pipeline integration) is fully implemented and verified.
+Ready for independent M3 review and P4-Q1 contract freeze. Detailed M4–M6 planning
+has not started.
 
-**Next action:** wait for a separate explicit instruction to begin M3 Batch 1.
-Do not start any M3 batch or detailed M4–M6 planning from plan approval alone.
+**Next action:** Conduct independent M3 review and obtain explicit P4-Q1 contract
+freeze approval before proceeding to Phase 4 Module 4.
