@@ -26,6 +26,14 @@ from backend.platform.graph.projection_store import (
     Neo4jProjectionStore,
     ProjectionStore,
 )
+from backend.platform.graph.query_health import GraphQueryHealthProbe
+from backend.platform.graph.query_repository import (
+    GraphGenerationReader,
+    GraphQueryRepository,
+    Neo4jGraphQueryRepository,
+    SqlAlchemyGraphGenerationReader,
+)
+from backend.platform.graph.query_service import GraphQueryService
 from backend.platform.graph.repository import GraphProjectionRepository
 from backend.platform.graph.runtime import (
     PROJECTION_EXECUTION,
@@ -139,3 +147,41 @@ def get_projection_executor(
         store=store,
         verifier=verifier,
     )
+
+
+def get_graph_generation_reader(
+    session: Session = Depends(get_database_session),
+) -> GraphGenerationReader:
+    """Provide the read-only PostgreSQL generation reader."""
+    return SqlAlchemyGraphGenerationReader(session)
+
+
+def get_graph_query_repository(
+    settings: Settings = Depends(get_application_settings),
+    infra: Neo4jInfrastructure = Depends(get_neo4j_infrastructure),
+) -> GraphQueryRepository:
+    """Provide the read-only Neo4j query repository."""
+    return Neo4jGraphQueryRepository(
+        infra.driver,
+        database=settings.neo4j_database,
+    )
+
+
+def get_graph_query_service(
+    settings: Settings = Depends(get_application_settings),
+    generation_reader: GraphGenerationReader = Depends(get_graph_generation_reader),
+    query_repository: GraphQueryRepository = Depends(get_graph_query_repository),
+) -> GraphQueryService:
+    """Provide the P4-Q1 graph query application service."""
+    return GraphQueryService(
+        settings=settings,
+        generation_reader=generation_reader,
+        query_repository=query_repository,
+    )
+
+
+def get_graph_query_health_probe(
+    settings: Settings = Depends(get_application_settings),
+) -> GraphQueryHealthProbe:
+    """Provide the independent P4-Q1 query health probe."""
+    return GraphQueryHealthProbe(settings)

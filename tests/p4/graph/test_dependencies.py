@@ -6,6 +6,14 @@ from typing import Any
 
 from backend.platform.config import Settings
 from backend.platform.graph import dependencies
+from backend.platform.graph.query_health import GraphQueryHealthProbe
+from backend.platform.graph.query_repository import (
+    FakeGraphGenerationReader,
+    FakeGraphQueryRepository,
+    Neo4jGraphQueryRepository,
+    SqlAlchemyGraphGenerationReader,
+)
+from backend.platform.graph.query_service import GraphQueryService
 
 
 def test_neo4j_dependency_initializes_and_closes(monkeypatch: Any) -> None:
@@ -48,3 +56,35 @@ def test_neo4j_dependency_accepts_unhashable_settings(monkeypatch: Any) -> None:
     provider = dependencies.get_neo4j_infrastructure(Settings())
     next(provider)
     provider.close()
+
+
+def test_query_generation_reader_dependency() -> None:
+    session = None  # type: ignore[arg-type]
+    reader = dependencies.get_graph_generation_reader(session)
+    assert isinstance(reader, SqlAlchemyGraphGenerationReader)
+
+
+def test_query_repository_dependency() -> None:
+    class FakeDriver:
+        pass
+
+    class FakeInfra:
+        driver = FakeDriver()  # type: ignore[assignment]
+
+    settings = Settings()
+    repo = dependencies.get_graph_query_repository(settings, FakeInfra())  # type: ignore[arg-type]
+    assert isinstance(repo, Neo4jGraphQueryRepository)
+
+
+def test_query_service_dependency() -> None:
+    settings = Settings()
+    reader = FakeGraphGenerationReader()
+    repo = FakeGraphQueryRepository()
+    svc = dependencies.get_graph_query_service(settings, reader, repo)
+    assert isinstance(svc, GraphQueryService)
+
+
+def test_query_health_probe_dependency() -> None:
+    settings = Settings()
+    probe = dependencies.get_graph_query_health_probe(settings)
+    assert isinstance(probe, GraphQueryHealthProbe)

@@ -133,6 +133,24 @@ class Settings(BaseSettings):
         default=1048576, ge=1024, le=10485760
     )
 
+    # Architecture graph query and exploration API (Phase 4 Module 3)
+    graph_query_default_depth: int = Field(default=1, ge=1, le=5)
+    graph_query_max_depth: int = Field(default=5, ge=1, le=5)
+    graph_query_default_nodes: int = Field(default=100, ge=1, le=500)
+    graph_query_max_nodes: int = Field(default=500, ge=1, le=500)
+    graph_query_default_edges: int = Field(default=200, ge=1, le=1000)
+    graph_query_max_edges: int = Field(default=1000, ge=1, le=1000)
+    graph_query_default_paths: int = Field(default=5, ge=1, le=25)
+    graph_query_max_paths: int = Field(default=25, ge=1, le=25)
+    graph_query_default_page_size: int = Field(default=50, ge=1, le=100)
+    graph_query_max_page_size: int = Field(default=100, ge=1, le=100)
+    graph_query_default_timeout_seconds: float = Field(default=2.0, gt=0, le=5.0)
+    graph_query_max_timeout_seconds: float = Field(default=5.0, gt=0, le=5.0)
+    graph_query_cursor_secret_key: SecretStr = SecretStr(
+        "stacksense-insecure-dev-graph-cursor-secret-at-least-32-bytes"
+    )
+    graph_query_cursor_ttl_seconds: int = Field(default=900, ge=60, le=86400)
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )
@@ -206,6 +224,37 @@ class Settings(BaseSettings):
             == "neo4j-development-password-change-in-production"
         ):
             raise ValueError("NEO4J_PASSWORD must be changed in production")
+        if self.app_env.lower() in {"production", "prod"} and (
+            self.graph_query_cursor_secret_key.get_secret_value()
+            == "stacksense-insecure-dev-graph-cursor-secret-at-least-32-bytes"
+        ):
+            raise ValueError(
+                "GRAPH_QUERY_CURSOR_SECRET_KEY must be changed in production"
+            )
+        if self.app_env.lower() in {"production", "prod"} and (
+            len(self.graph_query_cursor_secret_key.get_secret_value()) < 32
+        ):
+            raise ValueError(
+                "GRAPH_QUERY_CURSOR_SECRET_KEY must contain at least "
+                "32 characters in production"
+            )
+        if self.graph_query_default_depth > self.graph_query_max_depth:
+            raise ValueError("graph query default depth cannot exceed max depth")
+        if self.graph_query_default_nodes > self.graph_query_max_nodes:
+            raise ValueError("graph query default nodes cannot exceed max nodes")
+        if self.graph_query_default_edges > self.graph_query_max_edges:
+            raise ValueError("graph query default edges cannot exceed max edges")
+        if self.graph_query_default_paths > self.graph_query_max_paths:
+            raise ValueError("graph query default paths cannot exceed max paths")
+        if self.graph_query_default_page_size > self.graph_query_max_page_size:
+            raise ValueError(
+                "graph query default page size cannot exceed max page size"
+            )
+        if (
+            self.graph_query_default_timeout_seconds
+            > self.graph_query_max_timeout_seconds
+        ):
+            raise ValueError("graph query default timeout cannot exceed max timeout")
         if self.analysis_stage_timeout_seconds > self.analysis_max_duration_seconds:
             raise ValueError(
                 "analysis stage timeout cannot exceed analysis max duration"

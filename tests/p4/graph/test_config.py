@@ -1,5 +1,7 @@
 """Configuration tests for P4 graph infrastructure."""
 
+from typing import Any
+
 import pytest
 from pydantic import SecretStr, ValidationError
 
@@ -51,9 +53,70 @@ def test_changed_graph_secret_is_accepted_in_production() -> None:
         internal_api_secret_key=SecretStr("production-internal-api-secret"),
         platform_api_secret_key=SecretStr("production-platform-api-secret"),
         neo4j_password=SecretStr("production-neo4j-secret"),
+        graph_query_cursor_secret_key=SecretStr(
+            "production-graph-cursor-secret-at-least-32-chars"
+        ),
     )
 
     assert settings.app_env == "production"
+
+
+def test_default_graph_cursor_secret_is_rejected_in_production() -> None:
+    with pytest.raises(ValidationError, match="GRAPH_QUERY_CURSOR_SECRET_KEY"):
+        Settings(
+            app_env="production",
+            internal_api_secret_key=SecretStr("production-internal-api-secret"),
+            platform_api_secret_key=SecretStr("production-platform-api-secret"),
+            neo4j_password=SecretStr("production-neo4j-secret"),
+        )
+
+
+def test_short_graph_cursor_secret_is_rejected_in_production() -> None:
+    with pytest.raises(ValidationError, match="GRAPH_QUERY_CURSOR_SECRET_KEY"):
+        Settings(
+            app_env="production",
+            internal_api_secret_key=SecretStr("production-internal-api-secret"),
+            platform_api_secret_key=SecretStr("production-platform-api-secret"),
+            neo4j_password=SecretStr("production-neo4j-secret"),
+            graph_query_cursor_secret_key=SecretStr("too-short"),
+        )
+
+
+def test_graph_query_defaults_and_maxima_are_valid() -> None:
+    settings = Settings()
+    assert settings.graph_query_default_depth <= settings.graph_query_max_depth
+    assert settings.graph_query_default_nodes <= settings.graph_query_max_nodes
+    assert settings.graph_query_default_edges <= settings.graph_query_max_edges
+    assert settings.graph_query_default_paths <= settings.graph_query_max_paths
+    assert settings.graph_query_default_page_size <= settings.graph_query_max_page_size
+    assert (
+        settings.graph_query_default_timeout_seconds
+        <= settings.graph_query_max_timeout_seconds
+    )
+    assert settings.graph_query_cursor_ttl_seconds == 900
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"graph_query_default_depth": 6},
+        {"graph_query_max_depth": 6},
+        {"graph_query_default_nodes": 600},
+        {"graph_query_max_nodes": 600},
+        {"graph_query_default_edges": 1500},
+        {"graph_query_max_edges": 1500},
+        {"graph_query_default_paths": 30},
+        {"graph_query_max_paths": 30},
+        {"graph_query_default_page_size": 150},
+        {"graph_query_max_page_size": 150},
+        {"graph_query_default_timeout_seconds": 6.0},
+        {"graph_query_max_timeout_seconds": 6.0},
+        {"graph_query_default_depth": 5, "graph_query_max_depth": 3},
+    ],
+)
+def test_graph_query_rejects_invalid_bounds(overrides: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**overrides)
 
 
 def test_graph_scheduling_defaults_fail_closed() -> None:
@@ -85,7 +148,7 @@ def test_graph_scheduling_defaults_fail_closed() -> None:
     ],
 )
 def test_graph_scheduling_rejects_invalid_operational_settings(
-    overrides: dict[str, object],
+    overrides: dict[str, Any],
 ) -> None:
     with pytest.raises(ValidationError):
         Settings(**overrides)
