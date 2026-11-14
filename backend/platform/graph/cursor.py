@@ -212,15 +212,11 @@ def decode_cursor(
         payload_b64.encode("ascii"),
         hashlib.sha256,
     ).digest()
-
-    try:
-        provided_mac = _b64url_decode(sig_b64)
-    except GraphCursorInvalidError as exc:
-        raise GraphCursorInvalidError(
-            "Pagination cursor signature is malformed"
-        ) from exc
-
-    if not hmac.compare_digest(expected_mac, provided_mac):
+    expected_sig_b64 = _b64url_encode(expected_mac)
+    # Compare the canonical Base64URL representation rather than decoded bytes.
+    # Non-canonical encodings can decode to the same bytes when unused trailing
+    # bits differ and must still be rejected as cursor tampering.
+    if not hmac.compare_digest(expected_sig_b64, sig_b64):
         raise GraphCursorInvalidError("Pagination cursor signature verification failed")
 
     # Decode and parse payload JSON

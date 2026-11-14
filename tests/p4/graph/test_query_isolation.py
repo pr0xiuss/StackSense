@@ -12,7 +12,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from backend.platform.graph.query_contracts import GraphRelationshipKind
+import pytest
+
+from backend.platform.graph.query_contracts import (
+    GraphQueryIntegrityError,
+    GraphRelationshipKind,
+)
 from backend.platform.graph.query_repository import (
     _INTERNAL_PROJECTION_PROPERTIES,
     _MANIFEST_PREFLIGHT_QUERY,
@@ -101,6 +106,30 @@ def test_edge_mapper_strips_internal_projection_properties() -> None:
 
     for internal_key in _INTERNAL_PROJECTION_PROPERTIES:
         assert internal_key not in edge.metadata
+
+
+@pytest.mark.parametrize(
+    "props",
+    [
+        {},
+        {
+            "architecture_entity_id": "not-a-uuid",
+            "logical_id": "broken",
+            "canonical_kind": "service",
+            "name": "Broken",
+        },
+    ],
+)
+def test_node_mapper_rejects_structurally_invalid_records(
+    props: dict[str, object],
+) -> None:
+    with pytest.raises(GraphQueryIntegrityError, match="structurally invalid"):
+        _map_node(props)
+
+
+def test_edge_mapper_rejects_structurally_invalid_records() -> None:
+    with pytest.raises(GraphQueryIntegrityError, match="structurally invalid"):
+        _map_edge({}, uuid4(), uuid4())
 
 
 def test_cypher_manifest_preflight_scopes_composite_keys() -> None:

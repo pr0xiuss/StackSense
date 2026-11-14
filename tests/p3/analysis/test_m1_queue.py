@@ -9,6 +9,7 @@ from backend.platform.analysis.infra.queue import (
     AnalysisJobPayload,
     InMemoryAnalysisQueuePublisher,
 )
+from backend.platform.config import Settings
 
 
 def test_queue_payload_serialization_roundtrip() -> None:
@@ -106,3 +107,18 @@ def test_in_memory_queue_publisher_simulated_broker_failure() -> None:
         ConnectionError, match="Simulated message broker connection failure"
     ):
         publisher.publish_job(payload)
+
+
+def test_analysis_worker_recycles_after_two_tasks_by_default() -> None:
+    """Bound allocator retention by recycling each analysis child predictably."""
+    from backend.worker.celery_app import celery_app
+
+    settings = Settings()
+    assert settings.analysis_worker_max_tasks_per_child == 2
+    assert celery_app.conf.worker_max_tasks_per_child == 2
+
+
+def test_analysis_worker_recycling_is_configurable() -> None:
+    """Deployments can choose a conservative task-count lifecycle without RSS kills."""
+    settings = Settings(analysis_worker_max_tasks_per_child=4)
+    assert settings.analysis_worker_max_tasks_per_child == 4

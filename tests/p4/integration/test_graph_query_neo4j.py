@@ -16,7 +16,9 @@ Validates:
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Generator
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,6 +28,7 @@ from neo4j.exceptions import TransientError
 from pydantic import SecretStr
 
 from backend.platform.config import Settings
+from backend.platform.graph.cursor import encode_cursor
 from backend.platform.graph.model import (
     GRAPH_SCHEMA_VERSION,
     PROJECTOR_VERSION,
@@ -95,6 +98,7 @@ def _make_scope(
     architecture_version_id: UUID | None = None,
     generation_id: UUID | None = None,
     schema_version: str = GRAPH_SCHEMA_VERSION,
+    projector_version: str = PROJECTOR_VERSION,
 ) -> GraphReadScope:
     return GraphReadScope(
         project_id=project_id or uuid4(),
@@ -102,7 +106,7 @@ def _make_scope(
         generation_id=generation_id or uuid4(),
         resource_state="COMPLETED",
         graph_schema_version=schema_version,
-        projector_version=PROJECTOR_VERSION,
+        projector_version=projector_version,
         counts=ProjectionCounts(
             entities=6,
             relationships=7,
@@ -180,7 +184,8 @@ def test_graph(
             "    generation_id: $generation_id, "
             "    generation_key: $generation_key, "
             "    state: $state, "
-            "    graph_schema_version: $schema_ver "
+            "    graph_schema_version: $schema_ver, "
+            "    projector_version: $projector_ver "
             "})",
             project_id=p_id,
             architecture_version_id=a_id,
@@ -188,6 +193,7 @@ def test_graph(
             generation_key=gen_key,
             state=MANIFEST_STATE_READY,
             schema_ver=GRAPH_SCHEMA_VERSION,
+            projector_ver=PROJECTOR_VERSION,
         )
 
         # Write nodes
@@ -288,7 +294,17 @@ def test_real_neo4j_manifest_preflight(
     with pytest.raises(GraphSchemaIncompatibleError):
         repo.verify_manifest_ready(incompatible_scope, timeout_seconds=5.0)
 
-    # 3. Missing generation raises GraphProjectionNotReadyError
+    # 3. Incompatible projector version also fails closed.
+    incompatible_projector_scope = _make_scope(
+        project_id=test_graph.scope.project_id,
+        architecture_version_id=test_graph.scope.architecture_version_id,
+        generation_id=test_graph.scope.generation_id,
+        projector_version="9.9.9",
+    )
+    with pytest.raises(GraphSchemaIncompatibleError):
+        repo.verify_manifest_ready(incompatible_projector_scope, timeout_seconds=5.0)
+
+    # 4. Missing generation raises GraphProjectionNotReadyError
     missing_scope = _make_scope()
     with pytest.raises(GraphProjectionNotReadyError):
         repo.verify_manifest_ready(missing_scope, timeout_seconds=5.0)
@@ -313,7 +329,8 @@ def test_real_neo4j_manifest_building_state_raises(
             "    generation_id: $generation_id, "
             "    generation_key: $generation_key, "
             "    state: $state, "
-            "    graph_schema_version: $schema_ver "
+            "    graph_schema_version: $schema_ver, "
+            "    projector_version: $projector_ver "
             "})",
             project_id=p_id,
             architecture_version_id=a_id,
@@ -321,6 +338,7 @@ def test_real_neo4j_manifest_building_state_raises(
             generation_key=gen_key,
             state=MANIFEST_STATE_BUILDING,
             schema_ver=GRAPH_SCHEMA_VERSION,
+            projector_ver=PROJECTOR_VERSION,
         )
 
     try:
@@ -409,6 +427,53 @@ def test_real_neo4j_query_window_and_pagination(
     assert page1_ids.isdisjoint(page2_ids)
 
 
+def test_real_neo4j_dense_window_continuation_is_compact_and_complete(
+    neo4j_env: tuple[Driver, Settings],
+    test_graph: GraphFixtureData,
+) -> None:
+    driver, settings = neo4j_env
+    repo = Neo4jGraphQueryRepository(driver, database=settings.neo4j_database)
+    request = GraphWindowRequest(
+        project_id=test_graph.scope.project_id,
+        architecture_version_id=test_graph.scope.architecture_version_id,
+        node_limit=5,
+        edge_limit=1,
+        page_size=5,
+    )
+
+    position: dict[str, Any] | None = None
+    seen_node_ids: set[UUID] = set()
+    for _ in range(20):
+        subgraph, position = repo.query_window(
+            test_graph.scope,
+            request,
+            position,
+            timeout_seconds=5.0,
+        )
+        page_node_ids = {node.architecture_entity_id for node in subgraph.nodes}
+        seen_node_ids.update(page_node_ids)
+        assert all(
+            edge.source_entity_id in page_node_ids
+            and edge.target_entity_id in page_node_ids
+            for edge in subgraph.edges
+        )
+
+        if position is None:
+            break
+        assert "window_node_keys" not in position
+        encode_cursor(
+            scope=test_graph.scope,
+            operation="window",
+            fingerprint="f" * 64,
+            position=position,
+            secret_key="dense-window-test-secret-key-32-bytes",
+        )
+    else:
+        pytest.fail("window continuation did not terminate")
+
+    assert seen_node_ids == set(test_graph.node_ids.values())
+
+
 def test_real_neo4j_query_neighborhood(
     neo4j_env: tuple[Driver, Settings],
     test_graph: GraphFixtureData,
@@ -457,6 +522,50 @@ def test_real_neo4j_query_neighborhood(
     assert "Cache" in both_names
     assert "Gateway" in both_names  # Incoming calls
     assert "CoreModule" in both_names  # Incoming contains
+
+
+def test_real_neo4j_traversal_continuation_preserves_edges_and_endpoint_closure(
+    neo4j_env: tuple[Driver, Settings],
+    test_graph: GraphFixtureData,
+) -> None:
+    driver, settings = neo4j_env
+    repo = Neo4jGraphQueryRepository(driver, database=settings.neo4j_database)
+    request = NeighborhoodRequest(
+        project_id=test_graph.scope.project_id,
+        architecture_version_id=test_graph.scope.architecture_version_id,
+        entity_id=test_graph.node_ids["AuthService"],
+        direction=TraversalDirection.OUTGOING,
+        depth=1,
+        node_limit=2,
+        edge_limit=1,
+    )
+
+    position: dict[str, Any] | None = None
+    seen_edges: set[UUID] = set()
+    for _ in range(4):
+        subgraph, position = repo.query_neighborhood(
+            test_graph.scope,
+            request,
+            position,
+            timeout_seconds=5.0,
+        )
+        page_nodes = {node.architecture_entity_id for node in subgraph.nodes}
+        assert all(
+            edge.source_entity_id in page_nodes and edge.target_entity_id in page_nodes
+            for edge in subgraph.edges
+        )
+        page_edges = {edge.architecture_relationship_id for edge in subgraph.edges}
+        assert seen_edges.isdisjoint(page_edges)
+        seen_edges.update(page_edges)
+        if position is None:
+            break
+    else:
+        pytest.fail("traversal continuation did not terminate")
+
+    assert seen_edges == {
+        test_graph.edge_ids["AuthService->UserService:calls"],
+        test_graph.edge_ids["AuthService->Cache:uses"],
+    }
 
 
 def test_real_neo4j_query_dependencies(
@@ -637,7 +746,8 @@ def test_real_neo4j_coexisting_generations_isolation(
             "    generation_id: $g2_id, "
             "    generation_key: $gen_key, "
             "    state: $state, "
-            "    graph_schema_version: $schema_ver "
+            "    graph_schema_version: $schema_ver, "
+            "    projector_version: $projector_ver "
             "})",
             p_id=p_id,
             a_id=a_id,
@@ -645,6 +755,7 @@ def test_real_neo4j_coexisting_generations_isolation(
             gen_key=gen_key_2,
             state=MANIFEST_STATE_READY,
             schema_ver=GRAPH_SCHEMA_VERSION,
+            projector_ver=PROJECTOR_VERSION,
         )
         session.run(
             "CREATE (n:ArchitectureEntity { "
@@ -713,3 +824,19 @@ def test_real_neo4j_error_mapping_transaction_timeout(
     err = TransientError("Database transaction timed out")
     with pytest.raises(GraphQueryTimeoutError, match="timed out"):
         repo._handle_neo4j_error(err)
+
+
+def test_real_neo4j_deadline_cancels_server_work(
+    neo4j_env: tuple[Driver, Settings],
+) -> None:
+    driver, settings = neo4j_env
+    repo = Neo4jGraphQueryRepository(driver, database=settings.neo4j_database)
+    started = time.monotonic()
+
+    with pytest.raises(GraphQueryTimeoutError):
+        with repo._bounded_transaction(0.02) as (tx, _):
+            tx.run("UNWIND range(1, 100000000) AS n RETURN sum(n) AS total").consume()
+
+    # The driver may spend a bounded interval closing the cancelled Bolt
+    # connection, but the intentionally huge query must not run to completion.
+    assert time.monotonic() - started < 1.5

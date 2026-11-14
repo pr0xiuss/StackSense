@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     analysis_queue_name: str = "analysis.jobs"
     analysis_worker_concurrency: int = 2
     analysis_worker_prefetch_multiplier: int = 1
+    analysis_worker_max_tasks_per_child: int = Field(default=2, ge=1, le=1000)
     analysis_max_retries: int = Field(default=3, ge=0)
     analysis_retry_backoff_seconds: int = Field(default=5, ge=1)
     analysis_dispatch_recovery_interval_seconds: int = Field(default=60, ge=1)

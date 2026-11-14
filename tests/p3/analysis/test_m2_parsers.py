@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -604,6 +605,63 @@ def test_parser_executor_memory_limit_configuration() -> None:
         import ctypes
 
         ctypes.windll.kernel32.CloseHandle(job)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="RLIMIT_AS is enforced on Linux")
+def test_parser_memory_limit_contains_over_limit_allocation() -> None:
+    """The parser child contains and identifies an RLIMIT_AS allocation failure."""
+    limit_mb = 512
+    child_script = "\n".join(
+        (
+            "import json, resource",
+            "from backend.platform.analysis.syntax.sandbox import "
+            "_apply_resource_limits",
+            f"limit_mb = {limit_mb}",
+            "_apply_resource_limits(limit_mb, 10.0)",
+            "soft, hard = resource.getrlimit(resource.RLIMIT_AS)",
+            "chunks = []",
+            "allocated = 0",
+            "try:",
+            "    while True:",
+            "        chunks.append(bytearray(32 * 1024 * 1024))",
+            "        allocated += len(chunks[-1])",
+            "except MemoryError:",
+            "    print(json.dumps({'classification': 'memory_limit_exceeded', "
+            "'document': None, 'soft': soft, 'hard': hard, "
+            "'allocated': allocated}, sort_keys=True))",
+        )
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", child_script],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=20.0,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    expected_limit = limit_mb * 1024 * 1024
+    assert payload == {
+        "allocated": payload["allocated"],
+        "classification": "memory_limit_exceeded",
+        "document": None,
+        "hard": expected_limit,
+        "soft": expected_limit,
+    }
+    assert 0 < payload["allocated"] < expected_limit
+    assert completed.stderr == ""
+
+    unrelated = subprocess.run(
+        [sys.executable, "-c", "raise RuntimeError('unrelated-worker-failure')"],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=5.0,
+    )
+    assert unrelated.returncode != 0
+    assert "unrelated-worker-failure" in unrelated.stderr
+    assert "memory_limit_exceeded" not in unrelated.stdout
 
 
 def test_grammar_abi_version_is_non_null() -> None:

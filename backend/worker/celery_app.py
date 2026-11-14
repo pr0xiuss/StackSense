@@ -49,6 +49,7 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=settings.analysis_worker_prefetch_multiplier,
     worker_concurrency=settings.analysis_worker_concurrency,
+    worker_max_tasks_per_child=settings.analysis_worker_max_tasks_per_child,
     task_routes={
         "stacksense.execute_analysis": {"queue": settings.analysis_queue_name},
         "stacksense.recover_analysis_jobs": {"queue": settings.analysis_queue_name},
