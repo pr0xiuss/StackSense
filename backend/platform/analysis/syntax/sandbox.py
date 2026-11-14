@@ -7,8 +7,12 @@ import errno
 import math
 import os
 import platform
-import resource
 import socket
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
 
 
 class ParserSandboxError(RuntimeError):
@@ -75,6 +79,8 @@ _FILESYSTEM_SYSCALLS = (
 
 
 def _set_hard_limit(limit_name: str, value: int) -> None:
+    if resource is None:
+        raise ParserSandboxError(f"{limit_name} is unavailable")
     limit = getattr(resource, limit_name, None)
     if limit is None:
         raise ParserSandboxError(f"{limit_name} is unavailable")
