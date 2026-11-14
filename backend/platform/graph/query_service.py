@@ -192,6 +192,7 @@ class GraphQueryService:
             generation_id=scope.generation_id,
             timeout_seconds=rem,
         )
+        self._check_remaining(deadline)
         if not is_still_active:
             raise GraphGenerationChangedError(
                 "Active graph projection generation changed during query execution; "

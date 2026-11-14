@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from backend.platform.config import Settings
 from backend.platform.graph.neo4j import (
+    GRAPH_SCHEMA_VERSION,
     GraphConfigurationError,
     GraphDependencyUnavailableError,
     GraphSchemaCompatibilityError,
@@ -59,17 +60,15 @@ class GraphQueryHealthProbe:
         status = GraphQueryHealthStatus.READY
         code = "query_engine_ready"
         details: dict[str, Any] | None = None
+        infrastructure: Neo4jInfrastructure | None = None
 
         try:
             infrastructure = self._infrastructure_factory(self._settings)
-            driver = infrastructure.driver
-            # Verify connectivity with a short query
-            with driver.session(database=self._settings.neo4j_database) as session:
-                result = session.run("RETURN 1 AS ready")
-                record = result.single()
-                if not record or record["ready"] != 1:
-                    status = GraphQueryHealthStatus.DEGRADED
-                    code = "query_probe_unexpected_result"
+            capability = infrastructure.initialize()
+            if capability.graph_schema_version != GRAPH_SCHEMA_VERSION:
+                raise GraphSchemaCompatibilityError(
+                    "Graph query schema version is incompatible."
+                )
         except GraphSchemaCompatibilityError as exc:
             status = GraphQueryHealthStatus.UNAVAILABLE
             code = "graph_schema_incompatible"
@@ -86,6 +85,9 @@ class GraphQueryHealthProbe:
             status = GraphQueryHealthStatus.UNAVAILABLE
             code = "storage_probe_failed"
             details = {"error_type": exc.__class__.__name__}
+        finally:
+            if infrastructure is not None:
+                infrastructure.close()
 
         return GraphQueryHealthResponse(
             status=status,

@@ -282,7 +282,8 @@ def test_real_postgresql_and_neo4j_query_pipeline(
                 "    generation_id: $g_id, "
                 "    generation_key: $gen_key, "
                 "    state: $state, "
-                "    graph_schema_version: $schema_ver "
+                "    graph_schema_version: $schema_ver, "
+                "    projector_version: $projector_ver "
                 "})",
                 p_id=p_id,
                 a_id=a_id,
@@ -290,6 +291,7 @@ def test_real_postgresql_and_neo4j_query_pipeline(
                 gen_key=gen_key_1,
                 state=MANIFEST_STATE_READY,
                 schema_ver=GRAPH_SCHEMA_VERSION,
+                projector_ver=PROJECTOR_VERSION,
             )
             neo_session.run(
                 "CREATE (n1:ArchitectureEntity { "
@@ -424,7 +426,8 @@ def test_real_postgresql_and_neo4j_query_pipeline(
                     "    generation_id: $g_id, "
                     "    generation_key: $gen_key, "
                     "    state: $state, "
-                    "    graph_schema_version: $schema_ver "
+                    "    graph_schema_version: $schema_ver, "
+                    "    projector_version: $projector_ver "
                     "})",
                     p_id=p_id,
                     a_id=a_id,
@@ -432,6 +435,7 @@ def test_real_postgresql_and_neo4j_query_pipeline(
                     gen_key=gen_key_2,
                     state=MANIFEST_STATE_READY,
                     schema_ver=GRAPH_SCHEMA_VERSION,
+                    projector_ver=PROJECTOR_VERSION,
                 )
                 neo_session.run(
                     "CREATE (n:ArchitectureEntity { "

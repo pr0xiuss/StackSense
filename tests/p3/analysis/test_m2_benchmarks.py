@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import resource
+import subprocess
 import sys
 import time
 import tracemalloc
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from backend.platform.analysis.inspection.model import _serialize_json_value
 from backend.platform.analysis.syntax.base import ParserRequest, ParserResult
@@ -50,6 +51,76 @@ def _generate_synthetic_javascript(size_bytes: int) -> bytes:
         curr_size += len(chunk.encode("utf-8"))
         idx += 1
     return "".join(chunks).encode("utf-8")
+
+
+def _linux_peak_rss_bytes() -> int:
+    """Read this process's address-space high-water RSS from procfs."""
+    for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+        if line.startswith("VmHWM:"):
+            return int(line.split()[1]) * 1024
+    raise RuntimeError("Linux procfs did not expose VmHWM")
+
+
+def _run_isolated_memory_case(
+    name: str, language: str, size_bytes: int, artifact_id: str
+) -> None:
+    """Child entry point emitting one parser workload measurement as JSON."""
+    content = (
+        _generate_synthetic_python(size_bytes)
+        if language == "python"
+        else _generate_synthetic_javascript(size_bytes)
+    )
+    adapter = PythonAstAdapter() if language == "python" else TreeSitterJsTsAdapter()
+    result = adapter.parse(
+        ParserRequest(
+            artifact_id=UUID(artifact_id),
+            path=f"synthetic/{name}",
+            content=content,
+            language=language,
+        )
+    )
+    document = result.document
+    serialized_bytes = (
+        len(json.dumps(_serialize_json_value(document), sort_keys=True))
+        if document is not None
+        else 0
+    )
+    print(
+        json.dumps(
+            {
+                "success": result.success,
+                "fact_count": len(document.facts) if document is not None else 0,
+                "serialized_bytes": serialized_bytes,
+                "peak_rss_bytes": _linux_peak_rss_bytes(),
+            },
+            sort_keys=True,
+        )
+    )
+
+
+def _measure_isolated_peak_rss(
+    name: str, language: str, size_bytes: int, artifact_id: UUID
+) -> dict[str, int | bool]:
+    """Measure a workload in a clean exec address space, independent of pytest."""
+    if sys.platform != "linux":
+        raise RuntimeError("Isolated parser RSS measurement requires Linux procfs")
+    script = (
+        "from tests.p3.analysis.test_m2_benchmarks import "
+        "_run_isolated_memory_case; "
+        f"_run_isolated_memory_case({name!r}, {language!r}, {size_bytes}, "
+        f"{str(artifact_id)!r})"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=60.0,
+    )
+    assert completed.returncode == 0, completed.stderr
+    output = json.loads(completed.stdout)
+    assert isinstance(output, dict)
+    return output
 
 
 def test_m2_benchmark_representative_fixtures() -> None:
@@ -131,6 +202,11 @@ def test_m2_benchmark_representative_fixtures() -> None:
 
 def test_m2_benchmark_synthetic_and_boundary_files() -> None:
     """Benchmark small/median files and 1 MiB high-fact-density stress cases."""
+    if sys.platform != "linux":
+        import pytest
+
+        pytest.skip("Independent parser RSS measurement requires Linux procfs")
+
     py_adapter = PythonAstAdapter()
     js_adapter = TreeSitterJsTsAdapter()
 
@@ -154,14 +230,12 @@ def test_m2_benchmark_synthetic_and_boundary_files() -> None:
             language=language,
         )
 
-        # Wall-clock deadlines must measure the extractor itself. Tracemalloc
-        # instruments every allocation and can add enough overhead to turn this
-        # into a profiler benchmark rather than a parser deadline check. The
-        # process high-water RSS below records memory without altering execution.
+        # Wall-clock deadlines measure only the extractor in this process.
+        # Memory is measured separately in a clean exec address space below so
+        # launcher/test-order high-water marks cannot contaminate the result.
         start_time = time.perf_counter()
         res = adapter.parse(req)
         exec_time = time.perf_counter() - start_time
-        peak_mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
         assert res.success is True
         assert res.document is not None
@@ -169,6 +243,13 @@ def test_m2_benchmark_synthetic_and_boundary_files() -> None:
         serialized_bytes = len(
             json.dumps(_serialize_json_value(res.document), sort_keys=True)
         )
+        isolated = _measure_isolated_peak_rss(
+            name, language, len(content), req.artifact_id
+        )
+        assert isolated["success"] is True
+        assert isolated["fact_count"] == len(res.document.facts)
+        assert isolated["serialized_bytes"] == serialized_bytes
+        peak_mem_mb = int(isolated["peak_rss_bytes"]) / (1024 * 1024)
 
         record = {
             "name": name,
@@ -202,7 +283,7 @@ def test_m2_benchmark_synthetic_and_boundary_files() -> None:
     # Assert bounded execution
     for rec in benchmark_records:
         assert rec["exec_time_seconds"] < 30.0  # within 30s deadline
-        assert rec["peak_mem_mb"] < 512.0  # approved process memory boundary
+        assert rec["peak_mem_mb"] < 512.0  # isolated workload boundary
 
 
 def test_m2_benchmark_exact_five_mib_isolated_boundary() -> None:

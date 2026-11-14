@@ -89,7 +89,7 @@ M4–M6 remain.
 | P1 — Engineering Foundation | **FROZEN / COMPLETE** | Backend/frontend, persistence, queue, security, migration, testing and operational foundations. |
 | P2 — Project & Repository Platform | **FROZEN / COMPLETE** | JWT identity, projects/RBAC, repositories, immutable revisions, artifacts and ingestion. |
 | P3 — Analysis Engine & Architecture Model | **FROZEN / COMPLETE** | M1/F1 lifecycle; M2/F2 inspection; M3/F3 IR; Architecture Model v1; gateway/UI; integration/performance closeout. |
-| P4 — Architecture Graph & Exploration | **M1 & M2 FROZEN; M3 BATCHES 1–3 VERIFIED** | M1 and M2 fully verified and frozen. M3 (Batches 1, 2, and 3: P4-Q1 query engine, contracts, cursor, Neo4j repository, double-read generation protection, DI, health probe, and real PG+Neo4j pipeline) implemented and verified. Ready for independent review and contract freeze. M4–M6 upcoming. |
+| P4 — Architecture Graph & Exploration | **M1–M3 FROZEN; M4 PLAN APPROVED / IMPLEMENTATION AUTHORIZED** | M1 and M2 are frozen. The owner confirmed M3 complete and froze P4-Q1/P4-H1 after verified review remediation. The corrected three-batch M4 Python/FastAPI integration plan in Section 7E passed Master Agent review and is approved as one sequential implementation unit; implementation has not started. M5–M6 remain upcoming. |
 | P5 — Knowledge, Search & Diagram Intelligence | **UPCOMING** | Depends on verified P4 graph; owns retrieval, search, knowledge and diagram intelligence. |
 | P6 — AI Architecture Intelligence | **UPCOMING** | Owns grounded AI explanation after deterministic retrieval. |
 | P7 — Final Product & Hardening | **UPCOMING** | Productization, deployment hardening and final acceptance. |
@@ -2813,8 +2813,9 @@ G2 construction; a pointer switch never produces mixed output; M4 can compose
 all seven operations without redefining DTOs; no Express/frontend/API route or
 frozen source changes; execution evidence and deviations are recorded.
 
-**Owner gate:** independent M3 review and explicit P4-Q1/P4-H1 freeze approval
-before detailed M4 implementation planning begins.
+**Owner gate — SATISFIED 2026-11-13:** independent M3 review remediation was
+verified and the owner explicitly froze P4-Q1/P4-H1. Section 12.13 records the
+status approval; M3 is not reopened by M4.
 
 **Batch 3 Execution Record (2026-11-13 — Verified):**
 - **Files created/modified:**
@@ -2933,11 +2934,426 @@ The owner approved the implementation baseline choices for: (a) exact P4-Q1
 DTO field names, (b) the 15-minute cursor TTL and invalidate-on-secret-rotation
 policy, (c) explicit-only `contains` in generic neighborhoods, (d)
 non-containment-only bounded paths, and (e) the safe error vocabulary/mappings.
-They remain subject to implementation evidence and the planned P4-Q1 freeze
-gate; plan approval does not mark the contract implemented or frozen. No other
-architectural decision blocks implementation. The dedicated stable-ID index is
+The implementation and review evidence is recorded, and the owner subsequently
+froze P4-Q1/P4-H1 in Section 12.13. No other architectural decision blocks M4
+implementation. The dedicated stable-ID index is
 **not** proposed; it becomes a change-control question only if real Batch 2
 evidence proves the frozen schema inadequate.
+
+## 7E. Detailed M4 Plan — Python/FastAPI Graph API Completion and Backend Integration
+
+**Planning status (2026-11-13): PLANNING COMPLETE — MASTER AGENT REVIEW
+COMPLETED / OWNER APPROVED; ALL THREE BATCHES AUTHORIZED AS ONE SEQUENTIAL UNIT;
+IMPLEMENTATION NOT STARTED.** Implementation proceeds Batch 1 -> Batch 2 ->
+Batch 3 without separate planning approval between batches. Batch acceptance
+evidence remains mandatory, followed by one consolidated M4 review. This
+section supersedes only the provisional M4 sketch in Sections 7/7B; it does not
+alter the 17 approved P4 decisions or frozen P1-P3/M1-M3 contracts.
+
+### A. Verified repository findings and prerequisite discrepancy
+
+1. FastAPI is assembled in `backend/api/app.py`; `/api/v1` composition lives in
+   `backend/api/v1/router.py`. Routers use synchronous functions, Pydantic
+   response models and request-scoped SQLAlchemy sessions. The existing
+   `StackSenseError` handler returns `{error:{code,message,details}}` and applies
+   code/category-based HTTP status mapping.
+2. `backend/api/v1/architecture.py` exposes only the canonical P3 Architecture
+   Model. No FastAPI graph status/query/rebuild route exists. The planned
+   `backend/api/v1/graph.py` path is therefore a verified **new P4 file**, not a
+   modification of an existing graph router.
+3. The accepted ADR-0001 boundary is implemented by
+   `get_delegated_context`: constant-time `X-Service-Token` validation plus
+   required actor UUID, closed OWNER/ADMIN/DEVELOPER/VIEWER role, project UUID
+   and optional correlation ID. `require_delegated_project` rejects a query/path
+   project different from the trusted header. M4 can reuse these frozen
+   dependencies without modifying P3 authentication code.
+4. M1's `GraphProjectionLifecycle.request_rebuild(resource_id, actor_id,
+   actor_role, correlation_id)` owns rebuild-attempt creation, role validation,
+   idempotent active-attempt reuse and the strict P4-W1 payload. Its repository
+   is caller-transaction-owned. M1 intentionally has no public exact
+   `(project_id, architecture_version_id)` status lookup and no HTTP facade.
+5. A P4-owned, read-only M4 status adapter can query the frozen M1 tables without
+   adding an M1 repository method. It must return the exact public resource state
+   and active attempt summary verbatim; it may not infer lifecycle transitions,
+   mutate rows or become a second lifecycle authority.
+6. A manual rebuild can remain reliable without a new queue dual write: M4
+   resolves the exact scoped resource, invokes the frozen M1 lifecycle method
+   and commits the queued attempt. The existing M1 reconciler is the sole
+   dispatcher/recovery authority and will publish the durable candidate. M4 does
+   not publish, mark dispatched, retry, lease, verify or activate it.
+7. M3 exposes exactly seven service methods: `get_window`, `get_node_detail`,
+   `get_neighborhood`, `get_dependencies`, `get_dependents`, `get_containment`
+   and `get_bounded_paths`. Its immutable P4-Q1 request/result DTOs, enums,
+   limits, signed cursors, errors and five-second whole-operation deadline are
+   directly reusable. M4 must only translate HTTP parameters into those request
+   models and return their existing response models.
+8. M3 errors are safe typed `GraphQueryError` values but are not
+   `StackSenseError`; an additive M4 exception adapter/handler is required to
+   preserve their codes and approved HTTP mappings. Driver exceptions and raw
+   lifecycle messages must never be forwarded.
+9. `/api/v1/health` is the frozen core-ready response and
+   `/api/v1/health/graph` is M1's lifecycle/infrastructure health. M3 separately
+   provides `GraphQueryHealthProbe/Response`. M4 will add a distinct safe query
+   capability endpoint rather than change either existing response contract.
+10. Express's current `architectureRoutes.js` and `architectureController.js`
+    proxy only P3 version/entity/relationship/evidence/unresolved/conflict
+    endpoints. There is **no browser-facing P4 graph status/query/rebuild
+    transport**. M4 remains Python-only, so this does not block its internal API
+    contract, but it blocks M5 live integration until separately approved
+    Express change control supplies a compatible proxy. React must not call
+    FastAPI directly.
+11. The owner confirmed after remediation verification that M3 is complete and
+    P4-Q1/P4-H1 are frozen. Section 12.13 records that status-only approval; it
+    does not rewrite M3 implementation details or test evidence. M4 consumes the
+    existing frozen contracts directly and has no remaining M3 prerequisite.
+
+### B. Objective, ownership and non-goals
+
+M4 composes the frozen M1 lifecycle and M3 query capabilities into a secure,
+version-explicit, documented internal FastAPI API. It owns HTTP routing,
+transport parameter mapping, delegated-context enforcement, exact project and
+Architecture Version checks, OWNER/ADMIN rebuild authorization, safe HTTP error
+mapping, correlation-aware route logging, graph query health exposure, OpenAPI
+completion and P4-D1 contract tests.
+
+M4 does **not** own graph semantics, Cypher, cursors, limits, generation
+selection, projection writes/verification/activation, attempts/leases/retries,
+browser authentication, project membership, Express gateway behavior, MongoDB,
+frontend integration, P5 retrieval or P6 AI. It does not alter M1 or M3 frozen
+interfaces. Express remains the browser-facing JWT/RBAC boundary; FastAPI
+independently validates the delegated service/actor/role/project context.
+
+### C. Proposed P4-D1 contract
+
+P4-D1 v1 consists of the nine internal graph endpoints below, the separate
+query-health endpoint, the unchanged delegated headers, direct reuse of P4-Q1
+DTOs/vocabularies/limits and the safe error envelope. Every graph endpoint:
+
+- requires `X-Service-Token`, `X-Actor-Id`, `X-Actor-Role` and `X-Project-Id`;
+- accepts required `project_id` as a query parameter and rejects a mismatch
+  before any graph/lifecycle service invocation;
+- retains the explicit path `architecture_version_id` and never resolves or
+  substitutes a latest/current version;
+- uses the trusted delegated role, never a body/query role;
+- accepts optional `X-Correlation-Id`; one M4 request-context dependency
+  validates a supplied value as 1..255 characters without rewriting it, or
+  generates exactly one UUID when absent. That same value is reused by route
+  logs and M1 rebuild/audit persistence;
+- documents success and safe error schemas in OpenAPI; and
+- never returns service credentials, Neo4j keys/IDs, SQL details, Cypher,
+  traceback text, hostnames, storage credentials or raw exception messages.
+
+#### C1. Endpoint inventory and exact mappings
+
+| Method/path | HTTP input -> frozen service request | Response/service/authorization |
+|---|---|---|
+| `GET /api/v1/architecture-versions/{version_id}/graph/status` | required `project_id`; exact UUID path/query | `ProjectionStatusResponse` from the M4 read-only status adapter; all four authorized roles; exact project/version only. |
+| `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}` | `project_id`, optional `timeout_seconds` -> `NodeDetailRequest(project_id, version_id, entity_id, timeout_seconds)` | existing `GraphNode`; `GraphQueryService.get_node_detail`; all roles. The actual frozen DTO has no separate scope wrapper. |
+| `GET /api/v1/architecture-versions/{version_id}/graph/window` | `project_id`, `node_limit`, `edge_limit`, `page_size`, repeated `canonical_kinds`, optional `cursor`, `timeout_seconds` -> `GraphWindowRequest` | existing `GraphSubgraph`; `get_window`; all roles. |
+| `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}/neighborhood` | `project_id`, `direction`, `depth`, node/edge limits, repeated `relationship_kinds`, cursor, timeout -> `NeighborhoodRequest` | `GraphSubgraph`; `get_neighborhood`; all roles; explicit `contains` remains permitted only under frozen M3 rules. |
+| `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}/dependencies` | `project_id`, depth, node/edge limits, repeated dependency kinds, cursor, timeout -> `DependenciesRequest` | `GraphSubgraph`; `get_dependencies`; all roles; `contains` remains rejected. |
+| `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}/dependents` | same bounded fields -> `DependentsRequest` | `GraphSubgraph`; `get_dependents`; all roles; canonical edge direction is unchanged. |
+| `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}/containment` | `project_id`, `direction=parents|children|both`, depth, node/edge limits, cursor, timeout -> `ContainmentRequest` | `GraphSubgraph`; `get_containment`; all roles; only `contains`. |
+| `GET /api/v1/architecture-versions/{version_id}/graph/paths` | `project_id`, required `source_entity_id`, `target_entity_id`, `max_depth`, `path_limit`, repeated relationship kinds, timeout -> `BoundedPathsRequest` | `GraphPathResult`; `get_bounded_paths`; all roles; non-containment directed paths only. |
+| `POST /api/v1/architecture-versions/{version_id}/graph/rebuild` | required `project_id`; no caller-supplied actor/role/generation/resource ID | `202 ProjectionRebuildAcceptedResponse`; OWNER/ADMIN only; M4 adapter resolves exact resource then invokes `GraphProjectionLifecycle.request_rebuild`, commits the durable attempt and leaves dispatch to M1 reconciliation. |
+| `GET /api/v1/health/graph/query` | no delegated/user scope; no caller-controlled graph query | existing `GraphQueryHealthResponse`; additive P4-H1 query capability probe. It never alters core `/health` or M1 `/health/graph`. |
+
+All request defaults and hard maxima are imported from P4-Q1, not copied as new
+constants. Repeated enum query values map to tuples and Pydantic performs the
+final frozen validation. Cursor strings remain opaque. FastAPI's syntactic
+path/query validation remains a documented 422; intentional graph failures use
+the StackSense error envelope.
+
+#### C2. M4 lifecycle transport DTOs
+
+- `ProjectionAttemptSummary`: `attempt_id`, `attempt_number`, frozen attempt
+  state and created/updated/completed timestamps. It excludes actor identity,
+  lease tokens/owners, correlation IDs, failure messages and dispatch internals.
+- `ProjectionStatusResponse`: resource UUID, exact project/version UUIDs,
+  frozen public state, optional active generation/schema/projector versions,
+  optional verified `ProjectionCounts`, safe `last_failure_code`, timestamps and
+  optional active-attempt summary. An in-progress rebuild may coexist with a
+  readable COMPLETED/STALE active generation; M4 must not rewrite that state.
+- `ProjectionRebuildAcceptedResponse`: resource/version IDs, public resource
+  state, queued/reused attempt UUID/number/state and `accepted_at` from the
+  attempt record. `202` means a durable M1 attempt exists, not that projection
+  completed or dispatch succeeded.
+- `GraphErrorResponse`: OpenAPI model of the existing
+  `{error:{code,message,details}}` shape; it changes no global envelope.
+
+#### C3. Authorization and scope matrix
+
+| Capability | OWNER | ADMIN | DEVELOPER | VIEWER | Scope enforcement |
+|---|---:|---:|---:|---:|---|
+| Projection status | read | read | read | read | trusted header project must equal `project_id`; adapter requires exact version/project pair. |
+| Seven P4-Q1 reads | read | read | read | read | delegated project check precedes M3; M3 independently scopes project/version/generation. |
+| Manual rebuild | allow | allow | deny | deny | role denial occurs before resource lookup; actor UUID/role/correlation come only from delegated context. |
+| Query health | safe operational read | safe operational read | safe operational read | safe operational read | no tenant data or graph records are returned; endpoint follows the existing public health convention. |
+
+Missing/invalid service credentials are 401. Missing/malformed delegated
+actor/project or correlation input is 422. Unknown role, project mismatch and
+rebuild role denial are 403. Cross-project and wrong-version lookups use the
+same safe not-found result and never disclose whether another scope exists.
+
+#### C4. Error and degradation mapping
+
+| Domain condition/code | HTTP | Public behavior |
+|---|---:|---|
+| `graph_projection_not_found` | 404 | exact scoped projection absent; same response for out-of-scope version. |
+| `graph_projection_not_ready` | 409 | exact version has no readable verified generation; no fallback. |
+| `graph_node_not_found` | 404 | no node existence disclosure outside exact scope. |
+| `graph_cursor_invalid` | 422 | malformed/tampered opaque cursor; decoded attacker content is never returned. |
+| `graph_cursor_scope_mismatch` | 422 | cursor operation/project/version/parameters do not match. |
+| `graph_cursor_expired` | 410 | caller restarts the operation explicitly. |
+| `graph_generation_changed` | 409 | caller retries explicitly; M4 never substitutes another generation/version. |
+| `graph_query_limit_exceeded` | 422 | frozen M3 bounds or kind policy rejected the domain request. |
+| `graph_query_timeout` | 504 | M3 has cancelled/rolled back database work; no partial payload. |
+| `graph_unavailable` | 503 | graph storage/query capability unavailable; canonical P3 routes remain available. |
+| `graph_schema_incompatible` | 503 | installed projection/query schema is incompatible; no unsafe fallback. |
+| `graph_query_integrity_error` | 500 | stable generic integrity message; no record/driver details. |
+| `graph_rebuild_conflict` | 409 | M4-specific lifecycle composition conflict; M1 state remains authoritative. |
+| `graph_lifecycle_unavailable` | 503 | PostgreSQL lifecycle persistence/commit unavailable; request is rolled back and never accepted. |
+| `graph_api_internal_error` | 500 | sanitized unexpected M4 failure; exception detail stays server-side. |
+
+M4 preserves every M3 code and its approved `safe_details` allowlist.
+Lifecycle exceptions are mapped by explicit type/control flow, never by parsing
+arbitrary error text. SQLAlchemy failures roll back and become
+`graph_lifecycle_unavailable`. Existing delegated authentication remains
+`authentication_required|invalid_token` -> 401, malformed delegated context
+remains `analysis_input_invalid` -> 422, and role/project denial remains
+`analysis_access_denied` -> 403. FastAPI syntactic path/query validation remains
+a distinct standard 422 transport response; it is not relabeled as a graph
+domain error. The existing global handler gains only additive graph handlers/
+mappings and no unrelated status mapping changes.
+
+### D. Internal composition and data flow
+
+```text
+trusted Express/service request
+  -> FastAPI graph route validates delegated service/actor/role/project
+  -> exact project header/query match and rebuild role check
+  -> read route builds the frozen P4-Q1 request DTO
+       -> frozen GraphQueryService -> PostgreSQL generation + Neo4j query
+  -> status/rebuild route invokes M4 GraphApiService
+       -> read-only exact-version status adapter
+       -> frozen GraphProjectionLifecycle.request_rebuild (mutation only)
+       -> caller-owned commit; existing M1 reconciler dispatches/retries
+  -> graph error adapter -> existing safe error envelope/OpenAPI response
+```
+
+`GraphApiService` is a thin M4 facade, not lifecycle logic. Its status reader is
+the sole new component aware of frozen M1 persistence models. For status it
+executes one SQLAlchemy `SELECT` that reads the exact project/version/projection
+resource and left-joins its active QUEUED/RUNNING/RETRYING attempt. PostgreSQL's
+statement-level MVCC snapshot therefore supplies the resource state, active
+generation and active-attempt fields from one observed database state. The M1
+partial uniqueness invariant permits at most one active attempt. The adapter
+maps that single result directly, uses no row locks and never infers a transition.
+If lifecycle state changes before or after the statement, the caller receives
+the coherent before-or-after snapshot, never fields combined from two reads.
+
+The exact rebuild call/transaction sequence is:
+
+1. the route validates the delegated service, actor, OWNER/ADMIN role and exact
+   project match, then obtains the request's one correlation ID;
+2. the M4 status reader resolves the exact `(project_id,
+   architecture_version_id, projection_type)` resource in the existing
+   request-scoped SQLAlchemy session; absence/out-of-scope is the same safe 404;
+3. `GraphApiService` invokes the frozen
+   `GraphProjectionLifecycle.request_rebuild(resource.id, actor_id, actor_role,
+   correlation_id)`; M1 alone locks as required, creates or reuses the active
+   attempt and applies lifecycle/role/idempotency semantics;
+4. the status reader performs its coherent single-statement read inside that
+   same transaction to materialize the accepted resource/attempt DTO;
+5. `GraphApiService`, using the injected request-session `commit` callback,
+   commits before returning. Only a successful commit permits HTTP 202;
+6. any lookup, lifecycle, flush or commit failure invokes the same session's
+   `rollback` callback and returns a safe error—never an acceptance response;
+7. after commit, the existing M1 reconciler alone discovers and dispatches the
+   queued attempt and owns all subsequent recovery.
+
+No second session, transaction manager, publisher or idempotency key is added.
+Concurrent rebuild requests continue to reuse M1's active attempt. M4 never
+publishes Celery work, marks it dispatched, acquires a lease, retries, verifies
+or activates a generation.
+
+One M4 request-context dependency resolves correlation once. A supplied
+`X-Correlation-Id` must contain 1..255 characters and is propagated byte-for-
+byte; an absent header causes one UUID to be generated. The same resolved value
+is used for route-level structured logs and M1 rebuild/audit persistence—no
+downstream layer generates another request ID. Logs contain operation,
+correlation ID, actor UUID, trusted role, project/version, HTTP outcome and safe
+graph code. They exclude service tokens, cursors, query metadata, Cypher, graph
+records and database messages. M3's frozen observer remains unchanged.
+
+### E. Exact file-level implementation plan
+
+| Action/path | Components and responsibility | Dependencies/tests/rationale |
+|---|---|---|
+| CREATE `backend/api/v1/graph.py` | P4-D1 router, nine scoped endpoints, query-health endpoint, parameter-to-P4-Q1 mapping, delegated project/role checks, response declarations and safe route logging. | Depends on frozen delegated dependencies, M1/M3 providers and M4 DTO/facade. API contract/auth/OpenAPI tests. Transport belongs here; no domain logic/Cypher. |
+| MODIFY `backend/api/v1/router.py` | Include the new graph router under existing `/api/v1`. | Router-registration/OpenAPI regression. Minimal additive API composition. |
+| CREATE `backend/platform/graph/api_contracts.py` | `P4_D1_CONTRACT_VERSION`, lifecycle response DTOs, error-envelope OpenAPI models and safe M4 lifecycle error classes. | Reuses `ProjectionCounts` and frozen state enums. Serialization/extra-field/error-code tests. Keeps M4-owned vocabulary out of frozen M1/M3 files. |
+| CREATE `backend/platform/graph/api_service.py` | `GraphProjectionStatusReader` port, one-statement SQLAlchemy exact-scope resource/active-attempt snapshot adapter and thin `GraphApiService` for status/rebuild transaction composition. | Reads frozen M1 models; delegates mutation to `GraphProjectionLifecycle`; receives the same request session's commit/rollback callbacks. Unit + real PostgreSQL snapshot/concurrency/rollback tests. Avoids changing M1 repository contract. |
+| CREATE `backend/platform/graph/api_dependencies.py` | Provide the request-scoped M4 status reader/API facade and one correlation-context resolver while depending on existing frozen lifecycle/query/query-health providers. | Tests supplied/missing/empty/overlong correlation, single-ID reuse and session commit/rollback. A separate M4 composition module avoids reopening M3's provider file or package exports. |
+| MODIFY `backend/api/error_handlers.py` | Add explicit M3 `GraphQueryError` handling and M4 graph-code HTTP mappings while retaining the existing envelope and unrelated mappings. | Parametrized status/code/sanitization tests. Required because frozen M3 errors are transport-neutral. |
+| CREATE `tests/p4/api/__init__.py` | Mark the P4 API test package. | No runtime responsibility. |
+| CREATE `tests/p4/api/test_graph_contracts.py` | Endpoint paths/methods, parameter mapping, exact P4-Q1 DTO responses, response/error schemas and OpenAPI assertions. | FastAPI dependency overrides/fakes; all nine endpoints plus query health. |
+| CREATE `tests/p4/api/test_graph_authorization.py` | Missing/invalid service token; malformed actor/role/project; header mismatch; all role reads; OWNER/ADMIN rebuild; DEVELOPER/VIEWER denial; cross-project/version isolation. | Proves authorization occurs before service calls. |
+| CREATE `tests/p4/api/test_graph_errors_health.py` | Complete M3/M1 error-to-HTTP matrix, sanitized unexpected failures, Neo4j degradation/query health and unchanged core/M1 health. | Fakes plus OpenAPI checks; no secret/stack leakage. |
+| CREATE `tests/p4/integration/test_graph_api_pipeline.py` | Real FastAPI + PostgreSQL + Neo4j status and all seven reads, durable rebuild request, concurrent request reuse, pointer/generation behavior and outage isolation. | Reuses P4 infrastructure fixtures; no Express mutation. |
+| REUSE / DO NOT MODIFY `backend/platform/analysis/application/dependencies.py` | Existing ADR-0001 service/actor/role/project validation and project matcher. | Frozen P3 boundary; M4 imports it only. |
+| REUSE / DO NOT MODIFY M1/M2/M3 files (`model.py`, `lifecycle.py`, `repository.py`, `persistence.py`, `query_contracts.py`, `query_service.py`, `query_repository.py`, `query_health.py`, `dependencies.py`, `__init__.py`) | Frozen lifecycle/query authority and exports. | Any discovered need to alter these is a hard stop and explicit change-control request. |
+| REUSE / DO NOT MODIFY `express/**`, `frontend/**`, migrations, dependencies, `master.txt` | Browser transport/UI and schema are outside M4. | Run regressions only. Missing Express P4 transport remains an owner decision. |
+
+No migration, Neo4j schema/index, dependency, environment variable or
+configuration change is planned.
+
+### F. Three sequential implementation batches
+
+These three batches are one owner-approved implementation unit. The
+implementation agent proceeds sequentially through all three and records each
+batch's acceptance evidence without pausing for another planning approval or
+owner review. It stops only for a genuine frozen-interface/architecture
+conflict, an unresolvable hard acceptance failure, a schema/dependency/migration
+change, or another action requiring explicit owner authorization. After Batch 3,
+the Master Agent performs one consolidated M4 review.
+
+#### Batch 1 — Python API contract integration
+
+**Scope:** create P4-D1 contracts and thin status reader/facade; implement and
+register status plus all seven read routes; reuse P4-Q1 request/result DTOs;
+apply delegated service/project validation; declare OpenAPI success/error
+responses. Rebuild mutation and final degradation behavior remain for Batch 2.
+
+**Dependencies:** frozen P4-Q1/P4-H1, frozen M1 lifecycle and M3 service
+providers, and existing FastAPI session/delegated dependencies. All are
+satisfied; there is no remaining pre-implementation contract gate.
+
+**Tests/evidence:** contract serialization; all role read access; every route's
+exact service method/request model; defaults, repeated enums, cursor and hard
+limit validation; project/version mismatch before service invocation; router
+registration and generated OpenAPI paths/schemas; Black/Ruff/MyPy and focused
+API suite.
+
+**Acceptance:** all seven operations are reachable only through delegated exact
+scope; routes contain no query/lifecycle logic; responses are byte-compatible
+with frozen P4-Q1 serialization; status reflects M1 without reinterpretation;
+no Express/frozen file is changed; P4-D1 version and endpoint vocabulary are
+ready for the consolidated review.
+
+#### Batch 2 — Mutation, authorization and degradation
+
+**Scope:** add OWNER/ADMIN-only `202` rebuild; transactionally persist/reuse the
+M1 attempt and rely on M1 reconciliation for dispatch; add correlation/audit
+logging; install complete M3/M4 error mapping; expose separate query health;
+prove graph outages do not affect core/P3 health or canonical APIs.
+
+**Dependencies:** Batch 1 contracts/facade. No new owner approval between
+batches unless a frozen-interface gap appears.
+
+**Tests/evidence:** role matrix; supplied/missing/empty/overlong correlation and
+one-ID propagation to logs/persistence; exact-version resource resolution;
+single-statement coherent status before/during/after concurrent rebuild;
+active-attempt reuse; concurrent rebuild requests; commit failure rollback;
+reconciler-visible queued attempt; every M3 code mapping;
+PostgreSQL and Neo4j failure mapping; query health ready/degraded/unavailable;
+no misleading 200/202 on failure; log-capture tests proving correlation is
+present and secrets/cursors/internal messages are absent.
+
+**Acceptance:** DEVELOPER/VIEWER are denied before existence lookup;
+OWNER/ADMIN create exactly one durable attempt under concurrency; `202` never
+claims completion; M4 never dispatches/leases/activates; all failures use stable
+safe envelopes; `/api/v1/health` and `/api/v1/health/graph` remain unchanged.
+
+#### Batch 3 — Backend integration, regression and P4-D1 freeze evidence
+
+**Scope:** complete real FastAPI/PostgreSQL/Neo4j composition tests, OpenAPI and
+contract snapshot assertions, isolation/concurrency/outage cases, full relevant
+regressions and the M4 execution record. No implementation scope expansion.
+
+**Tests/evidence commands:**
+
+```text
+./venv/bin/pytest -q tests/p4/api
+./venv/bin/pytest -q tests/p4/integration/test_graph_api_pipeline.py
+./venv/bin/pytest -q tests/p4
+./venv/bin/pytest -q tests/p1 tests/p2 tests/p3
+./venv/bin/black --check backend tests
+./venv/bin/ruff check backend tests
+./venv/bin/mypy backend
+npm --prefix express test
+npm --prefix express audit --omit=dev
+git diff --check
+git diff --name-only -- express frontend master.txt backend/platform/analysis
+```
+
+Run against real PostgreSQL 16 and Neo4j Community 5.26.33; use fakes only for
+isolated transport/error cases. Record skipped tests and the known frozen P3
+process-wide memory benchmark separately rather than claiming a clean run.
+
+**Acceptance:** status, seven reads and rebuild pass real composition; cursor
+and generation errors survive HTTP mapping unchanged; cross-project/version
+decoys never leak; OpenAPI contains exact request/response/error contracts;
+existing P1-P3, P4 M1-M3 and Express behavior has no functional regression;
+there are zero Express/frontend/frozen-contract changes; execution evidence is
+ready for one consolidated independent M4 review and explicit P4-D1 freeze.
+
+### G. Security, failure cases and edge conditions
+
+- Authorization precedes retrieval. Cross-scope timing/detail is normalized to
+  safe denial/not-found behavior; M4 never retrieves broadly then filters.
+- Candidate generations, PENDING/RUNNING/FAILED resources without a readable
+  active generation and BUILDING manifests remain inaccessible under M3 rules.
+  Exact STALE versions with verified active generations remain readable.
+- Rebuild failure never invalidates the previous COMPLETED/STALE active
+  generation. Status may simultaneously show a readable public resource and an
+  active rebuild attempt.
+- Duplicate/concurrent rebuild calls reuse M1's active attempt; M4 adds no
+  idempotency scheme that conflicts with M1.
+- Invalid enum arrays, duplicate kinds, excessive limits, long cursors and
+  timeout values are handled by frozen P4-Q1 validation; M4 does not clamp or
+  silently rewrite them.
+- Error details expose only allowlisted identifiers/codes already approved by
+  the contracts. Authentication tokens, actor-supplied cursor payloads and
+  storage/driver messages are never logged or returned.
+- Query health is safe and isolated. An unavailable Neo4j returns graph
+  unavailable/degraded status while core health and canonical P3 architecture
+  endpoints stay operational.
+
+### H. Definition of Done
+
+M4 is complete only when all nine scoped endpoints and query health match the
+approved P4-D1 contract; direct P4-Q1 DTO reuse is proven; delegated service,
+actor, role, project and exact-version checks fail closed; all authorized roles
+read and only OWNER/ADMIN rebuild; M1 remains the sole lifecycle/dispatch/
+activation owner; M3 remains the sole graph-query owner; safe errors/OpenAPI,
+correlation logging and degradation are complete; real PostgreSQL/Neo4j
+composition and relevant regressions pass with exact evidence; no Express,
+frontend, migration, dependency, `master.txt` or frozen P1-P3/M1-M3 file is
+modified; and consolidated independent review plus explicit P4-D1 freeze is
+recorded.
+
+### I. Risks, blockers and approval decisions
+
+1. **M4 implementation blockers:** none are currently known. The owner froze
+   P4-Q1/P4-H1 and approved this corrected P4-D1 endpoint vocabulary, lifecycle
+   status/rebuild DTOs, safe error mappings, query-health route, coherent status
+   snapshot and durable-attempt/reconciler-dispatch design. All three batches
+   are authorized as one sequential implementation unit.
+2. **Browser transport — downstream M5 blocker, not M4 scope:** current Express has
+   no P4 graph proxy. Before M5 API integration, the owner must authorize a
+   separate Express gateway change or another architecture-compliant transport.
+   Direct React-to-FastAPI is forbidden. M4 can be implemented/frozen internally
+   while this remains unresolved, but P4 cannot complete without it.
+3. **Frozen-interface escape hatch:** if implementation proves that the M4
+   read-only adapter cannot expose status or the existing lifecycle cannot
+   durably accept a rebuild, stop for explicit M1 change control. No such change
+   is currently required by inspected code.
+4. **Operational risks:** request-scoped Neo4j initialization cost, health-probe
+   load, status/attempt races and correlation-log leakage are mitigated by reuse
+   of current DI, bounded safe probes, a one-statement PostgreSQL status snapshot,
+   M1 locking/idempotency and negative tests. No new performance/SLO claim is
+   introduced.
 
 ## 8. Dependency Graph and Implementation Order
 
@@ -3072,12 +3488,19 @@ Approval is sequential and non-transitive:
    complete.
 5. **Detailed M3 planning — OWNER APPROVED.** Section 7D and its three batches
    are the approved implementation baseline. M3 implementation (Batches 1, 2, and 3)
-   is complete and verified against real PostgreSQL and Neo4j Community. Ready for
-   independent review and contract freeze. Detailed M4–M6 planning is not started.
-6. **Implementation — M1 & M2 FROZEN / COMPLETE; M3 IMPLEMENTED / VERIFIED.**
+   is complete; independent-review findings are remediated and verified against real
+   PostgreSQL and Neo4j Community. The owner confirmed M3 complete and froze
+   P4-Q1/P4-H1 on 2026-11-13; M3 is not reopened by M4.
+6. **Detailed M4 planning — MASTER AGENT REVIEW COMPLETE / OWNER APPROVED.**
+   Section 7E is the approved complete three-batch P4-D1 implementation baseline.
+   All batches are authorized as one sequential unit; implementation has not
+   started.
+7. **Implementation — M1, M2 & M3 FROZEN / COMPLETE; M4 AUTHORIZED / NOT
+   STARTED.**
    The owner accepted M1, P4-L1/P4-S1/P4-W1, and M2. M3 Batches 1, 2, and 3 are
-   fully implemented and verified against PostgreSQL 16 and Neo4j Community 5.26.33.
-   P4-Q1 contracts and implementations are ready for independent review and freeze.
+   fully implemented; the review remediation is verified against PostgreSQL 16 and
+   Neo4j Community 5.26.33, and P4-Q1/P4-H1 are frozen. M4 implementation is
+   authorized but no batch has started.
 
 | Work item | Status |
 |---|---|
@@ -3093,10 +3516,13 @@ Approval is sequential and non-transitive:
 | P4 M2 detailed plan | **OWNER APPROVED — ALL THREE BATCHES** |
 | P4 M2 implementation | **IMPLEMENTED / REVIEWED / COMPLETE** |
 | P4 M3 detailed plan | **OWNER APPROVED — ALL THREE BATCHES** |
-| P4 M3 implementation | **IMPLEMENTED — BATCHES 1, 2 & 3 VERIFIED; READY FOR INDEPENDENT REVIEW & FREEZE** |
+| P4 M3 implementation | **FROZEN / COMPLETE — REVIEW REMEDIATION VERIFIED** |
+| P4-Q1 / P4-H1 | **FROZEN v1.0.0 — OWNER CONFIRMED 2026-11-13** |
+| P4 M4 detailed plan | **MASTER AGENT REVIEW COMPLETE / OWNER APPROVED — ALL THREE BATCHES** |
+| P4 M4 implementation | **AUTHORIZED AS ONE SEQUENTIAL UNIT / NOT STARTED** |
 | Preserved detailed roadmap | **REFERENCE PROPOSAL / NOT APPROVED AS DETAILED MODULE PLANS** |
-| Detailed M4–M6 planning | **NOT STARTED** |
-| M4–M6 implementation | **NOT STARTED** |
+| Detailed M5–M6 planning | **NOT STARTED** |
+| M5–M6 implementation | **NOT STARTED** |
 
 ### 12.1 M1 Batch 1 execution record
 
@@ -3638,20 +4064,163 @@ Approval is sequential and non-transitive:
   frozen VerificationReceipt field was changed. M1 alone activates a verified
   candidate.
 
+### 12.12 M3 independent-review remediation and verification
+
+- **Status (2026-11-13):** all confirmed defects from the independent M3 review
+  were remediated and the module reached the freeze gate. The implementation
+  and verification evidence below remains the historical remediation record;
+  the subsequent owner status approval and P4-Q1/P4-H1 freeze are recorded in
+  Section 12.13 without changing this evidence.
+- **Pagination correctness:** graph-window cursors now carry compact,
+  generation-bound node-window boundaries and the next node cursor rather than
+  serializing every node key. Dense windows remain under the frozen cursor-size
+  limit and continue across later node windows. Traversal pagination advances
+  only past emitted relationships and includes both endpoints for every returned
+  edge, preventing dropped edges and dangling results at page caps.
+- **Deadline enforcement:** every Neo4j read uses a bounded transaction plus an
+  operation timer that cancels the active session. Deadline checks cover driver
+  execution, result iteration, DTO mapping and the final PostgreSQL generation
+  pointer verification. PostgreSQL statement cancellation is translated to the
+  typed timeout contract. A real-Neo4j cancellation regression confirms that
+  timed-out work fails closed rather than continuing as a successful query.
+- **Integrity and compatibility:** node and relationship mapping failures are
+  translated to sanitized graph-integrity errors. Manifest preflight now checks
+  both graph schema and projector version. Query health performs the shared
+  Neo4j infrastructure compatibility/schema initialization check and always
+  closes its owned driver, including failure paths.
+- **Cursor hardening:** HMAC signatures must use the canonical unpadded Base64URL
+  representation. Alternate textual encodings that decode to the same bytes are
+  rejected, closing the trailing-bit signature mutation case found by the full
+  regression suite.
+- **Focused and P4 verification:**
+  - focused cursor/health/isolation/repository/service tests: **48 passed in
+    0.68s**;
+  - complete `pytest tests/p4 --tb=short -q`: **276 passed, 13 skipped in
+    12.50s**. Skips are explicitly environment-gated RabbitMQ and legacy Neo4j
+    integration cases; the M3 real-Neo4j query and cancellation tests ran;
+  - frozen `pytest -q --tb=short tests/p1 tests/p2 tests/p3`: **750 passed, 3
+    skipped, 1 failed in 441.88s**. The sole failure remains the known frozen P3
+    process-wide memory benchmark: `ru_maxrss` was 571.43 MiB against its 512 MiB
+    gate. No functional P1-P3 regression failed and no frozen implementation or
+    test was changed.
+- **Quality checks:** Ruff passed for all changed source/tests; MyPy passed for
+  the four changed production modules; Black passed for every changed file when
+  run single-worker per file (multi-process Black cannot create its fork-server
+  socket in the sandbox); `git diff --check` passed.
+- **Boundaries preserved:** no P1-P3 frozen implementation or contract, M1/M2
+  lifecycle/projection ownership, Express, frontend, migration, dependency or
+  public event vocabulary was changed.
+
+### 12.13 M3/P4-Q1/P4-H1 owner freeze confirmation and M4 authorization
+
+- **Status approval (2026-11-13):** after the verified remediation in Section
+  12.12, the owner confirmed M3 complete and frozen P4-Q1 and P4-H1 at version
+  `1.0.0`. This is a status/freeze acknowledgement only; it adds no implementation
+  event and does not alter M3 contracts, details or test evidence.
+- **M4 planning approval:** Master Agent review of the corrected Section 7E plan
+  is complete. The owner approved all three M4 batches as one sequential
+  implementation unit. Batch acceptance evidence is mandatory, but no separate
+  planning approval is required between batches. M4 implementation has not yet
+  started.
+- **Stop conditions:** implementation pauses only for a genuine frozen-interface
+  or architecture conflict, an unresolvable hard acceptance failure, or a
+  required schema/dependency/migration/owner change-control decision.
+- **Boundary retained:** missing Express P4 browser transport remains a
+  downstream M5 integration constraint, not an M4 implementation blocker. M4
+  remains Python/FastAPI-only and React must not call FastAPI directly.
+
+### 12.14 P3 memory and benchmark remediation — owner-approved change-control complete
+
+- **Status (2026-11-14):** the owner authorized the narrow P3 remediation after
+  the investigation above. Implementation and verification are complete. The
+  frozen F1/F2/F3 schemas, canonical identifiers/ordering/bytes, lifecycle and
+  error vocabularies, and the production parser limit of **512 MiB** remain
+  unchanged. M4 remained independent and unblocked.
+- **Root causes addressed:** (1) the M2 test incorrectly compared the parent
+  pytest process's lifetime `RUSAGE_SELF.ru_maxrss` with the parser-child limit;
+  (2) M3 retained mutable construction dictionaries while immutable document
+  validation allocated its own indexes, and its capacity check materialized a
+  complete dictionary, canonical JSON string and UTF-8 bytes; (3) completed
+  analysis tasks could leave allocator arenas in a long-lived Celery prefork
+  child even after live IR objects were released.
+- **Implementation decisions:** each M2 synthetic case now keeps throughput
+  timing in the parent but measures memory separately in a clean exec child via
+  Linux `/proc/self/status:VmHWM`, comparing the child's functional counts and
+  serialized output with the parent result. A controlled isolated allocation
+  test applies and reads back the exact 512 MiB `RLIMIT_AS`, proves `MemoryError`
+  containment with no document output, and distinguishes it from an unrelated
+  worker failure. M3 drains mutable construction indexes before immutable
+  validation and uses deterministic 256-record bounded canonical JSON batches;
+  the public `to_canonical_json()` bytes remain identical, while capacity and
+  benchmark size checks stream byte counts. Celery now has configurable
+  `ANALYSIS_WORKER_MAX_TASKS_PER_CHILD` (default `2`) wired to
+  `worker_max_tasks_per_child`; this is task-count recycling after safe task
+  completion, not an RSS kill or replacement for parser RLIMIT enforcement.
+- **Files changed:** `.env.example`; `backend/platform/config.py`;
+  `backend/worker/celery_app.py`; `backend/platform/analysis/ir/model.py`,
+  `service.py`, and `validator.py`; and focused tests in
+  `tests/p3/analysis/test_m1_queue.py`, `test_m2_benchmarks.py`,
+  `test_m2_parsers.py`, `test_m3_benchmarks.py`, and `test_m3_contracts.py`.
+- **M2 raw measurements:** three fresh-process repetitions reported isolated
+  peak ranges of 71.68-71.86 MiB (1 KiB Python), 72.05-72.10 MiB (1 KiB JS),
+  77.91-79.14 MiB (50 KiB Python), 74.39-74.49 MiB (50 KiB JS),
+  209.84-211.23 MiB (1 MiB Python), and 115.14-115.82 MiB (1 MiB JS). A
+  deliberately poisoned launcher entered pytest with 608.04 MiB lifetime
+  `ru_maxrss`; the test still passed and its largest isolated child reported
+  210.73 MiB. Running it after the M3 worst-case series produced the same range.
+  Exact 5 MiB production-child Python/JavaScript cases passed in 3.506 s and
+  1.833 s; the combined child high-water record was 269,720 KiB.
+- **M3 before/after:** the investigation's unprofiled 250,000-fact baseline was
+  approximately 1.57 GiB transient peak and approximately 985 MiB current RSS
+  after canonical serialization. Three optimized unprofiled fresh processes
+  reported peaks of **695.07, 695.09 and 694.92 MiB**, current RSS of
+  **648.20, 648.31 and 648.25 MiB**, construction of 48.49-50.82 s, and the
+  identical 364,101,337-byte payload. The prior tracemalloc run recorded about
+  1,381.77 MiB traced / 2,482.77 MiB process peak. Optimized repeated runs
+  reported **439.04 MiB traced peak** and process peaks of **1,146.80-1,147.25
+  MiB**; the reporting run ended at 1,020.50 MiB current RSS. Tracemalloc remains
+  diagnostic overhead and increased construction to 273.58-291.55 s.
+- **Worker recycling verification:** a real RabbitMQ/prefork Celery worker ran
+  two sequential 250,000-fact tasks in PID 44563. They peaked at 706.50 and
+  722.86 MiB, returned to 105.46 and 108.89 MiB current RSS after cleanup, and
+  produced identical `[250000, 102002, 252001, 252001, 50000]` counts. After
+  task two, the configured policy recycled the child; a probe ran in PID 46080
+  at 88.79 MiB.
+- **Verification:** focused post-format regression: **23 passed**; canonical F3
+  and M3 focused suites: **92 passed**, plus the earlier combined focused suite
+  **116 passed, 3 skipped**; full `tests/p1 tests/p2 tests/p3`: **755 passed, 3
+  skipped in 448.28 s**; complete repository: **1,031 passed, 16 skipped in
+  473.90 s**. Skips remain existing platform/environment gates. Ruff passed all
+  affected files, MyPy passed all five affected production files, Black passed
+  each affected file, and `git diff --check` passed.
+- **Remaining limitations:** independent RSS measurement intentionally requires
+  Linux procfs, matching the supported production parser sandbox. Tracemalloc
+  figures are profiler evidence rather than production latency/RSS targets. No
+  dependency, migration, P1/P2/P4, Express, frontend or `master.txt` change was
+  made.
+
 ## 13. Current Handoff
 
 The approved architecture, frozen M1 contracts, completed M2 implementation,
-approved detailed M3 plan, preserved roadmap, phase DoD, risks and verified
-execution records are recorded in this sole rolling handoff.
+approved detailed M3 plan, complete proposed M4 plan, preserved roadmap, phase
+DoD, risks and verified execution records are recorded in this sole rolling
+handoff.
 
-**Current status:** M1 and M2 are frozen; M3 (Batches 1, 2, and 3: P4-Q1 contracts,
+**Current status:** M1, M2 and M3 are frozen; M3 (Batches 1, 2, and 3: P4-Q1 contracts,
 closed vocabularies, limits, DTOs, HMAC-SHA256 Base64URL cursor codec,
 SqlAlchemyGraphGenerationReader, Neo4jGraphQueryRepository with 7 Cypher operations,
 GraphQueryService with monotonic deadline and generation-drift double-read, P4-owned DI
 providers, query health probe, structured observer telemetry, and real PostgreSQL 16 +
-Neo4j Community 5.26.33 pipeline integration) is fully implemented and verified.
-Ready for independent M3 review and P4-Q1 contract freeze. Detailed M4–M6 planning
-has not started.
+Neo4j Community 5.26.33 pipeline integration) is fully implemented. Independent-review
+findings are remediated and verified, including pagination completeness, bounded
+database cancellation, manifest compatibility, sanitized mapping failures, health
+driver cleanup and canonical cursor signatures. The owner froze P4-Q1/P4-H1 in
+Section 12.13. The corrected M4 plan in Section 7E passed Master Agent review and
+is owner-approved as one three-batch sequential implementation unit. M4
+implementation and M5–M6 detailed planning have not started.
 
-**Next action:** Conduct independent M3 review and obtain explicit P4-Q1 contract
-freeze approval before proceeding to Phase 4 Module 4.
+**Next action:** hand Section 7E directly to the implementation agent and execute
+M4 Batch 1 -> Batch 2 -> Batch 3 without intermediate planning approval, while
+recording each batch's mandatory acceptance evidence. Stop only for the explicit
+change-control conditions in Section 12.13; perform one consolidated M4 review
+after Batch 3.

@@ -1,5 +1,6 @@
 """Unit tests for M3 generation reader and repository adapters."""
 
+import time
 from collections.abc import Generator
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -22,10 +23,12 @@ from backend.platform.graph.query_contracts import (
     GraphProjectionNotFoundError,
     GraphProjectionNotReadyError,
     GraphQueryIntegrityError,
+    GraphQueryTimeoutError,
     GraphReadScope,
 )
 from backend.platform.graph.query_repository import (
     FakeGraphGenerationReader,
+    Neo4jGraphQueryRepository,
     SqlAlchemyGraphGenerationReader,
 )
 
@@ -244,3 +247,46 @@ def test_fake_graph_generation_reader() -> None:
     reader.set_unready(project_id, version_id, "RUNNING")
     with pytest.raises(GraphProjectionNotReadyError):
         reader.resolve_active_generation(project_id, version_id)
+
+
+def test_neo4j_deadline_guard_cancels_active_session() -> None:
+    class StubTransaction:
+        def __enter__(self) -> StubTransaction:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    class StubSession:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def __enter__(self) -> StubSession:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def begin_transaction(self, *, timeout: float) -> StubTransaction:
+            assert timeout == pytest.approx(0.01)
+            return StubTransaction()
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    class StubDriver:
+        def __init__(self, session: StubSession) -> None:
+            self.stub_session = session
+
+        def session(self, *, database: str) -> StubSession:
+            assert database == "neo4j"
+            return self.stub_session
+
+    session = StubSession()
+    repository = Neo4jGraphQueryRepository(StubDriver(session))  # type: ignore[arg-type]
+
+    with pytest.raises(GraphQueryTimeoutError, match="total deadline"):
+        with repository._bounded_transaction(0.01):
+            time.sleep(0.03)
+
+    assert session.cancelled is True

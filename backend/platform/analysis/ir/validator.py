@@ -314,8 +314,7 @@ class IRValidator:
             raise IRValidationError(msg)
 
         # 6. Canonical Serialized Byte Size Cap
-        canon_json = doc.to_canonical_json()
-        payload_bytes = len(canon_json.encode("utf-8"))
+        payload_bytes = doc.canonical_json_size_bytes()
         if payload_bytes > self._caps.max_serialized_bytes:
             msg = (
                 f"Canonical IR JSON payload size {payload_bytes} bytes exceeds "

@@ -11,6 +11,7 @@ Validates:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -505,6 +506,36 @@ def test_deadline_budget_exhaustion_at_each_phase() -> None:
             GraphWindowRequest(
                 project_id=scope.project_id,
                 architecture_version_id=scope.architecture_version_id,
+            )
+        )
+
+    # 5. A dependency that returns after its assigned budget is still rejected.
+    class OverrunDoubleReader(FakeGraphGenerationReader):
+        def verify_generation_still_active(
+            self,
+            project_id: UUID,
+            architecture_version_id: UUID,
+            generation_id: UUID,
+            *,
+            timeout_seconds: float | None = None,
+        ) -> bool:
+            time.sleep(0.03)
+            return True
+
+    overrun_reader = OverrunDoubleReader()
+    overrun_reader.set_scope(scope)
+    overrun_service = GraphQueryService(
+        settings=settings,
+        generation_reader=overrun_reader,
+        query_repository=FakeGraphQueryRepository(),
+        cursor_secret_key="secret" * 6,
+    )
+    with pytest.raises(GraphQueryTimeoutError, match="total deadline"):
+        overrun_service.get_window(
+            GraphWindowRequest(
+                project_id=scope.project_id,
+                architecture_version_id=scope.architecture_version_id,
+                timeout_seconds=0.01,
             )
         )
 
