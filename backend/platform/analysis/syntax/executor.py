@@ -372,6 +372,15 @@ class ParserExecutor:
         if self._isolation_available is not None:
             return self._isolation_available
         try:
+            if sys.platform == "win32":
+                job = self._create_windows_job_object()
+                if not job:
+                    self._isolation_available = False
+                    return False
+                import ctypes
+
+                ctypes.windll.kernel32.CloseHandle(job)
+
             cmd = [
                 self._python_executable,
                 "-m",

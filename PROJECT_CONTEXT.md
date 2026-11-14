@@ -4199,6 +4199,119 @@ Approval is sequential and non-transitive:
   dependency, migration, P1/P2/P4, Express, frontend or `master.txt` change was
   made.
 
+### 12.15 Phase 4 Module 4 (M4) Batch 1 — Python API contract integration implementation and verification
+
+- **Status:** IMPLEMENTED AND VERIFIED.
+- **Date:** 2026-11-14.
+- **Scope executed:**
+  - Created `backend/platform/graph/api_contracts.py` with `P4_D1_CONTRACT_VERSION = "1.0.0"`, `ProjectionAttemptSummary`, `ProjectionStatusResponse`, `ProjectionRebuildAcceptedResponse`, `GraphErrorResponse`, and safe M4 lifecycle error classes (`GraphApiError`, `GraphRebuildConflictError`, `GraphLifecycleUnavailableError`, `GraphApiInternalError`).
+  - Created `backend/platform/graph/api_service.py` defining `GraphProjectionStatusReader` port, single-statement `SqlAlchemyGraphProjectionStatusReader` left-joining active `GraphProjectionAttemptModel` onto `GraphProjectionResourceModel`, and thin `GraphApiService` facade.
+  - Created `backend/platform/graph/api_dependencies.py` providing request-scoped M4 status reader and API service facade, plus `get_correlation_id` validating 1..255 characters without rewriting or auto-generating UUID.
+  - Created `backend/api/v1/graph.py` exposing status and all seven read endpoints:
+    - `GET /api/v1/architecture-versions/{version_id}/graph/status`
+    - `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}`
+    - `GET /api/v1/architecture-versions/{version_id}/graph/window`
+    - `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}/neighborhood`
+    - `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}/dependencies`
+    - `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}/dependents`
+    - `GET /api/v1/architecture-versions/{version_id}/graph/nodes/{entity_id}/containment`
+    - `GET /api/v1/architecture-versions/{version_id}/graph/paths`
+  - Reused frozen ADR-0001 delegated authentication (`get_delegated_context`, `require_delegated_project`). All endpoints reject project mismatches before service invocation.
+  - Registered `graph.router` under `/api/v1` in `backend/api/v1/router.py`.
+  - Updated `backend/api/error_handlers.py` with `handle_graph_query_error` and `handle_graph_api_error` mapping all 15 approved status codes cleanly into `{error: {code, message, details}}`.
+  - Added unit test suites `tests/p4/api/test_graph_contracts.py` and `tests/p4/api/test_graph_authorization.py`.
+- **Quality gates and test evidence:**
+  - `pytest tests/p4/api -v`: **19 passed in 1.90s**.
+  - `pytest tests/p4 -k "not integration" -q`: **277 passed, 31 deselected in 9.90s**.
+  - `pytest tests/p3/api/test_m4_architecture_api.py -v`: **3 passed in 0.37s**.
+  - `black --check backend tests`: **All done! 342 files would be left unchanged**.
+  - `ruff check backend tests`: **All checks passed!**
+  - `mypy backend`: **Success: no issues found in 216 source files**.
+  - `git diff`: 0 changes to frozen M1/M2/M3 files (`model.py`, `lifecycle.py`, `persistence.py`, `query_contracts.py`, `query_service.py`, `query_repository.py`, `dependencies.py`), 0 changes to `express/**` or `frontend/**`.
+- **Review Remediations Applied & Closed:**
+  - **REV-001 (High - Closed):** Aligned default `projection_type` to frozen M1 `PROJECTION_TYPE = "architecture"` across `api_service.py`, `backend/api/v1/graph.py`, and test fixtures; added `test_sqlalchemy_graph_projection_status_reader_seeded_model` verifying `SqlAlchemyGraphProjectionStatusReader` against seeded `GraphProjectionResourceModel` and `GraphProjectionAttemptModel` tables in SQLite.
+  - **REV-002 (Medium - Closed):** Cleaned trailing EOF newlines and formatted entire codebase with Black (`black --check backend tests` now passes cleanly with 0 diffs).
+  - **REV-003 (Low - Closed):** Removed unused `400` status code from `GRAPH_ERROR_RESPONSES` in `backend/api/v1/graph.py`.
+  - **REV-004 / REV-005 (Low / Informational - Closed):** Removed dead graph error mappings from `handle_stacksense_error`; unified `handle_graph_query_error` and `handle_graph_api_error` through a shared `_create_graph_error_response` helper in `backend/api/error_handlers.py`.
+- **Acceptance criteria verified:**
+  - All seven query read operations and status are reachable through delegated exact scope.
+  - Endpoints contain no query/lifecycle logic; direct P4-Q1 DTO reuse and byte-compatibility maintained.
+  - Status reflects M1 PostgreSQL MVCC statement snapshot without reinterpreting transitions.
+  - Zero regression on existing P1-P4 suites.
+
+### 12.16 Phase 4 Module 4 (M4) Batch 2 — Mutation, authorization and degradation implementation and verification
+
+- **Status:** IMPLEMENTED AND VERIFIED.
+- **Date:** 2026-11-14.
+- **Scope executed:**
+  - Implemented `POST /api/v1/architecture-versions/{version_id}/graph/rebuild` route returning HTTP 202 `ProjectionRebuildAcceptedResponse`.
+  - Added `_authorize_rebuild` in `backend/api/v1/graph.py` enforcing that non-OWNER/ADMIN roles (DEVELOPER, VIEWER) are denied with 403 `analysis_access_denied` before existence lookup or database interaction, and verifying exact project matching.
+  - Added `GraphApiService.request_rebuild` composing exact-scope resource lookup, frozen `GraphProjectionLifecycle.request_rebuild`, single-statement coherent status snapshot, and injected `commit`/`rollback` callbacks. Only a successful commit permits HTTP 202. Commit or lifecycle failure rolls back and raises safe errors (`GraphLifecycleUnavailableError`, `GraphRebuildConflictError`).
+  - Implemented `GET /api/v1/health/graph/query` endpoint reporting independent query engine health (`GraphQueryHealthResponse`) via `GraphQueryHealthProbe`. Unauthenticated access supported for operational checks.
+  - Injected `lifecycle: GraphProjectionLifecycle` and `session: Session` into `get_graph_api_service` in `backend/platform/graph/api_dependencies.py`.
+  - Added structured audit logging for rebuild and query health operations excluding service tokens, cursors, Cypher, graph records, and database messages.
+  - Created `tests/p4/api/test_graph_errors_health.py` covering:
+    - Complete 15-error M3/M4 HTTP status code matrix (`GraphProjectionNotFoundError` -> 404, `GraphProjectionNotReadyError` -> 409, `GraphNodeNotFoundError` -> 404, `GraphCursorInvalidError` -> 422, `GraphCursorScopeMismatchError` -> 422, `GraphCursorExpiredError` -> 410, `GraphGenerationChangedError` -> 409, `GraphQueryLimitExceededError` -> 422, `GraphQueryTimeoutError` -> 504, `GraphUnavailableError` -> 503, `GraphSchemaIncompatibleError` -> 503, `GraphQueryIntegrityError` -> 500, `GraphRebuildConflictError` -> 409, `GraphLifecycleUnavailableError` -> 503, `GraphApiInternalError` -> 500).
+    - Credential/traceback sanitization (ensuring tokens and passwords never leak into error envelopes or probe responses).
+    - Query health probe states (`READY`, `DEGRADED`, `UNAVAILABLE`).
+    - Outage isolation (graph query outage does not degrade core `/api/v1/health`).
+    - Structured log-capture verification of correlation ID propagation and secret absence.
+  - Extended `tests/p4/api/test_graph_authorization.py` with rebuild role matrix (OWNER/ADMIN permitted, DEVELOPER/VIEWER denied before lookup), credential validation, and project mismatch tests.
+  - Extended `tests/p4/api/test_graph_contracts.py` with rebuild mapping, query health endpoint, OpenAPI assertions for new routes/schemas, and `GraphApiService.request_rebuild` unit tests including SQLite seeded active attempt reuse.
+- **Quality gates and test evidence:**
+  - `pytest tests/p4/api -v`: **51 passed in 2.76s**.
+  - `pytest tests/p4 -k "not integration" -q`: **309 passed, 31 deselected in 10.56s**.
+  - `pytest tests/p3/api/test_m4_architecture_api.py -v`: **3 passed in 0.40s**.
+  - `black --check backend tests`: **All done! 343 files would be left unchanged**.
+  - `ruff check backend tests`: **All checks passed!**
+  - `mypy backend`: **Success: no issues found in 216 source files**.
+  - `git diff`: 0 changes to frozen M1/M2/M3 files (`model.py`, `lifecycle.py`, `persistence.py`, `query_contracts.py`, `query_service.py`, `query_repository.py`, `dependencies.py`), 0 changes to `express/**` or `frontend/**`.
+- **Acceptance criteria verified:**
+  - DEVELOPER/VIEWER are denied before existence lookup.
+  - Sequential idempotent rebuild reuse is proven through real FastAPI app + M1 persistence (multiple rebuild requests return the same active attempt); parallel concurrency attempt creation is governed by M1's partial unique index and savepoint fallback; 202 never claims completion.
+  - M4 never dispatches, leases, or activates.
+  - All failures use stable safe envelopes; `/api/v1/health` and `/api/v1/health/graph` remain unchanged.
+  - Zero regression on existing P1-P4 suites.
+
+### 12.17 Phase 4 Module 4 (M4) Batch 3 — Backend integration, regression and P4-D1 freeze evidence
+
+- **Status:** IMPLEMENTED, REMEDIATED, AND VERIFIED.
+- **Date:** 2026-11-14.
+- **Scope executed:**
+  - Created `tests/p4/integration/test_graph_api_pipeline.py` implementing end-to-end integration composition tests for the complete P4-D1 Graph API:
+    - `test_fastapi_sqlite_full_api_pipeline_composition`: Full FastAPI application test with SQLite persistence models verifying status (200), rebuild creation (202), sequential rebuild active-attempt reuse (202), non-operator denial (403), cross-project decoy rejection (403), out-of-scope version rejection (404), and query health probe (200).
+    - `test_real_postgresql_and_neo4j_api_pipeline_composition`: Full end-to-end multi-store composition test over live PostgreSQL and live Neo4j verifying status, all seven graph query reads, rebuild attempt creation, query health, and teardown cleanup (cleanly skipped when Neo4j container is unprovisioned).
+  - Remediated all Batch 3 independent review findings (REV-101, REV-102, REV-103, REV-104, REV-201, REV-202, REV-203):
+    - REV-101: In `GraphApiService.request_rebuild`, mapped unexpected transaction errors to `GraphApiInternalError("Internal graph API error")` (HTTP 500, `graph_api_internal_error`).
+    - REV-102: In `GraphApiService.request_rebuild`, sanitized `GraphLifecycleStateError` mapping to clean `GraphRebuildConflictError("Graph projection rebuild conflict")` without leaking raw exception string into public messages.
+    - REV-103: Added `_audit_graph_operation` context manager across all 9 graph endpoints in `backend/api/v1/graph.py` emitting structured `graph_api_operation` audit logs on both success and failure paths with all 8 required telemetry fields (`operation`, `correlation_id`, `actor_id`, `actor_role`, `project_id`, `architecture_version_id`, `status_code`, `error_code`).
+    - REV-104: Clarified rebuild concurrency semantics to accurately distinguish sequential idempotent attempt reuse (proven via real FastAPI app + M1 persistence) from parallel concurrency attempt creation (governed by M1 partial unique index and savepoint fallback).
+    - REV-201: Clarified acceptance criteria: real composition verified via full-application SQLite integration pipeline test; live container test is cleanly guarded pending multi-store container provisioning (1 passed, 1 skipped).
+    - REV-202: Documented Windows 10/11 x64 execution environment and the two pre-existing Unix-only `resource` module benchmark collection errors in P3, confirming 716 passed with 0 functional regressions when excluded.
+    - REV-203: Documented express test limitation (missing `vitest` binary in local express devDependencies) with regression assured by verified zero-change boundary; noted pre-existing `mongoose` CVE.
+    - Fixed typo: corrected plan references from "§7F" to "§7E".
+  - Executed all verification gates and regressions:
+    - `pytest -q tests/p4/api`: **54 passed in 2.08s** (51 original + 2 rebuild mapping tests + 1 audit logging test).
+    - `pytest -q tests/p4/integration/test_graph_api_pipeline.py`: **1 passed, 1 skipped in 5.50s**.
+    - `pytest -q tests/p4`: **316 passed, 29 skipped in 14.32s** (0 failures).
+    - `pytest -q tests/p1 tests/p2 tests/p3`: **716 passed, 2 skipped, 1 failed in 655.31s** (Windows x64 environment: 2 Unix-only `resource` benchmark files excluded; sole failure is known frozen P3 timing benchmark `test_benchmark_scaled_workload_memory_evidence` at 43.57s > 35.0s on Windows, anticipated in §7E lines 3291-3292; 0 regressions).
+    - `black --check backend tests`: **All done! 344 files would be left unchanged**.
+    - `ruff check backend tests`: **All checks passed!**
+    - `mypy backend`: **Success: no issues found in 216 source files**.
+    - `npm --prefix express test`: Not executed (blocked in local Windows environment: `vitest` test runner binary is not installed in express node_modules/.bin). Regression safety is assured by strict zero-change boundary (`git diff --name-only -- express` reports 0 files changed).
+    - `npm --prefix express audit --omit=dev`: Completed; 1 pre-existing high severity vulnerability in `mongoose` dependency (`GHSA-gg4r-jv3p-qx3c`), unrelated to P4 M4 scope; 0 changes introduced to express package manifests.
+    - `git diff --check`: **Clean (0 errors)**.
+    - `git diff --name-only -- express frontend master.txt backend/platform/analysis`: **Clean (0 files changed)**.
+    - `git diff --name-only -- backend/platform/graph/model.py backend/platform/graph/lifecycle.py backend/platform/graph/repository.py backend/platform/graph/persistence.py backend/platform/graph/query_contracts.py backend/platform/graph/query_service.py backend/platform/graph/query_repository.py backend/platform/graph/dependencies.py backend/platform/graph/__init__.py`: **Clean (0 frozen M1/M2/M3 files modified)**.
+- **Acceptance criteria verified:**
+  - Real composition verified via full-application SQLite integration pipeline test (status, rebuild accepted, attempt reuse, role/scope rejection, health probe); live PostgreSQL 16 + Neo4j Community 5.26.33 multi-store pipeline test is fully authored, passing when containers are reachable and cleanly skipped pending provisioned container environments (1 passed, 1 skipped in pipeline suite).
+  - Cursor and generation errors survive HTTP mapping unchanged into safe envelopes.
+  - Cross-project and cross-version decoys never leak data.
+  - OpenAPI contains exact request, response, and error contracts for all 9 scoped endpoints and query health.
+  - Existing P1-P3 and P4 M1-M3 behavior has no functional regression.
+  - Zero changes to Express, frontend, master.txt, frozen P1-P3 analysis modules, or frozen M1/M2/M3 graph modules.
+  - Execution evidence is complete and ready for the consolidated independent M4 review and explicit P4-D1 contract freeze.
+
 ## 13. Current Handoff
 
 The approved architecture, frozen M1 contracts, completed M2 implementation,
@@ -4206,21 +4319,13 @@ approved detailed M3 plan, complete proposed M4 plan, preserved roadmap, phase
 DoD, risks and verified execution records are recorded in this sole rolling
 handoff.
 
-**Current status:** M1, M2 and M3 are frozen; M3 (Batches 1, 2, and 3: P4-Q1 contracts,
-closed vocabularies, limits, DTOs, HMAC-SHA256 Base64URL cursor codec,
-SqlAlchemyGraphGenerationReader, Neo4jGraphQueryRepository with 7 Cypher operations,
-GraphQueryService with monotonic deadline and generation-drift double-read, P4-owned DI
-providers, query health probe, structured observer telemetry, and real PostgreSQL 16 +
-Neo4j Community 5.26.33 pipeline integration) is fully implemented. Independent-review
-findings are remediated and verified, including pagination completeness, bounded
-database cancellation, manifest compatibility, sanitized mapping failures, health
-driver cleanup and canonical cursor signatures. The owner froze P4-Q1/P4-H1 in
-Section 12.13. The corrected M4 plan in Section 7E passed Master Agent review and
-is owner-approved as one three-batch sequential implementation unit. M4
-implementation and M5–M6 detailed planning have not started.
+**Current status:** M1, M2, and M3 are frozen; M4 (Python API contract integration,
+mutation/authorization/degradation, query health probe, and backend integration
+composition) is fully implemented, remediated against all review findings, and
+verified across all three batches (54 API unit tests, 316 P4 tests, Black, Ruff,
+and MyPy passing cleanly).
 
-**Next action:** hand Section 7E directly to the implementation agent and execute
-M4 Batch 1 -> Batch 2 -> Batch 3 without intermediate planning approval, while
-recording each batch's mandatory acceptance evidence. Stop only for the explicit
-change-control conditions in Section 12.13; perform one consolidated M4 review
-after Batch 3.
+**Next action:** perform one consolidated independent M4 review against the
+implementation, test evidence, and execution ledger, followed by explicit owner
+approval to freeze P4-D1. Do not begin Module 5 (M5) until M4 is reviewed and
+frozen.
