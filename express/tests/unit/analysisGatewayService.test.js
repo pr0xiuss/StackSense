@@ -293,5 +293,268 @@ describe('AnalysisGatewayService Unit Tests', () => {
       });
     });
   });
+
+  describe('graph responseMode and repeated query parameters', () => {
+    it('serializes repeated array query parameters using identical repeated keys', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        headers: new Map([['content-type', 'application/json']]),
+        json: async () => ({ nodes: [], edges: [] }),
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      const result = await gateway.request({
+        method: 'GET',
+        path: '/architecture-versions/123/graph/window',
+        query: {
+          project_id: sampleProjectId,
+          canonical_kinds: ['calls', 'imports'],
+        },
+        user: sampleUser,
+        role: 'developer',
+        projectId: sampleProjectId,
+        responseMode: 'graph',
+      });
+
+      expect(result).toEqual({
+        status: 200,
+        body: { nodes: [], edges: [] },
+      });
+      const calledUrl = mockFetch.mock.calls[0][0];
+      expect(calledUrl).toContain('canonical_kinds=calls');
+      expect(calledUrl).toContain('canonical_kinds=imports');
+      expect(calledUrl).toContain(`project_id=${sampleProjectId}`);
+    });
+
+    it('returns { status: 202, body } for rebuild mutation in graph mode', async () => {
+      const rebuildPayload = {
+        resource_id: 'res-1',
+        architecture_version_id: 'ver-1',
+        status: 'RUNNING',
+        attempt_id: 'att-1',
+        attempt_number: 1,
+        attempt_status: 'QUEUED',
+        accepted_at: '2026-11-15T11:00:00Z',
+      };
+      const mockFetch = jest.fn().mockResolvedValue({
+        status: 202,
+        ok: true,
+        headers: new Map([['content-type', 'application/json']]),
+        json: async () => rebuildPayload,
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      const result = await gateway.request({
+        method: 'POST',
+        path: '/architecture-versions/ver-1/graph/rebuild',
+        query: { project_id: sampleProjectId },
+        user: sampleUser,
+        role: 'admin',
+        projectId: sampleProjectId,
+        responseMode: 'graph',
+      });
+
+      expect(result).toEqual({
+        status: 202,
+        body: rebuildPayload,
+      });
+    });
+
+    it('returns { status: 204, body: null } for 204 No Content in graph mode', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        status: 204,
+        ok: true,
+        headers: new Map(),
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      const result = await gateway.request({
+        method: 'GET',
+        path: '/test-204',
+        user: sampleUser,
+        role: 'developer',
+        projectId: sampleProjectId,
+        responseMode: 'graph',
+      });
+
+      expect(result).toEqual({ status: 204, body: null });
+    });
+
+    it('preserves recognized structured 4xx error body in graph mode', async () => {
+      const errorPayload = {
+        error: {
+          code: 'graph_projection_not_ready',
+          message: 'Graph projection is not ready for queries',
+          details: { state: 'PENDING' },
+        },
+      };
+      const mockFetch = jest.fn().mockResolvedValue({
+        status: 409,
+        ok: false,
+        headers: new Map([['content-type', 'application/json']]),
+        json: async () => errorPayload,
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      const result = await gateway.request({
+        method: 'GET',
+        path: '/architecture-versions/ver-1/graph/window',
+        query: { project_id: sampleProjectId },
+        user: sampleUser,
+        role: 'developer',
+        projectId: sampleProjectId,
+        responseMode: 'graph',
+      });
+
+      expect(result).toEqual({
+        status: 409,
+        body: errorPayload,
+      });
+    });
+
+    it('preserves syntactic FastAPI 422 detail array in graph mode', async () => {
+      const fastapiDetail = [
+        { loc: ['query', 'node_limit'], msg: 'Input should be greater than 0', type: 'greater_than' },
+      ];
+      const mockFetch = jest.fn().mockResolvedValue({
+        status: 422,
+        ok: false,
+        headers: new Map([['content-type', 'application/json']]),
+        json: async () => ({ detail: fastapiDetail }),
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      const result = await gateway.request({
+        method: 'GET',
+        path: '/architecture-versions/ver-1/graph/window',
+        query: { project_id: sampleProjectId },
+        user: sampleUser,
+        role: 'developer',
+        projectId: sampleProjectId,
+        responseMode: 'graph',
+      });
+
+      expect(result).toEqual({
+        status: 422,
+        body: { detail: fastapiDetail },
+      });
+    });
+
+    it('sanitizes unrecognized upstream errors into analysis_service_error envelope', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        status: 500,
+        ok: false,
+        headers: new Map([['content-type', 'text/html']]),
+        json: async () => { throw new Error('not json'); },
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      const result = await gateway.request({
+        method: 'GET',
+        path: '/architecture-versions/ver-1/graph/window',
+        query: { project_id: sampleProjectId },
+        user: sampleUser,
+        role: 'developer',
+        projectId: sampleProjectId,
+        responseMode: 'graph',
+      });
+
+      expect(result).toEqual({
+        status: 500,
+        body: {
+          error: {
+            code: 'analysis_service_error',
+            message: 'Analysis service encountered an unexpected error.',
+            details: {},
+          },
+        },
+      });
+    });
+
+    it('rejects redirects with 502 analysis_service_error in graph mode', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        status: 302,
+        ok: false,
+        headers: new Map([['location', 'http://external-host.com']]),
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      await expect(
+        gateway.request({
+          method: 'GET',
+          path: '/architecture-versions/ver-1/graph/window',
+          query: { project_id: sampleProjectId },
+          user: sampleUser,
+          role: 'developer',
+          projectId: sampleProjectId,
+          responseMode: 'graph',
+        })
+      ).rejects.toThrow(AnalysisServiceError);
+    });
+
+    it('builds un-scoped delegation headers for GET /health/graph/query in graph mode', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        headers: new Map([['content-type', 'application/json']]),
+        json: async () => ({ status: 'ready', code: 'graph_query_ready' }),
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      const result = await gateway.request({
+        method: 'GET',
+        path: '/health/graph/query',
+        user: sampleUser,
+        correlationId: 'health-corr-id',
+        responseMode: 'graph',
+      });
+
+      expect(result).toEqual({
+        status: 200,
+        body: { status: 'ready', code: 'graph_query_ready' },
+      });
+
+      const callHeaders = mockFetch.mock.calls[0][1].headers;
+      expect(callHeaders['X-Service-Token']).toBe(mockConfig.secretKey);
+      expect(callHeaders['X-Actor-Id']).toBe(sampleUser.id);
+      expect(callHeaders['X-Correlation-Id']).toBe('health-corr-id');
+      expect(callHeaders['X-Project-Id']).toBeUndefined();
+      expect(callHeaders['X-Actor-Role']).toBeUndefined();
+    });
+
+    it('aborts upstream fetch when clientReq closes before response completes', async () => {
+      const clientReq = new EventEmitter();
+      let capturedSignal;
+      const mockFetch = jest.fn().mockImplementation((_url, options) => {
+        capturedSignal = options.signal;
+        return new Promise((resolve) => {
+          options.signal.addEventListener('abort', () => {
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            resolve(Promise.reject(err));
+          });
+        });
+      });
+
+      const gateway = new AnalysisGatewayService(mockConfig, mockFetch);
+      const requestPromise = gateway.request({
+        method: 'GET',
+        path: '/architecture-versions/ver-1/graph/window',
+        query: { project_id: sampleProjectId },
+        user: sampleUser,
+        role: 'developer',
+        projectId: sampleProjectId,
+        responseMode: 'graph',
+        clientReq,
+      });
+
+      // Emit client disconnect
+      clientReq.emit('close');
+
+      await expect(requestPromise).rejects.toThrow(AnalysisServiceTimeoutError);
+      expect(capturedSignal.aborted).toBe(true);
+    });
+  });
 });
 

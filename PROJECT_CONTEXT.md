@@ -16,18 +16,16 @@
   the minimum Express routes/registration, graph controller/validation, additive
   integration with the existing analysis gateway, repeated-query serialization,
   safe status/error forwarding, bounded timeouts and integration tests required
-  for React -> Express -> FastAPI -> Neo4j/PostgreSQL may be included in M5.
-  Section 7F specifies the exact scope. This does not authorize unrelated
-  Express work, authentication/JWT/RBAC redesign, new MongoDB responsibilities,
-  graph lifecycle/query logic in Express, or changes to frozen M1–M4, master or
-  ADR-0001. Gate T's authorization and the revised whole M5 plan are
-  owner-approved. All batches remain unstarted; the owner's current instruction
-  is to record approval only and wait for an explicit instruction to begin.
+  for React -> Express -> FastAPI -> Neo4j/PostgreSQL are implemented and verified
+  in M5 Batch 2 (Gate T-V completed). Section 7F specifies the exact scope. This
+  does not authorize unrelated Express work, authentication/JWT/RBAC redesign,
+  new MongoDB responsibilities, graph lifecycle/query logic in Express, or changes
+  to frozen M1–M4, master or ADR-0001.
 
 # PROJECT_CONTEXT.md — StackSense Engineering Context
 
-Last reconciled: 2026-11-15 (M5 planning and scoped Express transport authorization)
-Current branch: `feature_mannan`
+Last reconciled: 2026-11-15 (M5 Batch 2 implemented and verified)
+Current branch: `feature_manisha`
 
 ## 1. Project Overview
 
@@ -100,7 +98,7 @@ M4–M6 remain.
 | P1 — Engineering Foundation | **FROZEN / COMPLETE** | Backend/frontend, persistence, queue, security, migration, testing and operational foundations. |
 | P2 — Project & Repository Platform | **FROZEN / COMPLETE** | JWT identity, projects/RBAC, repositories, immutable revisions, artifacts and ingestion. |
 | P3 — Analysis Engine & Architecture Model | **FROZEN / COMPLETE** | M1/F1 lifecycle; M2/F2 inspection; M3/F3 IR; Architecture Model v1; gateway/UI; integration/performance closeout. |
-| P4 — Architecture Graph & Exploration | **M1–M3 FROZEN; M4 PLAN APPROVED / IMPLEMENTATION AUTHORIZED** | M1 and M2 are frozen. The owner confirmed M3 complete and froze P4-Q1/P4-H1 after verified review remediation. The corrected three-batch M4 Python/FastAPI integration plan in Section 7E passed Master Agent review and is approved as one sequential implementation unit; implementation has not started. M5–M6 remain upcoming. |
+| P4 — Architecture Graph & Exploration | **M1–M4 FROZEN / COMPLETE; M5 BATCH 1 IMPLEMENTED & VERIFIED** | M1–M4 are frozen. M5 Batch 1 (package compatibility, P4-U1 state/reducer foundation, exact route matching, optional exact-version Model fallback, Explore Graph link, and ELK layout worker spike) is implemented and verified. M5 Batches 2–5 and M6 remain upcoming. |
 | P5 — Knowledge, Search & Diagram Intelligence | **UPCOMING** | Depends on verified P4 graph; owns retrieval, search, knowledge and diagram intelligence. |
 | P6 — AI Architecture Intelligence | **UPCOMING** | Owns grounded AI explanation after deterministic retrieval. |
 | P7 — Final Product & Hardening | **UPCOMING** | Productization, deployment hardening and final acceptance. |
@@ -4362,9 +4360,12 @@ Approval is sequential and non-transitive:
 | P4-D1 | **FROZEN v1.0.0 — OWNER CONFIRMED 2026-11-14** |
 | Preserved detailed roadmap | **REFERENCE PROPOSAL / NOT APPROVED AS DETAILED MODULE PLANS** |
 | P4 M5 detailed plan | **OWNER APPROVED — ALL FIVE BATCHES; SECTION 7F; GATE T AUTHORIZED** |
-| P4-U1 | **PLAN APPROVED / NOT FROZEN — IMPLEMENTATION NOT STARTED** |
+| P4 M5 Batch 1 | **IMPLEMENTED / VERIFIED** |
+| P4 M5 Batch 2 | **IMPLEMENTED / VERIFIED — GATE T-V PROVEN** |
+| P4-U1 | **IN PROGRESS (Batch 1 & Batch 2 implemented / verified)** |
 | Detailed M6 planning | **NOT STARTED** |
-| M5–M6 implementation | **NOT STARTED** |
+| M5 implementation | **IN PROGRESS (Batch 1 & Batch 2 complete; Batch 3 next)** |
+| M6 implementation | **NOT STARTED** |
 
 ### 12.1 M1 Batch 1 execution record
 
@@ -5239,29 +5240,282 @@ Approval is sequential and non-transitive:
   starting implementation. Wait for an instruction to begin Batch 1; no
   additional per-batch planning approval is required thereafter.
 
+### 12.21 Phase 4 Module 5 (M5) Batch 1 — Compatibility, consumer contracts, exact routes and shell implementation and verification
+
+- **Scope/status:** M5 Batch 1 is **IMPLEMENTED / VERIFIED**. Delivered package compatibility
+  pins, deterministic layout worker spike, consumer contract mappings and guards, pure P4-U1
+  state/reducer foundation, exact route matching, optional exact-version Model fallback,
+  Explore Graph navigation, and code-split Explorer page shell.
+- **Components & Deliverables:**
+  1. `frontend/package.json` & `frontend/package-lock.json`:
+     - Pinned exact versions: `@xyflow/react@12.12.1` and `elkjs@0.12.1`. Clean peer resolution
+       under Node 24.15.0 and npm 11.12.1; 0 vulnerabilities found.
+  2. `frontend/src/contracts/graphContracts.js`:
+     - Re-exports canonical entity and relationship kinds/labels from `architectureContracts.js`.
+     - Defines frozen public versions (`PROJECTION_CONTRACT_VERSION = '1.0.0'`, `GRAPH_SCHEMA_VERSION = '1.0.0'`,
+       `PROJECTOR_VERSION = '1.0.0'`).
+     - Defines public lifecycle and attempt status enums (`PROJECTION_PUBLIC_STATUS`, `PROJECTION_ATTEMPT_STATUS`,
+       `GRAPH_QUERY_HEALTH_STATUS`).
+     - Documents frozen backend maxima (`MAX_DEPTH=5`, `MAX_NODES=500`, `MAX_EDGES=1000`, `MAX_PATHS=25`,
+       `MAX_TIMEOUT=5s`, `MAX_PAGE_SIZE=100`, `MAX_CURSOR_LENGTH=2048`) and conservative client defaults
+       (`DEFAULT_NODE_LIMIT=50`, `DEFAULT_EDGE_LIMIT=100`, `DEFAULT_PAGE_SIZE=50`, `DEFAULT_DEPTH=1`).
+     - Enforces local canvas caps: `CANVAS_MAX_NODES = 300`, `CANVAS_MAX_EDGES = 600`.
+     - Strictly isolates the 12 approved dependency kinds from containment (`contains` is excluded).
+     - Wire guards: `isValidUuid`, `validateProjectionCounts`, `validateProjectionStatus`,
+       `validateGraphReadScope`, `validateGraphNode`, `validateGraphEdge`, `validateGraphSubgraph`,
+       `validateGraphPathResult`, `validateGraphQueryHealth`.
+  3. `frontend/src/hooks/architectureGraphState.js`:
+     - Pure reducer and initial state generator.
+     - Strict scope assertion (`project_id`, `architecture_version_id`, `generation_id`).
+     - Enforces 300-node / 600-edge canvas cap atomically; withholding overflows with clear cap message.
+     - Referential integrity enforcement: asserts edge endpoints exist in the union of nodes.
+     - Safe dedup and conflict detection for identical UUIDs with divergent metadata.
+     - Out-of-date banner flag and message when active generation changes during an open view.
+  4. `frontend/src/workers/graphLayout.worker.js` & `frontend/src/hooks/useGraphLayout.js`:
+     - Off-main-thread deterministic layout calculation with bundled ELK.
+     - Lexically sorted nodes and edges, fixed 220x80 geometry, layered algorithm, orthogonal edge routing,
+       deterministic model order, fixed seed 42.
+     - Hook owns worker lifecycle, 10s watchdog timeout, cancellation, stale response discarding,
+       and non-worker grid fallback for test/SSR environments.
+  5. `frontend/src/styles/graph.css`:
+     - Scoped dark theme React Flow styling, 220x80 custom node cards with ellipsis, breadcrumbs,
+       toolbar, responsive stacked layout at <=1024px and <=768px, and reduced motion media queries.
+  6. `frontend/src/pages/ArchitectureExplorerPage.jsx`:
+     - Page shell loading exact version via `architectureService.getVersion(versionId, { projectId })`.
+     - Strict four-ID context chain validation (`id === versionId && project_id === projectId && repository_id === repositoryId && analysis_id === analysisId`).
+     - Accessible breadcrumbs, version summary, "Batch 1 Shell" status, Back to Exact Model button,
+       and Map / List tab switcher.
+  7. `frontend/src/pages/ArchitectureModelPage.jsx`:
+     - Accepts optional `versionId` prop. If provided, loads exact version via `getVersion` and validates
+       chain; if omitted, retains legacy `analysisService.getAnalysisArchitecture` behavior.
+     - Renders "Explore Graph" link using verified loaded version ID.
+  8. `frontend/src/App.jsx`:
+     - Strict descending specificity route matching:
+       1. Explorer: `#/projects/:pId/repositories/:rId/analyses/:aId/architecture/:vId/graph`
+       2. Exact-version Model: `#/projects/:pId/repositories/:rId/analyses/:aId/architecture/:vId`
+       3. Legacy Model: `#/projects/:pId/repositories/:rId/analyses/:aId/architecture`
+     - End-anchored matchers rejecting malformed UUIDs and unmatched trailing paths with an accessible route error screen.
+     - Code-split lazy loading via `React.lazy` with accessible Suspense loading screen and four-ID composite key.
+  9. Automated Test Suites:
+     - `frontend/tests/component/graphContracts.test.js` (12 tests passed).
+     - `frontend/tests/component/architectureGraphState.test.js` (10 tests passed).
+     - `frontend/tests/component/ArchitectureModelPage.test.jsx` (3 tests passed).
+     - `frontend/tests/component/ArchitectureExplorerPage.test.jsx` (7 tests passed).
+     - `frontend/tests/component/useGraphLayout.test.jsx` (3 tests passed).
+- **Empirical Benchmarks & Verification Evidence:**
+  - ELK layout timings: 50 nodes / 100 edges: ~141.8 ms; 300 nodes / 600 edges (canvas cap): ~790.9 ms (<1.0s, well within 10s watchdog).
+  - Production build: `dist/assets/ArchitectureExplorerPage-Bs35KCXQ.js` emitted as a separate 7.88 kB code-split chunk (gzip: 2.27 kB).
+  - Vitest UI tests: 9 test files, 43 tests passed (100%).
+  - Legacy tests: 4 test suites passed (100%).
+  - Backend P4 tests: 258 passed in 9.29s (zero backend regressions).
+- **Boundaries Preserved:**
+  - Zero Express or backend changes made in Batch 1.
+  - No mock data in production; fixtures restricted to test harnesses.
+  - Frozen P1–P4 contracts completely undisturbed.
+
+### 12.22 Phase 4 Module 5 (M5) Batch 2 — Express graph transport, graph state and Explorer workflows implementation and verification
+
+- **Scope/status:** M5 Batch 2 is **IMPLEMENTED / VERIFIED**. Delivered Gate T-V verified Express graph transport proxy endpoints, input validation, trusted header delegation, repeated query key serialization, safe status/error relay, frontend graphService with repeated query serialization, useArchitectureGraph orchestrator hook with 4-ID validation and 2s polling during active attempts, GraphStatusBanner, GraphControls toolbar, and updated ArchitectureExplorerPage.
+- **Express Transport Deliverables (Gate T-V — COMPLETED):**
+  1. `express/src/middleware/graphValidate.js`:
+     - Validates all 9 scoped graph operations + health relay.
+     - Enforces strict parameter allowlists, scalar checks, UUID path and query formats, and numeric bounds (nodes 1..500, edges 1..1000, page_size 1..100, depth 1..5, timeout 0..5, cursor <= 2048).
+     - Validates traversal directions (`incoming`/`outgoing`/`both`, `parents`/`children`/`both`).
+     - Validates relationship kinds: 12 approved dependency kinds (`depends_on`, `imports`, `calls`, `exposes`, `consumes`, `produces`, `connects_to`, `implements`, `subclasses_or_extends`, `instantiates`, `references`, `dynamically_references`), separate containment (`contains`), and strictly rejects `contains` for dependency/dependent/path operations.
+     - Preserves repeated query keys (`relationship_kind` array) and rejects unexpected/unknown query or body parameters with 422 `validation_error`.
+  2. `express/src/services/analysisGatewayService.js`:
+     - Additive `responseMode: 'graph'` support.
+     - Appends repeated query parameters under identical keys in `URLSearchParams` (`param=val1&param=val2`).
+     - Constructs un-scoped delegation headers for `/health/graph/query` (`X-Service-Token`, `X-Correlation-Id`).
+     - Supports client disconnect abort via `clientReq.on('close')`.
+     - Manual redirect rejection: 3xx responses are converted to 502 `analysis_service_error`.
+     - Error relay: preserves structured 4xx error payloads and FastAPI syntactic 422 `{detail: [...]}`, while sanitizing unknown 4xx/5xx errors into `analysis_service_error`.
+     - Response status preservation: preserves 200 OK and 202 Accepted rebuild responses with unmodified payload envelopes.
+  3. `express/src/controllers/graphController.js`:
+     - Handlers for all 9 operations + graph query health.
+     - RBAC enforcement: reads (`getStatus`, `getWindow`, `getNeighborhood`, `getDependencies`, `getDependents`, `getContainment`, `getPaths`, `getHealth`) require `requireAccess` (PROJECT_ACCESS_MINIMUM_ROLE: VIEWER, DEVELOPER, ADMIN, OWNER). Rebuild mutation (`requestRebuild`) requires `requireManageAccess` (ADMIN, OWNER) and returns 202 Accepted.
+     - Spoof-resistant delegation: synthesizes trusted headers (`X-Service-Token`, `X-Actor-Id`, `X-Actor-Role`, `X-Project-Id`, `X-Correlation-Id`) using verified Express session data, strictly ignoring and stripping any client-supplied headers.
+  4. `express/src/routes/graphRoutes.js` & `express/src/routes/graphHealthRoutes.js`:
+     - `graphRoutes` uses `{ mergeParams: true }` to expose all 9 version-scoped operations under `/architecture-versions/:versionId/graph`.
+     - `graphHealthRoutes` exposes `/health/graph/query`.
+  5. `express/src/routes/index.js`:
+     - Explicit route mounting order: mounts `graphRoutes` at `/architecture-versions/:versionId/graph` *before* the broad `/architecture-versions` router to prevent wildcard shadowing.
+     - Mounts `graphHealthRoutes` at `/health/graph`.
+  6. Express Test Suites & Verification:
+     - `express/tests/unit/graphValidate.test.js`: 23/23 tests passed.
+     - `express/tests/unit/analysisGatewayService.test.js`: 20/20 tests passed (11 existing + 9 graph mode).
+     - `express/tests/integration/graphProxyApi.test.js`: 24/24 integration tests passed (Gate T-V complete) covering all 9 operations, health relay, RBAC matrix (VIEWER read, DEVELOPER read, ADMIN/OWNER rebuild), spoof resistance, repeated query keys, error relay, sanitization, and 202 rebuild.
+     - Regression protection: `express/tests/integration/analysisProxyApi.test.js` (19/19 tests passed) and full Express suite (35 test files, 478 tests passed, 100%).
+- **Frontend Deliverables (Graph State & Workflows — COMPLETED):**
+  1. `frontend/src/services/graphService.js`:
+     - Client methods for all 9 operations + health using `apiClient`.
+     - Supports repeated query parameters (`buildQueryString` helper) and `AbortSignal` for cancellation.
+  2. `frontend/src/hooks/useArchitectureGraph.js`:
+     - Orchestrator hook managing 4-ID validation (`projectId`, `repositoryId`, `analysisId`, `versionId`).
+     - Verifies loaded version matches requested route version, project, repository, and analysis context.
+     - Automatic 2-second status polling during active projection attempts (`QUEUED`, `RUNNING`, `RETRYING`) or pending states.
+     - Auto-fetches initial bounded window (50 nodes / 100 edges) when projection is COMPLETED or STALE with active generation.
+     - Orchestrates user actions: `refreshStatus`, `requestRebuild`, `loadMore`, `expandNeighborhood`, `expandDependencies`, `expandDependents`, `expandContainment`, `findPaths`, `selectNode`, `clearExploration`, `reloadVersion`.
+     - Epoch protection, request cancellation (`AbortController`), and strict timer cleanup on unmount.
+  3. `frontend/src/components/graph/GraphStatusBanner.jsx`:
+     - Status banner displaying projection status badge, active attempt status, out-of-date banner with "Reload this version" button, capacity limit warning, error alert with retry button, and "Rebuild Graph" button authorized for OWNER/ADMIN.
+  4. `frontend/src/components/graph/GraphControls.jsx`:
+     - Graph toolbar supporting exploration mode selection (`window`, `neighborhood`, `dependencies`, `dependents`, `containment`, `paths`), depth, directions, path endpoint selectors, pagination continuation ("Load more"), fit view, and clear.
+  5. `frontend/src/pages/ArchitectureExplorerPage.jsx`:
+     - Integrated page connecting `useArchitectureGraph`, `GraphStatusBanner`, and `GraphControls`.
+     - Renders breadcrumbs, loaded element summary, interactive node cards with selection, tab switcher (Graph Map / Structured List), and inspector panel with node details or version summary.
+  6. Frontend Test Suites & Verification:
+     - `frontend/tests/component/graphService.test.js`: 11/11 tests passed.
+     - `frontend/tests/component/useArchitectureGraph.test.jsx`: 5/5 tests passed.
+     - `frontend/tests/component/GraphStatusBanner.test.jsx`: 8/8 tests passed.
+     - `frontend/tests/component/GraphControls.test.jsx`: 7/7 tests passed.
+     - `frontend/tests/component/ArchitectureExplorerPage.test.jsx`: 7/7 tests passed.
+     - Full frontend Vitest suite: 13 files, 74 tests passed (100%).
+     - Full frontend legacy suite: 4 suites passed (100%).
+     - Production build: `npm --prefix frontend run build` succeeded in 7.87s with no bundling issues.
+- **Backend Regression & Verification Evidence:**
+  - Python P4 test suite: 312 tests passed (zero backend regressions).
+  - All contracts across P1–P4 remain frozen and unmodified.
+
+### 12.23 Phase 4 Module 5 (M5) Batch 3 — React Flow canvas, ELK worker, inspector and navigation implementation and verification
+
+- **Scope/status:** M5 Batch 3 is **IMPLEMENTED / VERIFIED**. Delivered the `@xyflow/react` GraphCanvas component with fixed 220x80 custom nodes and directed edges, GraphInspector with metadata, evidence and traversal triggers, accessible GraphListView with semantic tables and search filtering, off-thread ELK worker layout orchestration, and integration into ArchitectureExplorerPage.
+- **Frontend Deliverables (Canvas, Inspector, List & Layout — COMPLETED):**
+  1. `frontend/src/components/graph/GraphCanvas.jsx`:
+     - React Flow provider & canvas integration using `@xyflow/react`.
+     - Custom `ArchitectureNode` renderer strictly conforming to fixed 220x80 geometry, canonical kind badges, fact status indicator, entity name, namespace/logical ID, and top/bottom handles.
+     - Directed edges with `MarkerType.ArrowClosed` arrowheads preserving canonical direction, kind labels, and distinct color/dash-styling for containment (`contains`) vs dependency relationships.
+     - Controls toolbar integration (`Controls showInteractive={false}`), zoom on scroll, pan on drag, and selection handling.
+     - Strict no-drag / no-edit invariant (`nodesDraggable={false}`, `nodesConnectable={false}`).
+     - Deterministic fit view: fits once on initial layout population and on explicit user trigger via toolbar "Fit View" button; zero continuous auto-fit jitter.
+     - Accessible empty state graphic when no elements are loaded in the active window.
+     - Layout computation badge and fallback banner during worker calculation or timeout.
+  2. `frontend/src/components/graph/GraphInspector.jsx`:
+     - Detailed inspector panel for selected entity nodes: canonical kind, name, status (`CONFIRMED`/`INFERRED`), logical ID, entity UUID, namespace, and attached evidence reference chips.
+     - Quick relationship exploration action buttons: "Expand Neighborhood (1 hop)", "Explore Dependencies (Outgoing)", "Explore Dependents (Incoming)", and "Explore Containment (Hierarchy)".
+     - Selected relationship edge inspector displaying source entity, relationship kind, target entity, and IDs.
+     - Default Architecture Summary view when no element is selected, displaying version ID, schema version, entity, relationship, evidence, unresolved, and conflict counts.
+     - Accessible close/deselect button.
+  3. `frontend/src/components/graph/GraphListView.jsx`:
+     - Accessible structured table alternative to visual canvas with semantic `<table>` elements and full ARIA markup.
+     - Sub-tab switcher between "Entities ({count})" and "Relationships ({count})".
+     - Real-time client-side search filter input across names, kinds, logical IDs, and namespaces.
+     - Entity table with columns: Name, Kind, Status, Logical ID, Evidence Count, and Actions ("Select", "Neighbors").
+     - Relationship table resolving source and target entity names where loaded.
+     - Layout error notification banner ensuring graceful fallback when worker layout is unavailable.
+  4. `frontend/src/pages/ArchitectureExplorerPage.jsx`:
+     - Integrated `useGraphLayout` hook passing normalized nodes, edges, graph revision, context key, and generation ID.
+     - Swappable view tabs: renders `GraphCanvas` inside `graph-canvas-container` on "Graph Map" tab, and `GraphListView` on "Structured List" tab.
+     - Renders `GraphInspector` panel with quick traversal callbacks connected to `expandNeighborhood`, `expandDependencies`, `expandDependents`, and `expandContainment`.
+     - Connects toolbar "Fit View" button to canvas through `fitViewTrigger`.
+  5. Frontend Test Suites & Verification:
+     - `frontend/tests/component/GraphCanvas.test.jsx`: 5/5 tests passed.
+     - `frontend/tests/component/GraphInspector.test.jsx`: 5/5 tests passed.
+     - `frontend/tests/component/GraphListView.test.jsx`: 5/5 tests passed.
+     - `frontend/tests/component/ArchitectureExplorerPage.test.jsx`: 7/7 tests passed.
+     - Full frontend Vitest suite: 16 test files, 89/89 tests passed (100%).
+     - Full frontend legacy suite: 4 suites passed (100%).
+     - Production build: `npm --prefix frontend run build` succeeded in 6.72s with dedicated worker chunk (`graphLayout.worker-*.js`, 1.46MB) and lazy Explorer bundle (`ArchitectureExplorerPage-*.js`, 236kB).
+- **Backend & Transport Regression Protection:**
+  - Express test suite: 35 files, 478/478 tests passed (100%).
+  - Zero Python backend changes; frozen P1–P4 contracts completely preserved.
+
+### 12.24 Phase 4 Module 5 (M5) Batch 4 — Accessibility, degradation, responsive UX and hardening implementation and verification
+
+- **Scope/status:** M5 Batch 4 is **IMPLEMENTED / VERIFIED**. Delivered complete keyboard parity, screen reader announcements, native labeled controls with fieldset kind filters, Escape key handling with zero-viewport-jump focus restoration, polling pause/resume on document visibility transitions, hardened browser error matrix mappings without credential leakage, and responsive styling verified down to 360px mobile width.
+- **Frontend Deliverables (Accessibility, Degradation, Responsive UX & Hardening — COMPLETED):**
+  1. `frontend/src/hooks/useArchitectureGraph.js` & `frontend/src/hooks/architectureGraphState.js`:
+     - Added `formatGraphError` helper mapping Express and gateway error codes to user-friendly messages:
+       - `403 Forbidden`: Friendly "Access denied: You do not have permission to perform this graph operation." without session logout or token eviction.
+       - `404 Not Found`: "Architecture graph projection not found or unavailable for this version."
+       - `409 Conflict`: "A rebuild operation is already in progress for this architecture version."
+       - `410 Gone` / `422 Unprocessable Entity` (expired cursor): "Pagination cursor expired. Continuation stopped. Please restart your exploration query." Clears operation cursor in reducer while strictly retaining loaded graph data.
+       - `500`/`502`/`503`/`504`/Network timeout: Graceful service unavailable / timeout notices preserving loaded data.
+       - Credential sanitization: Automatically redacts Bearer tokens and cursor strings (`[REDACTED]`).
+     - Hardened polling lifecycle:
+       - Added `visibilitychange` listener pausing status polling when `document.visibilityState === 'hidden'`.
+       - Resumes single status refresh and polling loop when returning to `document.visibilityState === 'visible'` if projection is pending or rebuild is running.
+       - Terminal failure stops poll loop immediately on `FAILED`, `403`, or `404`.
+       - Clean unmount removes event listeners and aborts in-flight requests.
+  2. `frontend/src/components/graph/GraphControls.jsx`:
+     - Added `<fieldset className="kind-filters-fieldset">` with `<legend>Filter by Relationship Kind</legend>` for non-containment relationship kind filters.
+     - Native `<label htmlFor="...">` and `<input type="checkbox">` with keyboard toggleability (Space/Enter).
+     - Explicit accessible labels on all toolbar action buttons (`aria-label="Execute"`, `aria-label="Load more"`, `aria-label="Fit View"`, `aria-label="Clear"`).
+  3. `frontend/src/components/graph/GraphCanvas.jsx`:
+     - Custom `ArchitectureNode` keyboard parity: `tabIndex={0}`, `role="button"`, `aria-selected={Boolean(selected)}`, `onKeyDown` supporting Enter/Space to select and Escape to deselect.
+     - Text bounds containment: `word-break: break-word` and `overflow-wrap: anywhere` for long Unicode names.
+  4. `frontend/src/components/graph/GraphInspector.jsx`:
+     - Added global `Escape` key listener invoking `onDeselect` without forced viewport movement.
+     - Added accessible labels on close buttons (`aria-label="Close inspector"`) and contextual traversal action buttons (`aria-label="Expand Neighborhood of {name}"`, etc.).
+     - No focus traps: natural Tab/Shift+Tab cycling.
+  5. `frontend/src/components/graph/GraphListView.jsx`:
+     - Semantic `<table>` markup with `<th scope="col">` headers and accessible table descriptions.
+     - Sub-tab switcher with `role="group"` and `aria-pressed` states for screen reader parity.
+     - Search filter with `<label htmlFor="graph-list-filter" className="sr-only">` and live polite announcement (`aria-live="polite"`).
+  6. `frontend/src/pages/ArchitectureExplorerPage.jsx`:
+     - Focus restoration: pressing Escape or closing inspector restores focus to initiating node card (`[data-testid="arch-node-{id}"]`) or list select button with `{ preventScroll: true }`, preventing viewport jump.
+     - ARIA live region: loaded node/edge counts badge wrapped with `aria-live="polite"`.
+  7. `frontend/src/styles/graph.css`:
+     - High-contrast visible focus rings (`:focus-visible` with 2px cyan outline and 2px offset).
+     - Screen reader utility class (`.sr-only`).
+     - Responsive breakpoints down to 360px mobile width (stacked controls, full-width inputs, adaptive canvas/inspector sizing).
+     - Reduced motion support (`@media (prefers-reduced-motion: reduce)`) disabling transitions and spinner animations.
+  8. Dedicated Test Suite `frontend/tests/component/GraphAccessibility.test.jsx`:
+     - 18/18 tests passed covering keyboard navigation, inspector Escape focus restoration, fieldset/legend controls, semantic table markup, error matrix distinctions, credential redaction, polling visibility transitions, and long Unicode names.
+  9. Frontend Test Suites & Verification:
+     - Full frontend Vitest suite: 17 test files, 107/107 tests passed (100%).
+     - Full frontend legacy suite: 4 suites passed (100%).
+     - Production build: `npm --prefix frontend run build` succeeded in 2.47s with dedicated worker chunk (`graphLayout.worker-*.js`, 1.46MB) and lazy Explorer bundle (`ArchitectureExplorerPage-*.js`, 241kB).
+- **Backend & Transport Regression Protection:**
+  - Express test suite: 35 files, 478/478 tests passed (100%).
+  - Python P4 API & integration suite: 55 passed, 1 skipped (100%).
+  - Zero Python backend changes; frozen P1–P4 contracts completely preserved.
+
+### 12.25 Phase 4 Module 5 (M5) Batch 5 — Consolidated browser/backend integration, regression, and freeze evidence
+
+- **Scope/status:** M5 Batch 5 is **IMPLEMENTED / VERIFIED**. Delivered full composition integration scenarios in `ArchitectureExplorerPage.test.jsx` covering the complete live user journey across visual canvas, inspector, graph continuation, structured table list, rebuild polling, generation change handling, historical STALE versioning, and graph unavailable 503 error handling. Completed all 9 Section I verification commands with 100% green evidence.
+- **Composition Integration Deliverables (`frontend/tests/component/ArchitectureExplorerPage.test.jsx` — 10/10 tests passed):**
+  1. Exact Model -> Explorer navigation: Verified clicking "Explore Graph" on `ArchitectureModelPage` routes to `/projects/:projectId/repositories/:repoId/architecture/explorer` with loaded published document state.
+  2. Bounded Window Load: Verified initial load adheres to bounded window constraints (50 nodes / 100 edges) and populates both node count indicators and canvas/list representations.
+  3. Node Selection & Inspector: Verified selecting an entity renders inspector details (name, kind, logical ID, status, UUID, evidence references) and neighborhood exploration actions.
+  4. Graph Continuation: Verified clicking "Load more" button with opaque continuation cursor passes cursor parameter to fetch next bounded subgraph window and appends without re-fetching already present elements.
+  5. Structured List Toggle: Verified swapping to "Structured List" view renders accessible semantic `<table>` elements for Entities and Relationships with search filtering.
+  6. Rebuild Trigger & Polling: Verified triggering rebuild sends `POST /rebuild` (HTTP 202 accepted), displays "Rebuild in progress" status banner, polls status, and reloads upon completion.
+  7. Generation Change Reload: Verified that when generation ID changes, graph state resets cached active window and fetches fresh generation data.
+  8. Historical STALE Indicator: Verified that loading an older published version with a newer repository version displays the non-blocking `STALE` status banner and read-only guidance.
+  9. Graph Unavailable 503 Graceful Handling: Verified that receiving HTTP 503 Service Unavailable retains previously loaded graph elements and presents retry action without clearing view.
+  10. Context Chain & Route Boundaries: Verified route parameter validation, malformed parameter handling, and non-blocking error display.
+- **Complete Section I Verification Commands Evidence (All 9 Passed):**
+  1. `npm --prefix frontend ls --depth=0`: Passed. Exact package pins confirmed (`@xyflow/react@12.12.1`, `elkjs@0.12.1`, `react@18.3.1`, `react-dom@18.3.1`, `vite@8.3.7`, `vitest@5.1.0`).
+  2. `npm --prefix frontend run test:legacy`: Passed (4/4 test suites, 100%).
+  3. `npm --prefix frontend test`: Passed (runs both `test:legacy` and `test:ui` across all 17 test files, 110/110 tests passed in 56.46s).
+  4. `npm --prefix frontend run build`: Passed in 7.23s. Confirmed clean chunk separation:
+     - Worker bundle: `dist/assets/graphLayout.worker-*.js` (1,465.58 kB)
+     - Explorer lazy page: `dist/assets/ArchitectureExplorerPage-*.js` (241.52 kB / gzip: 72.89 kB)
+     - Main entry: `dist/assets/index-*.js` (410.09 kB / gzip: 102.21 kB)
+  5. `npm --prefix frontend audit --omit=dev`: Passed (0 vulnerabilities).
+  6. `npm --prefix express audit --omit=dev`: Verified (0 new vulnerabilities, 1 pre-existing high severity advisory on `mongoose@8.24.6`).
+  7. `npm --prefix express test`: Passed (35 test files, 478/478 tests passed in 166.38s).
+  8. `./venv/bin/pytest -q tests/p4/api tests/p4/integration/test_graph_api_pipeline.py`: Passed (55 passed, 1 skipped in 4.13s).
+  9. `git diff --check`: Passed (clean, 0 whitespace errors).
+- **Backend & Transport Regression Protection:**
+  - Zero Python backend contract changes; frozen P1–P4 contracts completely preserved.
+  - Authorized Express proxy endpoints strictly adhere to Gate T-V delegation and input validation without token/cursor leakage in logs or responses.
+
 ## 13. Current Handoff
 
-The approved architecture, frozen M1 contracts, completed M2 implementation,
-approved detailed M3 plan, complete proposed M4 plan, preserved roadmap, phase
-DoD, risks and verified execution records are recorded in this sole rolling
+The approved architecture, frozen M1–M4 contracts, completed M5 Batches 1 through 5 implementation,
+preserved roadmap, phase DoD, risks, and verified execution records are recorded in this sole rolling
 handoff.
 
-**Current status:** M1, M2, M3 and M4 are frozen and complete. M4's
-independent-review findings are remediated, its real PostgreSQL/Neo4j pipeline
-passes, the complete repository reports 1,087 passed and 16 intentional
-platform/environment skips, and Black, Ruff and MyPy pass. P4-D1 is frozen at
-version `1.0.0` by owner approval dated 2026-11-14.
+**Current status:** M1, M2, M3, M4, and M5 (React Architecture Explorer) are fully implemented and verified.
+All five M5 batches are complete:
+- Batch 1: Exact package pins, P4-U1 state/reducer foundation, exact route matching, optional exact-version Model fallback, Explore Graph link, and ELK layout worker spike.
+- Batch 2: Express graph transport, Gate T-V verification, graph state orchestrator, GraphStatusBanner, GraphControls, and Explorer workflows.
+- Batch 3: React Flow canvas, ELK worker layout, GraphInspector, GraphListView, and Explorer integration.
+- Batch 4: Accessibility (WCAG 2.1 AA), graceful degradation, responsive UX, error matrix hardening, and polling lifecycle.
+- Batch 5: Consolidated browser/backend integration, full live user journey scenarios, and freeze evidence across all 9 Section I verification commands.
 
-**M5 planning status (2026-11-15):** Section 7F records the owner-approved
-five-batch React Architecture Explorer and minimum Express graph transport plan.
-Gate T owner authorization is resolved by the scoped exception recorded at the
-top of this file and in Section 7F. The transport does not exist yet: revised
-Batch 2 implements and verifies it before frontend live wiring. All M5 batches
-remain unstarted and P4-U1 is plan-approved but not frozen. The owner requested
-status recording only and explicitly instructed that implementation not begin.
+All 110 frontend UI tests (17 files), 4 legacy frontend suites, 478 Express tests (35 files), and 55 Python P4 API/pipeline tests pass. Production build succeeds with optimal code splitting. Zero new security vulnerabilities introduced.
 
-**Next action:** wait for the owner's explicit instruction to begin M5 Batch 1.
-The five-batch plan is approved as one sequential unit, including Batch 2
-Express transport/parity verification before browser graph integration; no
-additional planning approval between batches is required. No M5 or M6
-implementation has started.
+**Next action:** proceed to independent review of Phase 4 Module 5 (`/reviewing`) and subsequent freeze by module owner.

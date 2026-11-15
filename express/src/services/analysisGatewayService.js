@@ -22,9 +22,16 @@ class AnalysisGatewayService {
   /**
    * Construct trusted delegation headers required by FastAPI backend.
    */
-  buildDelegatedHeaders({ user, role, projectId, correlationId }) {
+  buildDelegatedHeaders({ user, role, projectId, correlationId, isHealth = false }) {
     if (!user || !user.id) {
       throw new AnalysisServiceError('Valid authenticated user is required for delegation.');
+    }
+    if (isHealth) {
+      return {
+        'X-Service-Token': this.config.secretKey,
+        'X-Actor-Id': String(user.id),
+        'X-Correlation-Id': String(correlationId || crypto.randomUUID()),
+      };
     }
     if (!role) {
       throw new AnalysisServiceError('Authoritative project role is required for delegation.');
@@ -55,27 +62,51 @@ class AnalysisGatewayService {
     projectId,
     correlationId,
     timeoutMs,
+    responseMode = 'default',
+    clientReq,
   }) {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    const isHealth = responseMode === 'graph' && cleanPath === '/health/graph/query';
+
     const headers = this.buildDelegatedHeaders({
       user,
       role,
       projectId,
       correlationId,
+      isHealth,
     });
 
     const queryString = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
       if (value !== undefined && value !== null) {
-        queryString.append(key, String(value));
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (item !== undefined && item !== null) {
+              queryString.append(key, String(item));
+            }
+          }
+        } else {
+          queryString.append(key, String(value));
+        }
       }
     }
     const qs = queryString.toString();
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${this.config.baseUrl}${cleanPath}${qs ? `?${qs}` : ''}`;
 
     const controller = new AbortController();
     const effectiveTimeout = timeoutMs || this.config.jsonTimeoutMs;
     const timeoutHandle = setTimeout(() => controller.abort(), effectiveTimeout);
+    let responseCompleted = false;
+
+    let clientCloseHandler = null;
+    if (clientReq && typeof clientReq.on === 'function') {
+      clientCloseHandler = () => {
+        if (!responseCompleted) {
+          controller.abort();
+        }
+      };
+      clientReq.on('close', clientCloseHandler);
+    }
 
     const fetchOptions = {
       method,
@@ -86,6 +117,10 @@ class AnalysisGatewayService {
       signal: controller.signal,
     };
 
+    if (responseMode === 'graph') {
+      fetchOptions.redirect = 'manual';
+    }
+
     if (body !== undefined && body !== null) {
       fetchOptions.headers['Content-Type'] = 'application/json';
       fetchOptions.body = JSON.stringify(body);
@@ -93,10 +128,13 @@ class AnalysisGatewayService {
 
     try {
       const response = await this.fetch(url, fetchOptions);
-      clearTimeout(timeoutHandle);
+
+      if (responseMode === 'graph' && response.status >= 300 && response.status < 400) {
+        throw new AnalysisServiceError('Upstream redirected unexpectedly.');
+      }
 
       if (response.status === 204) {
-        return null;
+        return responseMode === 'graph' ? { status: 204, body: null } : null;
       }
 
       let data;
@@ -109,11 +147,55 @@ class AnalysisGatewayService {
         }
       }
 
+      if (responseMode === 'graph') {
+        if (response.ok) {
+          if (data === null || data === undefined) {
+            throw new AnalysisServiceError('Analysis service returned an invalid response format.');
+          }
+          return { status: response.status, body: data };
+        }
+
+        // Upstream error in graph mode: preserve recognized shapes
+        if (response.status >= 400) {
+          if (data && data.error && typeof data.error.code === 'string') {
+            return {
+              status: response.status,
+              body: {
+                error: {
+                  code: data.error.code,
+                  message: typeof data.error.message === 'string' ? data.error.message : 'Upstream error.',
+                  details: data.error.details || {},
+                },
+              },
+            };
+          }
+          if (response.status === 422 && data && Array.isArray(data.detail)) {
+            return {
+              status: 422,
+              body: {
+                detail: data.detail,
+              },
+            };
+          }
+          // Unrecognized upstream 4xx/5xx error: sanitize into standard error envelope with the HTTP status
+          return {
+            status: response.status,
+            body: {
+              error: {
+                code: 'analysis_service_error',
+                message: 'Analysis service encountered an unexpected error.',
+                details: {},
+              },
+            },
+          };
+        }
+      }
+
       if (response.ok) {
         return data;
       }
 
-      // Upstream returned an error status
+      // Upstream returned an error status (default mode)
       if (response.status >= 400 && response.status < 500) {
         if (data && data.error) {
           throw new AnalysisGatewayError(
@@ -143,7 +225,6 @@ class AnalysisGatewayService {
       // 5xx error from upstream: do not relay internal detail or stack trace
       throw new AnalysisServiceError('Analysis service encountered an unexpected error.');
     } catch (err) {
-      clearTimeout(timeoutHandle);
       if (err instanceof AnalysisGatewayError) {
         throw err;
       }
@@ -158,6 +239,12 @@ class AnalysisGatewayService {
         throw new AnalysisServiceUnavailableError('Analysis service is currently unavailable.');
       }
       throw new AnalysisServiceError('Analysis service encountered an unexpected error.');
+    } finally {
+      responseCompleted = true;
+      clearTimeout(timeoutHandle);
+      if (clientReq && clientCloseHandler && typeof clientReq.off === 'function') {
+        clientReq.off('close', clientCloseHandler);
+      }
     }
   }
 

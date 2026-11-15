@@ -141,9 +141,12 @@ describe('User Model Unit Tests (M5 Batch 1)', () => {
   });
 
   describe('Unique Indexes', () => {
-    it('enforces uniqueness on email', async () => {
+    beforeEach(async () => {
+      await User.init();
       await User.syncIndexes();
+    });
 
+    it('enforces uniqueness on email', async () => {
       await User.create({
         email: 'unique@example.com',
         username: 'user_one',
@@ -160,8 +163,6 @@ describe('User Model Unit Tests (M5 Batch 1)', () => {
     });
 
     it('enforces uniqueness on username', async () => {
-      await User.syncIndexes();
-
       await User.create({
         email: 'first@example.com',
         username: 'same_username',
