@@ -60,8 +60,8 @@ describe('GraphCanvas component', () => {
       />
     );
 
-    expect(screen.getByText('No Elements In Active Window')).toBeInTheDocument();
-    expect(screen.getByText(/Select an exploration mode or trigger a traversal/i)).toBeInTheDocument();
+    expect(screen.getByText('No entities in this window')).toBeInTheDocument();
+    expect(screen.queryByText(/Projection is ready/i)).not.toBeInTheDocument();
   });
 
   it('renders custom ArchitectureNode cards with canonical metadata', () => {

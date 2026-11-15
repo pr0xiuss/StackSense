@@ -17,6 +17,8 @@ export function useGraphLayout({
   const [positions, setPositions] = useState({});
   const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const [layoutError, setLayoutError] = useState(null);
+  const [layoutRevision, setLayoutRevision] = useState(null);
+  const requestedRevisionRef = useRef(null);
 
   const workerRef = useRef(null);
   const currentRequestIdRef = useRef(0);
@@ -57,6 +59,7 @@ export function useGraphLayout({
 
         if (msg.type === 'layout-success') {
           setPositions(msg.positions || {});
+          setLayoutRevision(requestedRevisionRef.current);
           setLayoutError(null);
         } else if (msg.type === 'layout-error') {
           setLayoutError(msg.message || 'Layout computation failed');
@@ -81,6 +84,7 @@ export function useGraphLayout({
     const nodeList = Object.values(nodes);
     if (nodeList.length === 0) {
       setPositions({});
+      setLayoutRevision(graphRevision);
       setIsLayoutRunning(false);
       setLayoutError(null);
       return;
@@ -105,11 +109,13 @@ export function useGraphLayout({
         };
       });
       setPositions(fallbackPositions);
+      setLayoutRevision(graphRevision);
       return;
     }
 
     const nextRequestId = currentRequestIdRef.current + 1;
     currentRequestIdRef.current = nextRequestId;
+    requestedRevisionRef.current = graphRevision;
 
     setIsLayoutRunning(true);
     setLayoutError(null);
@@ -170,6 +176,7 @@ export function useGraphLayout({
     positions,
     isLayoutRunning,
     layoutError,
+    layoutRevision,
   };
 }
 

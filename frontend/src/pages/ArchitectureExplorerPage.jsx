@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import DashboardHeader from '../components/dashboard/DashboardHeader.jsx';
 import { useArchitectureGraph } from '../hooks/useArchitectureGraph.js';
 import { useGraphLayout } from '../hooks/useGraphLayout.js';
@@ -25,6 +25,8 @@ export default function ArchitectureExplorerPage({
   const [activeMode, setActiveMode] = useState(EXPLORER_MODES.WINDOW);
   const [isRebuilding, setIsRebuilding] = useState(false);
   const [fitViewTrigger, setFitViewTrigger] = useState(0);
+  const [focusRequest, setFocusRequest] = useState(null);
+  const focusSequenceRef = useRef(0);
 
   // User project role for mutation authorization (OWNER / ADMIN)
   const { canManageAccess } = useProjectRole(projectId);
@@ -55,6 +57,7 @@ export default function ArchitectureExplorerPage({
     positions: layoutPositions,
     isLayoutRunning,
     layoutError,
+    layoutRevision,
   } = useGraphLayout({
     nodes: graphState.nodes,
     edges: graphState.edges,
@@ -97,6 +100,25 @@ export default function ArchitectureExplorerPage({
 
   const handleFitView = useCallback(() => {
     setFitViewTrigger((prev) => prev + 1);
+  }, []);
+
+  const handleViewOnMap = useCallback((id, pending = false) => {
+    const sequence = ++focusSequenceRef.current;
+    selectNode(id);
+    setFocusRequest({ nodeId: id, sequence, pending });
+    setActiveTab('map');
+    return sequence;
+  }, [selectNode]);
+
+  const handleListNeighbors = useCallback(async (id) => {
+    const sequence = handleViewOnMap(id, true);
+    setActiveMode(EXPLORER_MODES.NEIGHBORHOOD);
+    await expandNeighborhood(id, { mode: EXPLORER_MODES.NEIGHBORHOOD, depth: 1 });
+    setFocusRequest((current) => current?.sequence === sequence ? { ...current, pending: false } : current);
+  }, [handleViewOnMap, expandNeighborhood]);
+
+  const handleFocusComplete = useCallback((sequence) => {
+    setFocusRequest((current) => current?.sequence === sequence ? null : current);
   }, []);
 
   const handleDeselect = useCallback(() => {
@@ -144,12 +166,20 @@ export default function ArchitectureExplorerPage({
   }, [graphState.nodes]);
 
   const version = graphState.version;
+  const activeOperationEntry = Object.entries(graphState.operations).reverse().find(
+    ([key, operation]) => operation.mode === activeMode &&
+      (activeMode === 'window' || activeMode === 'paths' || key.endsWith(`:${graphState.selectedNodeId}`))
+  );
+  const activeOperation = activeOperationEntry?.[1];
+  const isReadable = ['COMPLETED', 'STALE'].includes(graphState.status?.status) &&
+    Boolean(graphState.status?.active_generation_id) && !graphState.isOutOfDate;
+  const isQueryRunning = Object.values(graphState.operations).some((operation) => operation.inFlight);
 
   return (
     <div className="graph-explorer-page">
       <DashboardHeader />
 
-      <main className="container" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <main className="repository-content container graph-explorer-content">
         {/* Context Error Screen */}
         {graphState.contextError && (
           <div className="repo-error-screen" role="alert">
@@ -174,7 +204,7 @@ export default function ArchitectureExplorerPage({
         )}
 
         {/* Loading Screen */}
-        {!graphState.contextError && (!graphState.contextValidated || metaLoading) && (
+        {!graphState.contextError && !graphState.contextValidated && (
           <div className="repo-loading-screen" role="status">
             <span className="btn-spinner" aria-hidden="true" />
             <p>Loading architecture graph explorer...</p>
@@ -190,6 +220,8 @@ export default function ArchitectureExplorerPage({
                 <a href="#/projects" className="breadcrumb-link">
                   Projects
                 </a>
+                <span className="breadcrumb-separator">/</span>
+                <a href="#/projects" className="breadcrumb-link">{project?.name || 'Project'}</a>
                 <span className="breadcrumb-separator">/</span>
                 <a
                   href={`#/projects/${projectId}/repositories/${repositoryId}`}
@@ -228,12 +260,12 @@ export default function ArchitectureExplorerPage({
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                       <h1 className="graph-title">
-                        Architecture Graph Explorer — v{version.sequence_number || 1}
+                        Architecture Explorer
                       </h1>
                     </div>
 
                     <div className="graph-subtitle">
-                      <span className="mono-cell">ID: {version.id.slice(0, 8)}...</span>
+                      <span className="mono-cell" title={version.id}>Version {version.sequence_number || 1} · {version.id.slice(0, 8)}</span>
                       <span>Total Entities: {version.entity_count ?? 0}</span>
                       <span>Total Relationships: {version.relationship_count ?? 0}</span>
                       <span className="badge-status" style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8' }} aria-live="polite">
@@ -243,13 +275,14 @@ export default function ArchitectureExplorerPage({
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.6rem' }}>
+                <div className="graph-header-actions">
+                  <button type="button" className="graph-btn" onClick={refreshStatus} disabled={Boolean(graphState.operations.status?.inFlight)}>Refresh status</button>
                   <a
                     href={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${analysisId}/architecture/${versionId}`}
                     className="btn-secondary"
                     style={{ textDecoration: 'none' }}
                   >
-                    &larr; Back to Exact Model
+                    &larr; Architecture Model
                   </a>
                 </div>
               </div>
@@ -258,12 +291,13 @@ export default function ArchitectureExplorerPage({
             {/* Projection Lifecycle & Status Banner */}
             <GraphStatusBanner
               status={graphState.status}
+              discoveryPending={graphState.projectionDiscoveryPending}
               isOutOfDate={graphState.isOutOfDate}
               generationChangeMessage={graphState.generationChangeMessage}
               isCapReached={graphState.isCapReached}
               capMessage={graphState.capMessage}
               error={graphState.error}
-              canManage={Boolean(canManageAccess)}
+              canManage={Boolean(canManageAccess && graphState.status)}
               onRetry={refreshStatus}
               onRebuild={handleRebuild}
               onReload={reloadVersion}
@@ -295,15 +329,16 @@ export default function ArchitectureExplorerPage({
             {/* Interactive Graph Controls Toolbar */}
             <GraphControls
               mode={activeMode}
+              disabled={!isReadable || isQueryRunning}
               onModeChange={setActiveMode}
               selectedNode={selectedNode}
               loadedNodes={loadedNodesList}
-              activeOperation={graphState.operations[activeMode] || graphState.operations.window}
+              activeOperation={activeOperation}
               isCapReached={graphState.isCapReached}
-              onLoadMore={() => loadMore(activeMode)}
+              onLoadMore={() => loadMore(activeOperationEntry?.[0])}
               onExecuteQuery={handleExecuteQuery}
               onClear={clearExploration}
-              onFit={handleFitView}
+              onFit={activeTab === 'map' ? handleFitView : null}
             />
 
             {/* Main Content Area */}
@@ -318,8 +353,13 @@ export default function ArchitectureExplorerPage({
                     selectedNodeId={graphState.selectedNodeId}
                     onSelectNode={selectNode}
                     fitViewTrigger={fitViewTrigger}
+                    focusRequest={focusRequest}
+                    onFocusComplete={handleFocusComplete}
                     isLayoutRunning={isLayoutRunning}
+                    layoutReady={layoutRevision === graphState.graphRevision}
                     layoutError={layoutError}
+                    emptyTitle={graphState.error ? 'Graph unavailable' : !graphState.status ? 'Checking graph projection' : !isReadable ? 'Preparing architecture graph' : isQueryRunning ? 'Loading architecture graph' : 'No entities in this window'}
+                    emptyDescription={graphState.error ? 'Your published Architecture Model is available. Retry the status check, or return to the model while graph processing recovers.' : !isReadable ? 'The graph appears here after the projection worker finishes processing this exact version.' : 'This bounded query returned no entities. You can refresh status or return to the canonical model.'}
                   />
                 </div>
               ) : (
@@ -328,7 +368,9 @@ export default function ArchitectureExplorerPage({
                   edges={graphState.edges}
                   selectedNodeId={graphState.selectedNodeId}
                   onSelectNode={selectNode}
-                  onExpandNeighborhood={(id) => expandNeighborhood(id, { mode: EXPLORER_MODES.NEIGHBORHOOD, depth: 1 })}
+                  onViewOnMap={handleViewOnMap}
+                  isOperationInFlight={!isReadable || isQueryRunning || graphState.isCapReached}
+                  onExpandNeighborhood={handleListNeighbors}
                   onExpandDependencies={(id) => expandDependencies(id, { mode: EXPLORER_MODES.DEPENDENCIES, depth: 1 })}
                   onExpandDependents={(id) => expandDependents(id, { mode: EXPLORER_MODES.DEPENDENTS, depth: 1 })}
                   layoutError={layoutError}
@@ -336,7 +378,7 @@ export default function ArchitectureExplorerPage({
               )}
 
               {/* Inspector Panel */}
-              <GraphInspector
+              {activeTab === 'map' && <GraphInspector
                 selectedNode={selectedNode}
                 version={version}
                 nodes={graphState.nodes}
@@ -345,8 +387,8 @@ export default function ArchitectureExplorerPage({
                 onExpandDependencies={(id) => expandDependencies(id, { mode: EXPLORER_MODES.DEPENDENCIES, depth: 1 })}
                 onExpandDependents={(id) => expandDependents(id, { mode: EXPLORER_MODES.DEPENDENTS, depth: 1 })}
                 onExpandContainment={(id) => expandContainment(id, { mode: EXPLORER_MODES.CONTAINMENT, depth: 1, direction: 'children' })}
-                isOperationInFlight={Boolean(graphState.operations[activeMode]?.inFlight)}
-              />
+                isOperationInFlight={!isReadable || isQueryRunning}
+              />}
             </div>
           </>
         )}
