@@ -5,11 +5,13 @@ const userDirectoryRoutes = require('./userDirectoryRoutes');
 const internalAnalysisSourceRoutes = require('./internalAnalysisSourceRoutes');
 const analysisRoutes = require('./analysisRoutes');
 const architectureRoutes = require('./architectureRoutes');
+const graphRoutes = require('./graphRoutes');
+const graphHealthRoutes = require('./graphHealthRoutes');
 
 const router = express.Router();
 
 /**
- * Health check endpoint.
+ * Health check endpoints.
  */
 router.get('/health', (req, res) => {
   res.status(200).json({
@@ -17,6 +19,7 @@ router.get('/health', (req, res) => {
     service: 'stacksense-express',
   });
 });
+router.use('/health/graph', graphHealthRoutes);
 
 /**
  * Authentication endpoints.
@@ -31,9 +34,10 @@ router.use('/internal', internalAnalysisSourceRoutes);
 router.use('/projects', projectRoutes);
 
 /**
- * Analysis lifecycle and Architecture Model endpoints.
+ * Analysis lifecycle, Architecture Graph, and Architecture Model endpoints.
  */
 router.use('/analyses', analysisRoutes);
+router.use('/architecture-versions/:versionId/graph', graphRoutes);
 router.use('/architecture-versions', architectureRoutes);
 
 module.exports = router;

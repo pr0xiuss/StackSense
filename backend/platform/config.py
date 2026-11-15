@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
     analysis_queue_name: str = "analysis.jobs"
     analysis_worker_concurrency: int = 2
     analysis_worker_prefetch_multiplier: int = 1
+    analysis_worker_max_tasks_per_child: int = Field(default=2, ge=1, le=1000)
     analysis_max_retries: int = Field(default=3, ge=0)
     analysis_retry_backoff_seconds: int = Field(default=5, ge=1)
     analysis_dispatch_recovery_interval_seconds: int = Field(default=60, ge=1)
@@ -84,6 +86,72 @@ class Settings(BaseSettings):
         ge=1024,
     )
 
+    # Architecture graph infrastructure (Phase 4 Module 1 Batch 1)
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: SecretStr = SecretStr(
+        "neo4j-development-password-change-in-production"
+    )
+    neo4j_database: str = "neo4j"
+    neo4j_connection_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    neo4j_connection_acquisition_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        le=120,
+    )
+    neo4j_health_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    neo4j_max_connection_pool_size: int = Field(default=20, ge=1, le=100)
+
+    # Architecture graph scheduling (Phase 4 Module 1 Batch 3)
+    graph_queue_name: str = "graph.projections"
+    graph_maintenance_queue_name: str = "graph.maintenance"
+    graph_worker_concurrency: int = Field(default=1, ge=1, le=16)
+    graph_worker_prefetch_multiplier: int = Field(default=1, ge=1, le=16)
+    graph_broker_health_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    graph_reconciliation_interval_seconds: int = Field(default=60, ge=5)
+    graph_reconciliation_page_size: int = Field(default=100, ge=1, le=500)
+    graph_dispatch_recovery_seconds: int = Field(default=60, ge=1)
+    graph_lease_duration_seconds: int = Field(default=120, ge=10)
+    graph_heartbeat_interval_seconds: int = Field(default=30, ge=1)
+    graph_capability_ttl_seconds: int = Field(default=180, ge=10)
+    graph_retry_backoff_seconds: int = Field(default=15, ge=1)
+    graph_recovery_batch_size: int = Field(default=100, ge=1, le=500)
+    # This remains false until M2 registers the P4-W1 executor capability.
+    graph_projection_dispatch_enabled: bool = False
+
+    # Architecture graph projection candidates (Phase 4 Module 2 Batch 1)
+    # Measurement candidates only; not frozen production defaults.
+    graph_projection_node_batch_size: int = Field(default=500, ge=1, le=5000)
+    graph_projection_relationship_batch_size: int = Field(default=1000, ge=1, le=10000)
+    graph_projection_query_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    graph_projection_cleanup_page_size: int = Field(default=1000, ge=1, le=5000)
+    graph_projection_cleanup_grace_seconds: int = Field(default=86400, ge=60)
+    graph_projection_max_meta_key_bytes: int = Field(default=64, ge=1, le=256)
+    graph_projection_max_meta_string_bytes: int = Field(default=2048, ge=1, le=65536)
+    graph_projection_max_meta_list_items: int = Field(default=64, ge=1, le=1000)
+    graph_projection_max_meta_record_bytes: int = Field(default=16384, ge=1, le=1048576)
+    graph_projection_max_projected_properties_bytes: int = Field(
+        default=1048576, ge=1024, le=10485760
+    )
+
+    # Architecture graph query and exploration API (Phase 4 Module 3)
+    graph_query_default_depth: int = Field(default=1, ge=1, le=5)
+    graph_query_max_depth: int = Field(default=5, ge=1, le=5)
+    graph_query_default_nodes: int = Field(default=100, ge=1, le=500)
+    graph_query_max_nodes: int = Field(default=500, ge=1, le=500)
+    graph_query_default_edges: int = Field(default=200, ge=1, le=1000)
+    graph_query_max_edges: int = Field(default=1000, ge=1, le=1000)
+    graph_query_default_paths: int = Field(default=5, ge=1, le=25)
+    graph_query_max_paths: int = Field(default=25, ge=1, le=25)
+    graph_query_default_page_size: int = Field(default=50, ge=1, le=100)
+    graph_query_max_page_size: int = Field(default=100, ge=1, le=100)
+    graph_query_default_timeout_seconds: float = Field(default=2.0, gt=0, le=5.0)
+    graph_query_max_timeout_seconds: float = Field(default=5.0, gt=0, le=5.0)
+    graph_query_cursor_secret_key: SecretStr = SecretStr(
+        "stacksense-insecure-dev-graph-cursor-secret-at-least-32-bytes"
+    )
+    graph_query_cursor_ttl_seconds: int = Field(default=900, ge=60, le=86400)
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )
@@ -101,6 +169,45 @@ class Settings(BaseSettings):
             return [str(p).strip() for p in v if str(p).strip()]
         return []
 
+    @field_validator("neo4j_uri")
+    @classmethod
+    def _validate_neo4j_uri(cls, value: str) -> str:
+        uri = value.strip()
+        parsed = urlsplit(uri)
+        allowed_schemes = {
+            "bolt",
+            "bolt+s",
+            "bolt+ssc",
+            "neo4j",
+            "neo4j+s",
+            "neo4j+ssc",
+        }
+        if parsed.scheme not in allowed_schemes or not parsed.hostname:
+            raise ValueError("NEO4J_URI must be a supported Neo4j URI")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("NEO4J_URI must not contain credentials")
+        return uri
+
+    @field_validator(
+        "neo4j_user",
+        "neo4j_database",
+        "graph_queue_name",
+        "graph_maintenance_queue_name",
+    )
+    @classmethod
+    def _validate_nonempty_neo4j_identifier(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("graph identifiers and queue names must not be empty")
+        return normalized
+
+    @field_validator("neo4j_password")
+    @classmethod
+    def _validate_neo4j_password(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value()) < 8:
+            raise ValueError("NEO4J_PASSWORD must contain at least 8 characters")
+        return value
+
     @model_validator(mode="after")
     def _validate_production_secrets(self) -> Settings:
         if self.app_env.lower() in {"production", "prod"} and (
@@ -113,10 +220,52 @@ class Settings(BaseSettings):
             == "internal-platform-secret-key-change-in-production"
         ):
             raise ValueError("PLATFORM_API_SECRET_KEY must be changed in production")
+        if self.app_env.lower() in {"production", "prod"} and (
+            self.neo4j_password.get_secret_value()
+            == "neo4j-development-password-change-in-production"
+        ):
+            raise ValueError("NEO4J_PASSWORD must be changed in production")
+        if self.app_env.lower() in {"production", "prod"} and (
+            self.graph_query_cursor_secret_key.get_secret_value()
+            == "stacksense-insecure-dev-graph-cursor-secret-at-least-32-bytes"
+        ):
+            raise ValueError(
+                "GRAPH_QUERY_CURSOR_SECRET_KEY must be changed in production"
+            )
+        if self.app_env.lower() in {"production", "prod"} and (
+            len(self.graph_query_cursor_secret_key.get_secret_value()) < 32
+        ):
+            raise ValueError(
+                "GRAPH_QUERY_CURSOR_SECRET_KEY must contain at least "
+                "32 characters in production"
+            )
+        if self.graph_query_default_depth > self.graph_query_max_depth:
+            raise ValueError("graph query default depth cannot exceed max depth")
+        if self.graph_query_default_nodes > self.graph_query_max_nodes:
+            raise ValueError("graph query default nodes cannot exceed max nodes")
+        if self.graph_query_default_edges > self.graph_query_max_edges:
+            raise ValueError("graph query default edges cannot exceed max edges")
+        if self.graph_query_default_paths > self.graph_query_max_paths:
+            raise ValueError("graph query default paths cannot exceed max paths")
+        if self.graph_query_default_page_size > self.graph_query_max_page_size:
+            raise ValueError(
+                "graph query default page size cannot exceed max page size"
+            )
+        if (
+            self.graph_query_default_timeout_seconds
+            > self.graph_query_max_timeout_seconds
+        ):
+            raise ValueError("graph query default timeout cannot exceed max timeout")
         if self.analysis_stage_timeout_seconds > self.analysis_max_duration_seconds:
             raise ValueError(
                 "analysis stage timeout cannot exceed analysis max duration"
             )
+        if self.graph_heartbeat_interval_seconds >= self.graph_lease_duration_seconds:
+            raise ValueError("graph heartbeat interval must be shorter than its lease")
+        if self.graph_capability_ttl_seconds <= self.graph_heartbeat_interval_seconds:
+            raise ValueError("graph capability TTL must exceed its heartbeat interval")
+        if self.graph_queue_name == self.graph_maintenance_queue_name:
+            raise ValueError("graph execution and maintenance queues must be distinct")
         return self
 
     model_config = SettingsConfigDict(

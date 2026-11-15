@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 import tracemalloc
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -143,6 +144,17 @@ def _generate_synthetic_f2_workload(
     return total_facts, inspection
 
 
+def _linux_rss_mib(field: str) -> float | None:
+    """Return a current or high-water RSS field for benchmark reporting."""
+    status_path = Path("/proc/self/status")
+    if not status_path.is_file():
+        return None
+    for line in status_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"{field}:"):
+            return int(line.split()[1]) / 1024
+    return None
+
+
 class TestIRM3Benchmarks:
     """Benchmark tests asserting performance characteristics and scaling limits."""
 
@@ -159,8 +171,7 @@ class TestIRM3Benchmarks:
         doc = service.construct(inspection)  # type: ignore[arg-type]
         duration = time.perf_counter() - start
 
-        canon_json = doc.to_canonical_json()
-        payload_bytes = len(canon_json.encode("utf-8"))
+        payload_bytes = doc.canonical_json_size_bytes()
 
         assert duration < 2.0  # Safe non-flaky threshold
         assert doc.completeness.total_inventory_artifacts == num_files
@@ -183,10 +194,9 @@ class TestIRM3Benchmarks:
         construction_time = time.perf_counter() - start
 
         start_ser = time.perf_counter()
-        canon_json = doc.to_canonical_json()
+        payload_bytes = doc.canonical_json_size_bytes()
         ser_time = time.perf_counter() - start_ser
 
-        payload_bytes = len(canon_json.encode("utf-8"))
         facts_per_sec = total_facts / max(construction_time, 0.001)
 
         # Assert referential integrity of construction
@@ -218,10 +228,8 @@ class TestIRM3Benchmarks:
         construction_duration = time.perf_counter() - start
 
         start_ser = time.perf_counter()
-        canon_json = doc.to_canonical_json()
+        payload_bytes = doc.canonical_json_size_bytes()
         ser_duration = time.perf_counter() - start_ser
-
-        payload_bytes = len(canon_json.encode("utf-8"))
 
         # Evidence observations
         entity_count = len(doc.entities)
@@ -307,8 +315,9 @@ class TestIRM3Benchmarks:
 
         peak_mb = peak_memory / (1024 * 1024)
 
-        canon_json = doc.to_canonical_json()
-        payload_bytes = len(canon_json.encode("utf-8"))
+        payload_bytes = doc.canonical_json_size_bytes()
+        current_rss_mb = _linux_rss_mib("VmRSS")
+        process_peak_rss_mb = _linux_rss_mib("VmHWM")
 
         print(
             f"\n[WORST-CASE BENCHMARK] "
@@ -318,6 +327,8 @@ class TestIRM3Benchmarks:
             f"Relationships: {len(doc.relationships)} | "
             f"Evidence: {len(doc.evidence)} | "
             f"Unresolved: {len(doc.unresolved_references)} | "
+            f"Current RSS: {current_rss_mb} MB | "
+            f"Process peak RSS: {process_peak_rss_mb} MB | "
             f"Payload: {payload_bytes} bytes ({payload_bytes / (1024 * 1024):.2f} MB)"
         )
 

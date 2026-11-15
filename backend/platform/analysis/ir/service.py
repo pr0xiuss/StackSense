@@ -1153,18 +1153,35 @@ class IRConstructionService:
             is_partial=is_partial,
         )
 
-        # 7. Construct and return canonical IRDocument
+        # 7. Drain the mutable construction indexes before immutable validation.
+        # Keeping the large dictionaries alive while IRDocument builds its
+        # canonical ordering and referential-integrity sets needlessly doubles
+        # construction-time bookkeeping memory. The tuples retain the records;
+        # clearing the maps only releases construction indexes.
+        entity_records = tuple(entities.values())
+        relationship_records = tuple(relationships.values())
+        evidence_records = tuple(evidence.values())
+        unresolved_records = tuple(unresolved.values())
+        conflict_records = tuple(conflicts.values())
+        entities.clear()
+        relationships.clear()
+        evidence.clear()
+        unresolved.clear()
+        conflicts.clear()
+        artifact_keys_by_path.clear()
+
+        # 8. Construct and return canonical IRDocument
         ir_doc = IRDocument(
             analysis_id=inspection_result.analysis_id,
             project_id=inspection_result.project_id,
             repository_id=inspection_result.repository_id,
             snapshot_id=inspection_result.snapshot_id,
             configuration_fingerprint=inspection_result.configuration_fingerprint,
-            entities=tuple(entities.values()),
-            relationships=tuple(relationships.values()),
-            evidence=tuple(evidence.values()),
-            unresolved_references=tuple(unresolved.values()),
-            conflicts=tuple(conflicts.values()),
+            entities=entity_records,
+            relationships=relationship_records,
+            evidence=evidence_records,
+            unresolved_references=unresolved_records,
+            conflicts=conflict_records,
             completeness=completeness,
             ir_schema_version=IR_SCHEMA_VERSION,
             f2_version=inspection_result.f2_version,

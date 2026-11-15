@@ -4,11 +4,12 @@ import ArchitectureCanvas from '../components/architecture/ArchitectureCanvas.js
 import ArchitectureInspector from '../components/architecture/ArchitectureInspector.jsx';
 import ArchitectureCollectionTable from '../components/architecture/ArchitectureCollectionTable.jsx';
 import { analysisService } from '../services/analysisService.js';
+import { architectureService } from '../services/architectureService.js';
 import { loadArchitectureOverview } from '../services/architectureOverview.js';
 import { projectService } from '../services/projectService.js';
 import { repositoryService } from '../services/repositoryService.js';
 
-export default function ArchitectureModelPage({ projectId, repositoryId, analysisId }) {
+export default function ArchitectureModelPage({ projectId, repositoryId, analysisId, versionId }) {
   const [version, setVersion] = useState(null);
   const [project, setProject] = useState(null);
   const [repository, setRepository] = useState(null);
@@ -35,8 +36,24 @@ export default function ArchitectureModelPage({ projectId, repositoryId, analysi
     setErrorCode(null);
 
     try {
-      const [verData, projData, repoData] = await Promise.all([
-        analysisService.getAnalysisArchitecture(analysisId, { projectId }),
+      let verData;
+      if (versionId) {
+        verData = await architectureService.getVersion(versionId, { projectId });
+        if (
+          verData.id !== versionId ||
+          verData.project_id !== projectId ||
+          verData.repository_id !== repositoryId ||
+          verData.analysis_id !== analysisId
+        ) {
+          setError('Architecture version does not match project, repository, or analysis context.');
+          setErrorCode(400);
+          return;
+        }
+      } else {
+        verData = await analysisService.getAnalysisArchitecture(analysisId, { projectId });
+      }
+
+      const [projData, repoData] = await Promise.all([
         projectService.getProject(projectId).catch(() => null),
         repositoryService.getRepository(projectId, repositoryId).catch(() => null),
       ]);
@@ -69,7 +86,7 @@ export default function ArchitectureModelPage({ projectId, repositoryId, analysi
     } finally {
       setLoading(false);
     }
-  }, [projectId, repositoryId, analysisId]);
+  }, [projectId, repositoryId, analysisId, versionId]);
 
   useEffect(() => {
     loadVersion();
@@ -178,7 +195,22 @@ export default function ArchitectureModelPage({ projectId, repositoryId, analysi
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.6rem' }}>
+                <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                  <a
+                    href={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${analysisId}/architecture/${version.id}/graph`}
+                    className="btn-gradient-primary"
+                    style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="6" cy="6" r="3" />
+                      <circle cx="18" cy="6" r="3" />
+                      <circle cx="12" cy="18" r="3" />
+                      <line x1="8.5" y1="7" x2="15.5" y2="7" />
+                      <line x1="7.5" y1="8.5" x2="10.5" y2="15.5" />
+                      <line x1="16.5" y1="8.5" x2="13.5" y2="15.5" />
+                    </svg>
+                    <span>Explore Graph</span>
+                  </a>
                   <a
                     href={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${analysisId}`}
                     className="btn-secondary"

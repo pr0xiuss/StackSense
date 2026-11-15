@@ -6,6 +6,7 @@ referential integrity, and canonical JSON serialization determinism.
 
 from __future__ import annotations
 
+import json
 from dataclasses import FrozenInstanceError
 from uuid import UUID, uuid4
 
@@ -568,3 +569,14 @@ class TestCanonicalSerialization:
 
         assert json_forward == json_reversed
         assert json_forward.encode("utf-8") == json_reversed.encode("utf-8")
+
+    def test_streamed_canonical_json_is_byte_identical_to_legacy_encoding(self) -> None:
+        """The bounded serializer must preserve the frozen canonical F3 bytes."""
+        document = _make_minimal_document()
+        expected = json.dumps(
+            document.to_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        actual = document.to_canonical_json().encode("utf-8")
+
+        assert actual == expected
+        assert document.canonical_json_size_bytes() == len(expected)

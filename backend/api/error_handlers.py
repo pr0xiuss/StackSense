@@ -1,11 +1,32 @@
 """StackSense API exception handlers."""
 
 import logging
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from backend.platform.errors import ErrorCategory, StackSenseError
+from backend.platform.graph.api_contracts import GraphApiError
+from backend.platform.graph.query_contracts import GraphQueryError
+
+GRAPH_ERROR_STATUS_CODES: dict[str, int] = {
+    "graph_projection_not_found": 404,
+    "graph_projection_not_ready": 409,
+    "graph_node_not_found": 404,
+    "graph_cursor_invalid": 422,
+    "graph_cursor_scope_mismatch": 422,
+    "graph_cursor_expired": 410,
+    "graph_generation_changed": 409,
+    "graph_query_limit_exceeded": 422,
+    "graph_query_timeout": 504,
+    "graph_unavailable": 503,
+    "graph_schema_incompatible": 503,
+    "graph_query_integrity_error": 500,
+    "graph_rebuild_conflict": 409,
+    "graph_lifecycle_unavailable": 503,
+    "graph_api_internal_error": 500,
+}
 
 
 def register_exception_handlers(application: FastAPI) -> None:
@@ -106,4 +127,54 @@ def register_exception_handlers(application: FastAPI) -> None:
                     "details": exc.details,
                 }
             },
+        )
+
+    def _create_graph_error_response(
+        event_name: str,
+        code: str,
+        message: str,
+        details: dict[str, Any],
+    ) -> JSONResponse:
+        logger.error(
+            event_name,
+            extra={
+                "error_code": code,
+            },
+        )
+        status_code = GRAPH_ERROR_STATUS_CODES.get(code, 500)
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "error": {
+                    "code": code,
+                    "message": message,
+                    "details": details,
+                }
+            },
+        )
+
+    @application.exception_handler(GraphQueryError)
+    async def handle_graph_query_error(
+        request: Request,
+        exc: GraphQueryError,
+    ) -> JSONResponse:
+        """Translate safe M3 graph query errors into public API contract."""
+        return _create_graph_error_response(
+            "graph_query_error",
+            exc.code,
+            exc.message,
+            exc.safe_details,
+        )
+
+    @application.exception_handler(GraphApiError)
+    async def handle_graph_api_error(
+        request: Request,
+        exc: GraphApiError,
+    ) -> JSONResponse:
+        """Translate safe M4 graph API errors into public API contract."""
+        return _create_graph_error_response(
+            "graph_api_error",
+            exc.code,
+            exc.message,
+            exc.safe_details,
         )

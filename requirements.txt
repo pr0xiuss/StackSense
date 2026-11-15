@@ -30,6 +30,7 @@ Mako==1.4.1
 MarkupSafe==3.0.3
 mypy==2.3.1
 mypy_extensions==1.1.0
+neo4j==6.4.1
 packaging==26.3
 pathspec==1.1.1
 platformdirs==4.11.3
@@ -47,6 +48,7 @@ pytest==9.1.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.3
 python-multipart==0.0.32
+pytz==2026.6
 pytokens==0.4.1
 ruff==0.16.3
 SQLAlchemy==2.0.52

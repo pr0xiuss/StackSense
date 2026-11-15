@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum, StrEnum
 from types import MappingProxyType
@@ -477,6 +477,45 @@ def _serialize_json_value(val: Any) -> Any:
     return val
 
 
+def _iter_canonical_json_value(value: Any) -> Iterator[str]:
+    """Yield the exact canonical JSON encoding without building an object tree.
+
+    This mirrors ``json.dumps(_serialize_json_value(value), sort_keys=True,
+    separators=(",", ":"))`` while allowing capacity checks and other streaming
+    consumers to avoid retaining a second, fully materialized representation of a
+    large F3 document.
+    """
+    if is_dataclass(value) and not isinstance(value, type):
+        yield "{"
+        for index, dataclass_field in enumerate(
+            sorted(fields(value), key=lambda item: item.name)
+        ):
+            if index:
+                yield ","
+            yield json.dumps(dataclass_field.name, separators=(",", ":"))
+            yield ":"
+            yield from _iter_canonical_json_value(getattr(value, dataclass_field.name))
+        yield "}"
+        return
+    if isinstance(value, (tuple, list)):
+        yield "["
+        batch_size = 256
+        for offset in range(0, len(value), batch_size):
+            if offset:
+                yield ","
+            batch = [
+                _serialize_json_value(item)
+                for item in value[offset : offset + batch_size]
+            ]
+            encoded = json.dumps(batch, sort_keys=True, separators=(",", ":"))
+            yield encoded[1:-1]
+        yield "]"
+        return
+    yield json.dumps(
+        _serialize_json_value(value), sort_keys=True, separators=(",", ":")
+    )
+
+
 @dataclass(frozen=True)
 class IRDocument:
     """Canonical root F3 Intermediate Representation document produced by Module 3."""
@@ -663,9 +702,19 @@ class IRDocument:
         """Convert IR document to a serializable dictionary with sorted keys."""
         return _serialize_json_value(self)  # type: ignore[no-any-return]
 
+    def iter_canonical_json(self) -> Iterator[str]:
+        """Yield canonical JSON fragments without materializing a duplicate tree."""
+        return _iter_canonical_json_value(self)
+
+    def canonical_json_size_bytes(self) -> int:
+        """Return canonical UTF-8 size with bounded serialization overhead."""
+        return sum(
+            len(fragment.encode("utf-8")) for fragment in self.iter_canonical_json()
+        )
+
     def to_canonical_json(self) -> str:
         """Serialize IR document to canonical, deterministic UTF-8 JSON."""
-        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+        return "".join(self.iter_canonical_json())
 
 
 __all__ = [

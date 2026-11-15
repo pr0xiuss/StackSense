@@ -25,6 +25,10 @@ from backend.platform.analysis.infra.lifecycle_model import (
     AnalysisStageModel,
 )
 from backend.platform.dependency_injection import get_database_settings
+from backend.platform.graph.persistence import (
+    GraphProjectionAttemptModel,
+    GraphProjectionResourceModel,
+)
 from backend.platform.identity.infra.user_model import (
     UserCredentialModel,
     UserModel,
@@ -62,6 +66,8 @@ _ = (
     ArchitectureRelationshipEvidenceModel,
     ArchitectureUnresolvedEvidenceModel,
     ArchitectureConflictEvidenceModel,
+    GraphProjectionResourceModel,
+    GraphProjectionAttemptModel,
 )
 
 target_metadata = Base.metadata
