@@ -368,6 +368,28 @@ def test_contract_version_and_dto_serialization() -> None:
     )
     assert accepted_resp.attempt_status == "QUEUED"
 
+    with pytest.raises(ValidationError):
+        ProjectionStatusResponse(
+            resource_id=uuid4(),
+            project_id=PROJECT_ID,
+            architecture_version_id=VERSION_ID,
+            projection_type=PROJECTION_TYPE,
+            status="UNKNOWN",
+            created_at=now,
+            updated_at=now,
+        )
+
+    with pytest.raises(ValidationError):
+        ProjectionRebuildAcceptedResponse(
+            resource_id=uuid4(),
+            architecture_version_id=VERSION_ID,
+            status="PENDING",
+            attempt_id=attempt_id,
+            attempt_number=2,
+            attempt_status="UNKNOWN",
+            accepted_at=now,
+        )
+
     error_resp = GraphErrorResponse(
         error={
             "code": "graph_node_not_found",
@@ -403,6 +425,13 @@ def test_openapi_contains_graph_paths_and_models() -> None:
         assert "403" in responses
         assert "404" in responses
         assert "422" in responses
+        validation_schema = responses["422"]["content"]["application/json"]["schema"]
+        validation_variants = validation_schema.get(
+            "anyOf", validation_schema.get("oneOf", ())
+        )
+        validation_refs = {item.get("$ref") for item in validation_variants}
+        assert "#/components/schemas/GraphErrorResponse" in validation_refs
+        assert "#/components/schemas/FastApiValidationErrorResponse" in validation_refs
 
     # 1. Rebuild endpoint
     rebuild_ep = "/api/v1/architecture-versions/{version_id}/graph/rebuild"
@@ -845,6 +874,8 @@ def test_parameter_bounds_and_invalid_values() -> None:
             headers=_headers(),
         )
         assert resp_over_nodes.status_code == 422
+        assert "detail" in resp_over_nodes.json()
+        assert "error" not in resp_over_nodes.json()
 
         # Depth exceeding maximum
         resp_over_depth = client.get(
