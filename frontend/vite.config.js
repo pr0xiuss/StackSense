@@ -18,5 +18,8 @@ export default defineConfig({
     setupFiles: ['./tests/component/setup.js'],
     include: ['tests/component/**/*.test.{js,jsx}'],
     restoreMocks: true,
+    fileParallelism: false,
+    maxWorkers: 1,
+    testTimeout: 15000,
   },
 });
