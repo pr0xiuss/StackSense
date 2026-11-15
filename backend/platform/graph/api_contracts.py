@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Final
+from typing import Any, Final, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.platform.graph.model import ProjectionCounts
+from backend.platform.graph.model import (
+    ProjectionAttemptState,
+    ProjectionCounts,
+    ProjectionPublicState,
+)
 
 P4_D1_CONTRACT_VERSION: Final[str] = "1.0.0"
 
@@ -20,7 +24,7 @@ class ProjectionAttemptSummary(BaseModel):
 
     attempt_id: UUID
     attempt_number: int
-    status: str
+    status: ProjectionAttemptState
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
@@ -34,8 +38,8 @@ class ProjectionStatusResponse(BaseModel):
     resource_id: UUID
     project_id: UUID
     architecture_version_id: UUID
-    projection_type: str
-    status: str
+    projection_type: Literal["architecture"]
+    status: ProjectionPublicState
     active_generation_id: UUID | None = None
     schema_version: str | None = None
     projector_version: str | None = None
@@ -54,10 +58,10 @@ class ProjectionRebuildAcceptedResponse(BaseModel):
 
     resource_id: UUID
     architecture_version_id: UUID
-    status: str
+    status: ProjectionPublicState
     attempt_id: UUID
     attempt_number: int
-    attempt_status: str
+    attempt_status: ProjectionAttemptState
     accepted_at: datetime
 
 
@@ -77,6 +81,24 @@ class GraphErrorResponse(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     error: GraphErrorBody
+
+
+class FastApiValidationIssue(BaseModel):
+    """One standard FastAPI request-validation issue."""
+
+    model_config = ConfigDict(extra="allow")
+
+    loc: tuple[str | int, ...]
+    msg: str
+    type: str
+
+
+class FastApiValidationErrorResponse(BaseModel):
+    """Standard FastAPI syntactic validation response."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    detail: tuple[FastApiValidationIssue, ...]
 
 
 class GraphApiError(Exception):

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,7 +24,7 @@ from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 from neo4j import Driver
 from pydantic import SecretStr
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, delete, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.api.app import app
@@ -198,30 +200,30 @@ def test_fastapi_sqlite_full_api_pipeline_composition() -> None:
             published_at=now,
         )
     )
-    session.add(
-        GraphProjectionResourceModel(
-            id=resource_id,
-            architecture_version_id=version_id,
-            project_id=project_id,
-            repository_id=repository_id,
-            architecture_sequence=1,
-            projection_type=PROJECTION_TYPE,
-            source_content_digest="digest-abc",
-            source_schema_version="1.0",
-            state=ProjectionPublicState.COMPLETED.value,
-            active_generation_id=gen_id,
-            active_projector_version=PROJECTOR_VERSION,
-            active_graph_schema_version=GRAPH_SCHEMA_VERSION,
-            active_payload_digest="payload-digest-1",
-            active_entity_count=2,
-            active_relationship_count=1,
-            active_evidence_count=1,
-            active_unresolved_count=0,
-            active_conflict_count=0,
-            created_at=now,
-            updated_at=now,
-        )
+    resource = GraphProjectionResourceModel(
+        id=resource_id,
+        architecture_version_id=version_id,
+        project_id=project_id,
+        repository_id=repository_id,
+        architecture_sequence=1,
+        projection_type=PROJECTION_TYPE,
+        source_content_digest="digest-abc",
+        source_schema_version="1.0",
+        state=ProjectionPublicState.COMPLETED.value,
+        active_generation_id=gen_id,
+        active_projector_version=PROJECTOR_VERSION,
+        active_graph_schema_version=GRAPH_SCHEMA_VERSION,
+        active_payload_digest="payload-digest-1",
+        active_entity_count=2,
+        active_relationship_count=1,
+        active_evidence_count=1,
+        active_unresolved_count=0,
+        active_conflict_count=0,
+        created_at=now,
+        updated_at=now,
     )
+    session.add(resource)
+    session.flush()
     session.add(
         GraphProjectionAttemptModel(
             id=attempt_id,
@@ -366,26 +368,27 @@ def test_real_postgresql_and_neo4j_api_pipeline_composition(
     now = datetime.now(UTC)
 
     # 1. Seed PostgreSQL records
-    session.add(
-        AnalysisModel(
-            id=analysis_id,
-            project_id=project_id,
-            repository_id=repository_id,
-            snapshot_id=snapshot_id,
-            status="completed",
-            configuration={},
-            completeness={},
-            published_version_id=version_id,
-            error_code=None,
-            error_message=None,
-            idempotency_key=None,
-            version=1,
-            created_at=now,
-            updated_at=now,
-            started_at=now,
-            completed_at=now,
-        )
+    analysis = AnalysisModel(
+        id=analysis_id,
+        project_id=project_id,
+        repository_id=repository_id,
+        snapshot_id=snapshot_id,
+        status="completed",
+        configuration={},
+        completeness={},
+        published_version_id=None,
+        error_code=None,
+        error_message=None,
+        idempotency_key=None,
+        version=1,
+        created_at=now,
+        updated_at=now,
+        started_at=now,
+        completed_at=now,
     )
+    session.add(analysis)
+    session.flush()
+
     session.add(
         ArchitectureVersionModel(
             id=version_id,
@@ -414,30 +417,32 @@ def test_real_postgresql_and_neo4j_api_pipeline_composition(
             published_at=now,
         )
     )
-    session.add(
-        GraphProjectionResourceModel(
-            id=resource_id,
-            architecture_version_id=version_id,
-            project_id=project_id,
-            repository_id=repository_id,
-            architecture_sequence=1,
-            projection_type=PROJECTION_TYPE,
-            source_content_digest="digest-real",
-            source_schema_version="1.0",
-            state=ProjectionPublicState.COMPLETED.value,
-            active_generation_id=gen_id,
-            active_projector_version=PROJECTOR_VERSION,
-            active_graph_schema_version=GRAPH_SCHEMA_VERSION,
-            active_payload_digest="payload-digest-real",
-            active_entity_count=2,
-            active_relationship_count=1,
-            active_evidence_count=1,
-            active_unresolved_count=0,
-            active_conflict_count=0,
-            created_at=now,
-            updated_at=now,
-        )
+    session.flush()
+    analysis.published_version_id = version_id
+    resource = GraphProjectionResourceModel(
+        id=resource_id,
+        architecture_version_id=version_id,
+        project_id=project_id,
+        repository_id=repository_id,
+        architecture_sequence=1,
+        projection_type=PROJECTION_TYPE,
+        source_content_digest="digest-real",
+        source_schema_version="1.0",
+        state=ProjectionPublicState.COMPLETED.value,
+        active_generation_id=gen_id,
+        active_projector_version=PROJECTOR_VERSION,
+        active_graph_schema_version=GRAPH_SCHEMA_VERSION,
+        active_payload_digest="payload-digest-real",
+        active_entity_count=2,
+        active_relationship_count=1,
+        active_evidence_count=1,
+        active_unresolved_count=0,
+        active_conflict_count=0,
+        created_at=now,
+        updated_at=now,
     )
+    session.add(resource)
+    session.flush()
     session.add(
         GraphProjectionAttemptModel(
             id=attempt_id,
@@ -469,6 +474,7 @@ def test_real_postgresql_and_neo4j_api_pipeline_composition(
     # 2. Seed Neo4j records
     source_entity_id = uuid4()
     target_entity_id = uuid4()
+    relationship_id = uuid4()
     node1_key = compute_node_key(
         project_id, version_id, gen_id, "architecture://service/svc-a"
     )
@@ -479,16 +485,14 @@ def test_real_postgresql_and_neo4j_api_pipeline_composition(
         project_id,
         version_id,
         gen_id,
-        "calls",
-        "architecture://service/svc-a",
-        "architecture://service/svc-b",
+        "architecture://rel/service-a-calls-service-b",
     )
     gen_key = compute_generation_key(project_id, version_id, gen_id)
 
     with driver.session(database=settings.neo4j_database) as neo_sess:
         neo_sess.run(
             """
-            MERGE (m:ProjectionManifest {projection_key: $gen_key})
+            MERGE (m:ProjectionManifest {generation_key: $gen_key})
             SET m.project_id = $project_id,
                 m.architecture_version_id = $version_id,
                 m.generation_id = $gen_id,
@@ -528,12 +532,14 @@ def test_real_postgresql_and_neo4j_api_pipeline_composition(
                 n2.fact_status = 'confirmed',
                 n2.semantic_signature = 'sig-b',
                 n2.evidence_logical_ids = []
-            MERGE (n1)-[r:CALLS {projection_key: $edge_key}]->(n2)
+            MERGE (n1)-[r:ARCH_RELATIONSHIP {projection_key: $edge_key}]->(n2)
             SET r.project_id = $project_id,
                 r.architecture_version_id = $version_id,
                 r.generation_id = $gen_id,
-                r.kind = 'calls',
-                r.fact_status = 'confirmed',
+                r.architecture_relationship_id = $relationship_id,
+                r.logical_id = 'architecture://rel/service-a-calls-service-b',
+                r.canonical_kind = 'calls',
+                r.status = 'confirmed',
                 r.weight = 1.0,
                 r.semantic_signature = 'sig-edge',
                 r.evidence_logical_ids = ['ev-1']
@@ -549,12 +555,14 @@ def test_real_postgresql_and_neo4j_api_pipeline_composition(
             source_id=str(source_entity_id),
             n2_key=node2_key,
             target_id=str(target_entity_id),
+            relationship_id=str(relationship_id),
             edge_key=edge_key,
         )
 
-    # Override get_database_session with real PostgreSQL session
+    # Give every request an independent real PostgreSQL transaction/session.
     def _override_get_session() -> Generator[Session]:
-        yield session
+        with postgres_session_factory() as request_session:
+            yield request_session
 
     app.dependency_overrides[get_database_session] = _override_get_session
 
@@ -634,15 +642,29 @@ def test_real_postgresql_and_neo4j_api_pipeline_composition(
         assert r_paths.status_code == 200
         assert r_paths.json()["total_paths_found"] == 1
 
-        # 9. Rebuild route (POST 202)
-        r_rebuild = client.post(
-            f"/api/v1/architecture-versions/{version_id}/graph/rebuild",
-            params={"project_id": str(project_id)},
-            headers=_headers(project_id=project_id, role="OWNER"),
-        )
-        assert r_rebuild.status_code == 202
-        assert r_rebuild.json()["attempt_number"] == 2
-        assert r_rebuild.json()["attempt_status"] == "QUEUED"
+        # 9. Concurrent OWNER/ADMIN rebuild requests reuse one durable attempt.
+        barrier = Barrier(2)
+
+        def _request_rebuild(role: str) -> tuple[int, dict[str, object]]:
+            with TestClient(app) as concurrent_client:
+                barrier.wait(timeout=5.0)
+                response = concurrent_client.post(
+                    f"/api/v1/architecture-versions/{version_id}/graph/rebuild",
+                    params={"project_id": str(project_id)},
+                    headers=_headers(project_id=project_id, role=role),
+                )
+                return response.status_code, response.json()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            rebuild_results = tuple(pool.map(_request_rebuild, ("OWNER", "ADMIN")))
+
+        assert {status_code for status_code, _ in rebuild_results} == {202}
+        rebuild_payloads = tuple(payload for _, payload in rebuild_results)
+        assert {payload["attempt_id"] for payload in rebuild_payloads} == {
+            rebuild_payloads[0]["attempt_id"]
+        }
+        assert {payload["attempt_number"] for payload in rebuild_payloads} == {2}
+        assert {payload["attempt_status"] for payload in rebuild_payloads} == {"QUEUED"}
 
         # 10. Query health route
         r_qhealth = client.get("/api/v1/health/graph/query")
@@ -670,6 +692,28 @@ def test_real_postgresql_and_neo4j_api_pipeline_composition(
                 pid=str(project_id),
             )
 
-        # Clean PostgreSQL
+        # Clean every committed PostgreSQL fixture in reverse dependency order.
         session.rollback()
+        session.execute(
+            delete(GraphProjectionAttemptModel).where(
+                GraphProjectionAttemptModel.resource_id == resource_id
+            )
+        )
+        session.execute(
+            delete(GraphProjectionResourceModel).where(
+                GraphProjectionResourceModel.id == resource_id
+            )
+        )
+        session.execute(
+            update(AnalysisModel)
+            .where(AnalysisModel.id == analysis_id)
+            .values(published_version_id=None)
+        )
+        session.execute(
+            delete(ArchitectureVersionModel).where(
+                ArchitectureVersionModel.id == version_id
+            )
+        )
+        session.execute(delete(AnalysisModel).where(AnalysisModel.id == analysis_id))
+        session.commit()
         session.close()

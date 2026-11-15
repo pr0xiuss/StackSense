@@ -19,6 +19,7 @@ from backend.platform.errors import (
     AnalysisInputError,
 )
 from backend.platform.graph.api_contracts import (
+    FastApiValidationErrorResponse,
     GraphApiError,
     GraphErrorResponse,
     ProjectionRebuildAcceptedResponse,
@@ -96,8 +97,8 @@ GRAPH_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
         "description": "Cursor Expired",
     },
     422: {
-        "model": GraphErrorResponse,
-        "description": "Validation Error / Invalid Input",
+        "model": GraphErrorResponse | FastApiValidationErrorResponse,
+        "description": "Graph-domain or FastAPI request validation error",
     },
     500: {
         "model": GraphErrorResponse,

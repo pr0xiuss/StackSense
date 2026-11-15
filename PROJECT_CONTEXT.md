@@ -12,11 +12,22 @@
 - Preserve all approved Express/Python integration contracts and all frozen
   P1–P3 work. If a future requirement appears to require an Express change,
   stop and obtain explicit owner approval through change control first.
+- **Scoped owner exception (2026-11-15) — P4 M5 graph transport authorized:**
+  the minimum Express routes/registration, graph controller/validation, additive
+  integration with the existing analysis gateway, repeated-query serialization,
+  safe status/error forwarding, bounded timeouts and integration tests required
+  for React -> Express -> FastAPI -> Neo4j/PostgreSQL may be included in M5.
+  Section 7F specifies the exact scope. This does not authorize unrelated
+  Express work, authentication/JWT/RBAC redesign, new MongoDB responsibilities,
+  graph lifecycle/query logic in Express, or changes to frozen M1–M4, master or
+  ADR-0001. Gate T's authorization and the revised whole M5 plan are
+  owner-approved. All batches remain unstarted; the owner's current instruction
+  is to record approval only and wait for an explicit instruction to begin.
 
 # PROJECT_CONTEXT.md — StackSense Engineering Context
 
-Last reconciled: 2026-11-13
-Current branch: `feature_shreya`
+Last reconciled: 2026-11-15 (M5 planning and scoped Express transport authorization)
+Current branch: `feature_mannan`
 
 ## 1. Project Overview
 
@@ -174,11 +185,12 @@ Repository -> Analysis -> Published Architecture Model
 It reuses `ArchitecturePublicationRepository.load_published_document`, atomic
 published versions, Express delegation/RBAC, FastAPI delegated context, Celery
 recovery conventions, the central frontend `apiClient.js`, current hash/path
-routing and the dark UI system. No Neo4j driver/service, graph lifecycle,
-projector, query API, graph-specific browser route or explorer currently exists.
-P4 M1–M4 may implement only the Python side. The absence of a compatible
-existing Express graph transport is an explicit downstream integration blocker,
-not permission to add one or to call Python directly from React.
+routing and the dark UI system. M1–M4 now provide the frozen Python graph
+infrastructure/lifecycle/projector/query/API implementation; graph-specific
+browser transport and Explorer remain unimplemented. P4 M1–M4 retain their
+Python-only boundary. The owner explicitly authorized minimum M5 Express graph
+transport on 2026-11-15; the revised Section 7F plan is owner-approved and
+implementation remains unstarted. React continues to call Express exclusively.
 
 P4 does not modify the frozen Architecture Model repository port or persistence
 implementation. Exact document loading reuses the existing read-only
@@ -490,9 +502,11 @@ feedback; it does not produce authoritative architecture data.
 **Interactions and Dependencies:** Its package compatibility spike,
 route/component shell and independent layout-worker work may proceed after the
 relevant M3 DTOs stabilize. Live service/hook/page integration requires frozen
-P4-D1 plus a verified compatible route through the already completed Express
-boundary. If that route is absent, integration pauses for an owner decision; M5
-must not add Express work or call Python directly. Navigation begins from an
+P4-D1 plus verified compatible Express graph transport. The owner resolved
+Gate T on 2026-11-15 and authorized minimum Express transport within M5;
+Section 7F is the owner-approved revised detailed plan; implementation has not started.
+Unrelated Express work and direct React-to-Python calls remain prohibited.
+Navigation begins from an
 exact loaded P3 Architecture Version and remains bound to that ID throughout
 refresh and exploration.
 
@@ -564,8 +578,9 @@ browser-transport owner gate.
 - **M4/M5 boundary:** Express remains the completed security authority and React
   continues to call Express only. M5 consumes rather than defines DTOs. Only
   independent M5 shell/layout work can overlap M4 before P4-D1 freezes; live
-  browser integration is blocked if the existing Express surface cannot carry
-  the graph calls, pending a separate owner decision outside P4 M1–M4.
+  browser integration requires verified graph transport. The owner resolved
+  Gate T on 2026-11-15 and authorized minimum transport within M5, leaving
+  M1–M4 frozen; revised Section 7F includes that work and is owner-approved.
 - **M6 coverage:** includes the operational lifecycle—discovery, dispatch,
   concurrency, verification, activation, history, failure, recovery, rebuild,
   query, authorization, degradation and accessibility—not just happy-path E2E.
@@ -586,9 +601,9 @@ No approved P4 baseline decision is changed. The owner has accepted this
 discussion as the shared foundation and authorized detailed M1 planning. Driver
 compatibility, operational thresholds and other recorded items remain detailed
 module-planning or implementation verification work. The no-new-Express
-boundary exposes one separate downstream approval question—how M5 reaches the
-new graph API if the completed Express surface is insufficient—which must be
-resolved without silently changing P4 M1–M4 or the approved baseline.
+boundary originally exposed a downstream approval question about M5 graph
+transport. The scoped owner exception dated 2026-11-15 resolves that authority
+question without changing P4 M1–M4 or the approved architecture baseline.
 
 ## 7A. Detailed M1 Plan — Graph Infrastructure and Projection Lifecycle
 
@@ -1549,6 +1564,9 @@ preserving the existing Architecture Model page and design system.
 
 **Boundary:** owns P4-U1, browser graph contracts/service, route/page, state,
 ELK worker layout, React Flow canvas, inspector/list alternative and UI states.
+The scoped 2026-11-15 owner amendment also includes minimum Express graph
+transport as specified in Section 7F; the older batches below are reference
+only and the revised five-batch plan supersedes them for M5 implementation.
 It never edits graphs, performs architecture inference, sends Cypher, searches,
 calls AI, or treats frontend visibility as authorization.
 
@@ -3355,6 +3373,825 @@ recorded.
    M1 locking/idempotency and negative tests. No new performance/SLO claim is
    introduced.
 
+## 7F. Detailed M5 Plan — React Architecture Explorer
+
+**Status (2026-11-15): OWNER APPROVED — ALL FIVE BATCHES / IMPLEMENTATION
+NOT STARTED.** All five sequential batches below are approved as one
+implementation unit, with one consolidated module review. The owner explicitly
+requested approval recording only; wait for an instruction to begin any batch.
+This section specializes the preserved Section 7B M5 roadmap; it does not
+change the 17 approved decisions. M1–M4 and P4-Q1/P4-H1/P4-D1 remain frozen.
+**Gate T authorization RESOLVED:** the owner explicitly authorized the minimum
+Express graph transport as part of M5 on 2026-11-15. Its implementation and
+verification are now Batch 2 prerequisites for browser graph workflows, not
+an outstanding owner authority decision. The revised five-batch plan is now
+owner-approved; this status update does not begin implementation.
+
+### A. Verified repository findings
+
+- Checkout: `feature_mannan`, HEAD `bacc91f` at inspection. Existing uncommitted
+  M4 remediation and owner freeze edits were present in nine files and are
+  preserved. Sections 12.18–12.19 record successful regression and owner freeze;
+  actual `backend/api/v1/graph.py`, `api_contracts.py` and `query_contracts.py`
+  contain the implemented P4-D1/P4-Q1 v1.0.0 surface. Earlier prospective
+  summaries elsewhere in this document are historical; these files and freeze
+  records establish the M5 prerequisite state.
+- `frontend/package.json`, lockfile and `npm --prefix frontend ls --depth=0`
+  establish installed React/ReactDOM **18.3.1**, Vite **8.3.7**, plugin-react
+  **6.1.1**, Vitest **5.1.0**, Testing Library React **16.3.3**, jest-dom
+  **7.0.1**, jsdom **31.0.0**. Inspection runtime: Node **24.15.0**, npm
+  **11.12.1**. Source uses JavaScript/JSX, no TypeScript, router package or
+  external application-state library.
+- `frontend/src/App.jsx` parses both hash and pathname manually and listens to
+  `hashchange`/`popstate`. Its architecture regex accepts trailing segments;
+  Explorer matching must precede it. `ProtectedRoute` and `AuthContext` supply
+  session gating; `main.jsx` enables StrictMode, requiring effect cleanup and
+  duplicate-request protection.
+- `ArchitectureModelPage.jsx` currently obtains the analysis's selected
+  published version via `analysisService.getAnalysisArchitecture`, then passes
+  its actual `id` to canonical collections/overview. It does not accept a route
+  version ID. Existing `architectureService.getVersion(versionId,{projectId})`
+  already retrieves an exact version. The backend's verified response in
+  `backend/platform/analysis/architecture/dto.py` includes `id`, `analysis_id`,
+  `project_id`, `repository_id`, `snapshot_id`, sequence/digest/schema,
+  five counts, completeness and publication timestamp.
+- `services/apiClient.js` is the central Express `/api/v1` JSON boundary. It
+  attaches Bearer tokens, coalesces 401 refresh, retries once, preserves 403 and
+  transient failures as `ApiError`, and accepts fetch `signal` through options.
+  Its fetch catch wraps abort as `network_error`; M5 checks its own controller
+  and request epoch before committing errors. No central-client change is
+  required. Existing canonical services do not expose a `signal` option, so
+  their late completions must also be guarded by epoch/context.
+- State conventions are local React hooks; `useAnalysisLiveStatus.js` and its
+  tests demonstrate request lifetime handling. `useProjectRole.js` resolves
+  authenticated UUID through project access; OWNER/ADMIN may rebuild and all
+  four roles may read. Use `role` only for visibility and preserve server 403.
+- `styles/index.css` defines dark surface/text/border/accent/radius/font tokens;
+  existing architecture/repository styles provide cards, count pills,
+  breadcrumbs, spinners, tables and a 1024px stacked inspector breakpoint.
+  Reuse `DashboardHeader`, common buttons and those patterns. Existing
+  `components/architecture/ArchitectureCanvas.jsx` is a hand-built SVG canonical
+  overview, not React Flow. Its imperative scroll-restoration work must not be
+  copied into the new canvas. Existing inspector expects canonical `id/kind/
+  evidence_ids`, unlike GraphNode; retain it for P3 and add a graph inspector.
+- No React Flow, ELK, layout worker, graph service/hook or Explorer page exists.
+  `vite.config.js` has the React plugin, port 3000 and `/api` proxy to Express
+  port 5000, plus jsdom tests under `tests/component/**/*.test.{js,jsx}`.
+  No custom worker plugin is needed provisionally. Existing tests combine four
+  Node legacy suites and Vitest component/hook suites. No frontend lint,
+  formatter, typecheck, browser-E2E or accessibility-audit script is defined.
+
+### B. Objective, boundaries and authorized Express transport
+
+Deliver one new exact-version Explorer page with controlled graph traversal,
+stable rendering, inspection and an equivalent structured alternative. Preserve
+the canonical Model page and its six tabs, current overview, tables and links.
+No graph truth editing, architecture inference, new kinds, AI, retrieval/search,
+P5 diagram specification/export machinery or M6 implementation belongs here.
+
+**Verified M4/Express compatibility:** Python exposes all nine scoped graph
+operations and independent query health. `express/src/routes/index.js` mounts
+only the existing analysis and canonical architecture routers; the complete
+`architectureRoutes.js` lists metadata, entities, relationships, evidence,
+unresolved and conflicts, with no `/graph/*` routes. There is no generic
+browser proxy; unknown paths end in the app's 404 handler. The Vite proxy also
+targets Express, so development configuration cannot supply missing transport.
+
+Further incompatibilities in the existing `analysisGatewayService.js` are
+within the authorized M5 transport correction: query arrays become one
+comma-joined string via `String(value)` rather than repeated keys; upstream
+5xx graph codes/statuses collapse to `analysis_service_error`/502; upstream
+FastAPI validation `detail` is translated into `upstream_client_error`. Thus the
+current gateway cannot preserve P4-D1 without the scoped changes below. It also
+clears its timeout after response headers, before JSON consumption completes.
+No graph health relay exists. These are verified existing gaps, not permission
+to refactor other gateway or SSE behavior.
+
+**Authorized scope:** implement the nine graph operations and an authenticated
+query-health relay at the same Express `/api/v1` paths as their frozen Python
+counterparts. Reuse `authenticate`, `projectAuthorization`, `analysisConfig`,
+`AnalysisGatewayService` and the existing central error middleware. No graph
+database connection, MongoDB model, lifecycle/state transition, cursor codec,
+generation-selection logic or traversal implementation belongs in Express.
+Backend parameter validation is mirrored only for transport validation; Python
+still validates scope, cursors, generations, lifecycle and query semantics.
+
+The new graph router mounts `/architecture-versions/:versionId/graph` and the
+health router mounts `/health/graph/query` in `routes/index.js`, before broad
+canonical routing. Route-local `mergeParams:true` retains `versionId`. Existing
+canonical routes and their behavior remain intact. The controller selects a
+fixed operation/path, obtains authoritative project membership and delegates
+the authenticated actor; no wildcard proxy, user-supplied URL/method or new
+gateway instance is introduced. The singleton retains its existing injected
+fetch test seam.
+
+**Transport data flow:** browser JWT -> existing `authenticate` -> graph input
+validation -> existing project authorization -> fixed controller operation ->
+existing analysis gateway with opt-in graph response mode -> FastAPI delegated
+authorization/Q1/D1 -> unchanged PostgreSQL/Neo4j execution -> safe HTTP
+status/body relay -> central frontend apiClient -> scoped graph state.
+Authorization denial precedes upstream resource lookup/dispatch. Reads require
+membership; rebuild reuses `requireManageAccess` for OWNER/ADMIN-only permission
+without inventing a role hierarchy. Browser-supplied `X-Service-Token`,
+`X-Actor-Id`, `X-Actor-Role` and `X-Project-Id` are ignored; delegation is built
+only from server configuration, `req.user`, validated project and actual role.
+Do not forward the browser Bearer token internally. Validate optional
+X-Correlation-Id as one string of 1–255 characters, or generate once, reuse it
+across the delegated request and safe audit fields; never log tokens/cursors,
+raw request URLs containing cursors, payloads or upstream exception bodies.
+
+**Transport completion gate T-V (technical, not new owner authorization):** all
+routes/methods, JWT and RBAC checks, trusted delegation, repeated parameters,
+status/body/error parity and bounded cancellation must pass Express integration
+tests before Batch 2 connects the frontend graphService. Full live acceptance
+still requires actual React -> Express -> FastAPI calls. Mocked tests alone
+cannot close T-V or the final live integration acceptance.
+
+### C. Exact route, navigation and page layout
+
+**New route:**
+`#/projects/:projectId/repositories/:repositoryId/analyses/:analysisId/architecture/:versionId/graph`
+with the corresponding pathname form. Add the most-specific, end-anchored
+matcher before the current architecture matcher. Reject malformed UUIDs,
+decode failures and unmatched graph suffixes with an accessible route error;
+never fall through to a different analysis or latest-version view. Key the
+page subtree by the four IDs so browser Back/Forward and navigation reset it.
+No new routing library is needed.
+
+1. `ArchitectureModelPage` adds Explore Graph using the **loaded** version ID,
+   only after its project/repository/analysis chain matches its route. The
+   existing analysis-based Model route continues to work unchanged.
+2. Explorer loads `architectureService.getVersion(routeVersionId,{projectId})`
+   and checks returned `id`, `project_id`, `repository_id`, `analysis_id`
+   against all four route IDs before graph calls. Project/repository display
+   names are optional decoration, never substitutes for UUID checks.
+3. Route `versionId` is immutable page identity. No call to the analysis's
+   current architecture endpoint is used to resolve Explorer identity. Newer
+   publication, retry, refresh, expansions or rebuild do not change the version.
+   There is no version-list API, so do not invent a version picker.
+4. Add optional exact-version Model route
+   `.../architecture/:versionId` before the legacy `.../architecture` route.
+   `ArchitectureModelPage` receives optional `versionId`; only that branch uses
+   `getVersion` plus chain validation. This preserves an exact-version canonical
+   fallback when an older graph is viewed, including after graph outage. The
+   no-version branch retains its existing analysis lookup. Both get regression
+   tests; no existing P3 overview/layout is replaced.
+
+**One new page, two presentation tabs (Map / Structured List):**
+
+```text
+Existing DashboardHeader
+Breadcrumb: Projects / Repository / Analysis / Architecture vN / Explorer
+Title + exact version/short UUID + public lifecycle badge
+Back to exact Model | Refresh status | Rebuild (resolved OWNER/ADMIN only)
+Status/rebuild/degradation banner; loaded/available counts and cap feedback
+Wrapped toolbar: query mode, depth, kinds, containment direction, path controls
++----------------------------------------+------------------------+
+| Map / Structured List tabs             | Selected entity        |
+| React Flow: pan, zoom, Fit explicitly  | name/kind/namespace     |
+| or accessible nodes/relationships list | UUID/logical ID/status |
+| Load more for named operation          | metadata/evidence refs |
+| explicit truncated/cap/error messages  | expand/dependents/etc. |
++----------------------------------------+------------------------+
+```
+
+Desktop uses a flexible graph plus approximately 320–360px inspector. At/below
+1024px stack the inspector; at small widths wrap controls and use full-width
+Map/List content, with list always reachable. Canvas has explicit bounded height
+and `min-width:0`; labels ellipsize inside fixed node boxes with full accessible
+names and inspector text. Toolbars participate in normal layout; no overlapping
+buttons/counters. Use existing tokens, cyan/indigo accents, card borders and
+focus rings. Do not redesign landing/dashboard/auth/model pages.
+
+### D. Frozen API consumption and P4-U1 proposal
+
+Authoritative implementations: `backend/api/v1/graph.py`,
+`backend/platform/graph/{query_contracts,api_contracts,model,query_health}.py`.
+They supersede older illustrative endpoint names in Section 6.3 for M5 usage.
+All scoped routes below are under Python's
+`/api/v1/architecture-versions/{version_id}` with required UUID `project_id`.
+Proposed Express browser paths are identical to these frozen Python paths;
+they are authorized for M5 implementation but do not exist yet. Frontend
+`graphService` uses only relative `/architecture-versions/{versionId}/graph/...`
+and `/health/graph/query` paths through the central apiClient, which adds
+`/api/v1`; it never chooses a Python host or internal URL.
+
+| Frozen operation | Actual request query (in addition to project_id) | Actual response / UI use |
+|---|---|---|
+| GET `/graph/status` | none | `ProjectionStatusResponse`; readiness, active generation/attempt and rebuild feedback. |
+| GET `/graph/window` | `node_limit`, `edge_limit`, `page_size`, repeated `canonical_kinds`, opaque `cursor`, `timeout_seconds` | `GraphSubgraph`; initial 50 nodes / 100 edges, page_size 50, then explicit continuation. |
+| GET `/graph/nodes/{entity_id}` | `timeout_seconds` | `GraphNode`; selected entity detail, no invented scope wrapper. |
+| GET `/graph/nodes/{entity_id}/neighborhood` | `direction=incoming|outgoing|both`, `depth`, `node_limit`, `edge_limit`, repeated `relationship_kinds`, `cursor`, `timeout_seconds` | `GraphSubgraph`; selected-node expansion, default both/depth 1. |
+| GET `/graph/nodes/{entity_id}/dependencies` | `depth`, node/edge limits, repeated `relationship_kinds`, `cursor`, `timeout_seconds` | `GraphSubgraph`; outgoing dependencies over all 12 approved kinds by default. |
+| GET `/graph/nodes/{entity_id}/dependents` | same as dependencies | `GraphSubgraph`; incoming traversal preserving each edge's canonical direction. |
+| GET `/graph/nodes/{entity_id}/containment` | `direction=parents|children|both`, `depth`, node/edge limits, `cursor`, `timeout_seconds` | `GraphSubgraph`; explicit hierarchy only; no relationship-kind filter. |
+| GET `/graph/paths` | UUID `source_entity_id`, `target_entity_id`, `max_depth`, `path_limit`, repeated `relationship_kinds`, `timeout_seconds` | `GraphPathResult`; bounded directed paths between two selected loaded nodes, no cursor. |
+| POST `/graph/rebuild` | none; no caller actor/role/generation/body | HTTP 202 `ProjectionRebuildAcceptedResponse`; accepted attempt, never completion. |
+| GET `/api/v1/health/graph/query` | none; Express requires existing JWT authentication | `GraphQueryHealthResponse`; authenticated browser diagnostic relay of unchanged Python probe; do not poll globally or infer resource state from health. |
+
+**Wire fields (consumer documentation, no new server DTO):**
+
+- `ProjectionCounts`: `{entities,relationships,evidence,unresolved,conflicts}`.
+  `ProjectionStatusResponse`: `resource_id,project_id,architecture_version_id,
+  projection_type="architecture",status,active_generation_id?,schema_version?,
+  projector_version?,counts?,last_failure_code?,created_at,updated_at,
+  last_attempt_at?,active_attempt?`. Active attempt: `attempt_id,attempt_number,
+  status,created_at,updated_at,completed_at?`. Public status is exactly
+  PENDING/RUNNING/COMPLETED/FAILED/STALE; attempt status is exactly
+  QUEUED/RUNNING/RETRYING/COMPLETED/FAILED/SUPERSEDED. Null is not an empty graph.
+- `GraphReadScope`: `project_id,architecture_version_id,generation_id,
+  resource_state,graph_schema_version,projector_version,counts`.
+  `GraphNode`: `architecture_entity_id,logical_id,canonical_kind,name,namespace`
+  (string), `fact_status,semantic_signature,evidence_logical_ids[],metadata`.
+  `GraphEdge`: `architecture_relationship_id,logical_id,canonical_kind,status,
+  source_entity_id,target_entity_id,evidence_logical_ids[],metadata`.
+- `GraphSubgraph`: `scope,nodes[],edges[],total_manifest_nodes,
+  total_manifest_edges,loaded_nodes,loaded_edges,truncated,next_cursor?`.
+  Loaded counts describe that response, not all accumulated client data.
+  `GraphPathResult`: `scope,paths[{nodes[],edges[],hop_count}],
+  total_paths_found,truncated`; no continuation, runtime observations or
+  inferred impact claims. `ProjectionRebuildAcceptedResponse`:
+  `resource_id,architecture_version_id,status,attempt_id,attempt_number,
+  attempt_status,accepted_at`. Health: `{status:ready|degraded|unavailable,
+  code,details?}` in lower case, distinct from public projection lifecycle.
+- Graph-domain errors: `{error:{code,message,details}}`. Syntactic 422 may be
+  FastAPI `{detail:[{loc,msg,type,...}]}`. Use central ApiError normalization
+  only after approved transport semantics are known. Never render raw object
+  dumps, credentials, Cypher, host paths or executable HTML.
+
+`graphContracts.js` is a **consumer mapping/guard**, with JSDoc types and
+fixtures checked against these frozen schemas, not an independently versioned
+backend API. Reuse canonical kind labels from `architectureContracts.js`.
+The dependency/path allowlist is exactly `depends_on, imports, calls, exposes,
+consumes, produces, connects_to, persists_to, uses, extends, implements,
+routes_to`; `contains` is separate. Generic neighborhood can explicitly request
+it, but dependency/dependent/path controls cannot. Display actual edge labels
+and arrows, including on reverse traversal. Window filters use `canonical_kinds`,
+traversals use `relationship_kinds`; serialize lists with repeated query keys.
+
+Client query defaults: 50/100 per operation, window page_size 50, depth 1,
+timeout 2 seconds; paths max_depth 3/path_limit 5. Frozen backend maxima remain
+depth 5, 500 nodes, 1,000 edges, page_size 100, 25 paths, timeout 5 seconds,
+cursor length 2,048. Client defaults/canvas caps do not redefine those maxima.
+No extra query parameters unsupported by P4-D1 are sent.
+
+**Express transport specification (proposed implementation, authorized scope):**
+
+1. **Fixed request allowlists.** `graphValidate.js` validates UUID route/project/
+   node/path endpoint IDs using existing UUID conventions and accepts only the
+   documented query keys per operation. Require one scalar for each UUID,
+   numeric value, direction and cursor; reject duplicated scalars, nested
+   objects, non-finite values, negative/fractional integer bounds, unsupported
+   directions and overlong cursors. Kinds accept scalar-or-array of strings
+   (repeated keys) with the exact frozen allowlist; never accept comma-joined
+   kinds or bracket-object coercion. Repeated kind duplicates may normalize to
+   the same sorted set as Python; do not change requested kinds/limits silently.
+   Unknown transport/query/body fields are rejected locally with the existing
+   422 `validation_error` envelope; valid requests keep Python defaults when a
+   parameter is omitted. Local syntactic validation and upstream error bodies
+   remain distinguishable. Rebuild has no business payload: absent/empty JSON
+   object is accepted, but caller-supplied actor/role/generation fields are not.
+2. **Reuse gateway, preserve callers.** Add a graph-specific opt-in response
+   mode to `AnalysisGatewayService.request` (proposed option
+   `responseMode:'graph'`, default unchanged). It returns an internal
+   `{status,body}` envelope for graph HTTP responses; the thin controller
+   forwards `res.status(status).json(body)`. Existing analysis/canonical callers
+   continue receiving their current data-only result and error mappings; SSE
+   remains untouched. The same method/buildDelegatedHeaders/fetch/config code
+   handles transport; do not introduce GraphGatewayService or duplicate fetch.
+   Health is the sole fixed unscoped operation: add a private graph-mode
+   header branch restricted to GET `/health/graph/query`, using the existing
+   configured service token, authenticated actor and correlation, without
+   fabricating project/role headers. Its Express route requires JWT but no
+   project query because frozen Python health is unscoped. The default
+   buildDelegatedHeaders requirements remain strict for every scoped operation
+   and all legacy calls; browser input cannot select this private branch.
+   Extract only small private serialization/graph-response helpers when needed.
+3. **Repeated queries.** Extend the shared URLSearchParams construction to
+   append each scalar element of an array under the same key. Existing scalar
+   callers serialize identically. Controllers pass only validated allowlisted
+   keys, never raw `req.query`; test actual wire URLs, including kinds/cursor
+   escaping, omitted values and two different repeated kinds.
+4. **Success relay.** Preserve HTTP 200 for status/reads and 202 for rebuild,
+   with the unchanged Q1/D1 JSON structure and null/list fields. Health can be
+   HTTP 200 with `status:'unavailable'`; do not rewrite it as resource FAILED.
+   Validate expected operation success status/body shape. An impossible
+   success status, invalid JSON or empty nonempty-contract body is an explicit
+   upstream protocol failure, not a fabricated empty graph. Never forward
+   arbitrary response headers, redirects, cookies or internal service data.
+5. **Error relay.** Recognized frozen graph status/code pairs retain the actual
+   HTTP status and structured `{error:{code,message,details}}` body, including
+   every 403/404/409/410/422 and graph 500/503/504. Preserve safe message/details
+   from the approved upstream contract; validate the envelope and reject/redact
+   unexpected credential-bearing fields. Syntactic upstream 422 preserves
+   `{detail:[{loc,msg,type,...}]}` rather than becoming
+   `upstream_client_error`: retain safe validation context, exclude raw input,
+   credentials or arbitrary URLs. No global errorHandler rewrite is needed:
+   valid upstream bodies travel as `{status,body}`, not through middleware
+   that would force every result into an error envelope.
+6. **Unknown/malformed failures.** An upstream HTTP error with an unknown code,
+   HTML, traceback or malformed JSON retains its actual 4xx/5xx status with a
+   sanitized existing `analysis_service_error` envelope; never relay its raw
+   text or collapse distinct HTTP failures to generic 502. A malformed *success*
+   or a redirect outside the fixed service contract is a genuine protocol
+   failure mapped explicitly to 502 `analysis_service_error`. Use redirect
+   rejection for graph mode to prevent service-token forwarding to other hosts.
+   Authentication-origin responses stay distinguishable: local JWT 401/403,
+   local `project_access_denied` 403, and valid upstream delegated 401/403 all
+   preserve their own status/code; M5 does not rewrite auth/JWT refresh logic.
+7. **Availability and time bounds.** With no upstream HTTP response, connection/
+   DNS failures use existing 503 `analysis_service_unavailable`; abort at the
+   transport deadline uses existing 504 `analysis_service_timeout`. These remain
+   distinct from upstream `graph_unavailable`/503 and `graph_query_timeout`/504.
+   Reuse bounded `analysisConfig.jsonTimeoutMs` (15s default, 1–60s existing
+   config bounds), while forwarding the unchanged Python `timeout_seconds`
+   (maximum 5s). A shorter configured gateway timeout may expire first and must
+   be labeled a transport timeout, not a Python result. Keep the timer active
+   through response consumption/parsing and clean it in finally; exercise a
+   headers-arrive/body-stalls case. Connect graph request disconnect/response
+   close to an AbortSignal, cancel upstream fetch/body reading and remove
+   listeners/timers on every path. Use the request-aborted signal and response
+   close only when the response has not completed, not a normal completed GET
+   request's close event. Cancellation does not claim to cancel a
+   durably accepted rebuild or replace Python's execution deadline.
+8. **Forwarding bounds and audit.** Enforce the frozen per-operation limits
+   before forwarding, including path/depth/page bounds and cursor length, and
+   consume only the expected JSON response under the transport deadline. No
+   new lower graph cap, record truncation, MongoDB cache, retries or generation
+   filtering is added by Express. Do not automatically retry rebuild POSTs:
+   refresh status after ambiguous network acceptance. Log operation, actor/
+   role, project/version, correlation, status/code and duration only; omit raw
+   URLs/cursors/bodies. Use existing safe transport errors for network/runtime
+   failures; no raw caught exception message is returned to the browser.
+
+**Parity/error acceptance matrix:** success 200 and rebuild 202 unchanged;
+local auth 401/inactive 403 unchanged; project/rebuild role rejection 403 with
+no upstream call; upstream valid 401/403/404/409/410/422 and all 15 frozen graph
+error-code mappings preserved; syntactic 422 retains `detail`; upstream
+500/503/504 retain graph codes; unrecognized upstream error retains HTTP
+status with sanitized envelope; network/no-response 503 and gateway timeout
+504 have distinct existing transport codes; only invalid-success/redirect
+protocol failures use 502. All error results are tested with secret/traceback
+canaries and must never expose internal credentials or raw source.
+
+**P4-U1 local state proposal:** a pure reducer plus one `useArchitectureGraph`
+hook, with immutable context `{projectId,repositoryId,analysisId,versionId}`;
+validated canonical version; active status; accepted generation; maps of nodes
+by `architecture_entity_id` and edges by `architecture_relationship_id`;
+operation records (mode, anchor, direction, depth, sorted kinds, original limits,
+opaque next cursor, error/in-flight/completed/cap-blocked); selected node/edge;
+path selection; explicit partial reasons; layout revision/positions/viewport;
+request epoch and worker request IDs. No global store/localStorage graph cache.
+
+Merge rules and orchestration:
+
+1. Validate the exact canonical version first, then status. Only COMPLETED or
+   STALE with a non-null verified active generation is readable. Query scope
+   must match route project/version, accepted generation and schema/projector
+   versions; counts and record field types must be coherent. Fail closed on
+   mismatches. A response for another request epoch is ignored.
+2. Initial window starts at 50/100. Lazy expansion and every Load more action
+   are explicit. Serialize graph mutations (one merge-bearing request at a
+   time), coalesce identical operation/cursor clicks, disable duplicate submits
+   and abort on unmount/context/reset. StrictMode cleanup leaves one active
+   request/worker/poll timer, and stale completions cannot replace current state.
+3. Each paginated operation keeps its own opaque cursor and immutable original
+   query fingerprint, including limits. Never reuse cursors across modes,
+   anchors, filters, versions or generations; never decode/log them. Retry uses
+   identical parameters. Do not reduce limits on continuation to fit remaining
+   canvas space: that invalidates frozen cursor binding.
+4. Deduplicate stable UUIDs; identical duplicates are harmless. Conflicting
+   payloads for one UUID/logical identity, cross-scope data or missing edge
+   endpoints fail the merge without overwriting accepted state. A response's
+   endpoints must be available in the accepted union. No synthetic nodes or
+   unresolved/conflict edges are manufactured.
+5. Enforce **300 nodes / 600 edges** on retained/rendered graph data, including
+   accumulated path results and the list. Merge a complete response atomically
+   only if the union fits; otherwise retain previous data/cursor and report
+   capacity reached. Never silently slice a page or advance past rejected data.
+   Offer Clear exploration and start from selection (new bounded request), or
+   canonical collections for more data. Disable further additions until reset;
+   a cursor blocked at capacity is not marked exhausted.
+6. Track backend `truncated`, available manifest counts, actual accumulated
+   unique counts and local cap state independently. An exhausted local window
+   is not proof of a complete graph; isolated nodes/zero edges are valid.
+7. On `graph_generation_changed`, scope mismatch or status pointer change,
+   cancel in-flight work, invalidate every cursor and freeze old displayed data
+   with an explicit out-of-date banner. Offer Reload this version; only that
+   explicit action clears data and accepts the new generation. Never mix
+   generations or silently restart pagination. Filter changes start a new query
+   session explicitly; display-only highlighting never changes cursor state.
+8. Node detail is an unscoped `GraphNode` wire response. Bind its request to the
+   current context/epoch/selection, verify requested UUID/logical ID against
+   the selected scoped record, and use it only for detail display. It cannot
+   establish a generation or merge graph membership; do not invent absent
+   project/version/analysis fields. Canonical evidence uses existing exact-
+   version `listEvidence(...,{entityId})` pagination; do not assume evidence
+   logical IDs are persistence UUIDs or add a nonexistent evidence-by-ID API.
+9. Paths are an explicit mode: two loaded endpoint selections, approved kinds,
+   depth/path bounds, actual ordered hop sequences and truncated warning.
+   Union obeys 300/600; there is no path pagination control. Containment has
+   separate parent/children/both controls and preserves canonical arrows.
+
+### E. Lifecycle, degradation and recovery UX
+
+| State/condition | Required behavior |
+|---|---|
+| canonical context loading/error/mismatch | skeleton or safe error and exact-route retry; no graph calls until validated. |
+| PENDING / RUNNING without active generation | preparation/progress text using real attempt fields; no fake percent or empty-success canvas; status polling only. |
+| COMPLETED + active generation | initial bounded graph, selection/expansion/list; explicit loaded counts. |
+| STALE + active generation | historical badge, fully eligible exact-version reads; no latest substitution. |
+| FAILED without active generation | safe failure code, Retry status and authorized Rebuild; canonical model stays accessible. |
+| active rebuild on COMPLETED/STALE | preserve readable generation, show attempt QUEUED/RUNNING/RETRYING separately; rebuild failure cannot invalidate it. |
+| successful rebuild changes generation | invalidate continuation, banner and explicit reload; preserve route version. |
+| empty successful response | explain no nodes/relationships in this window, preserve counts and available continuation; distinguish from unavailable/pending. |
+| query failure after partial load | retain accepted loaded data as cached, label query unavailable/error, allow same-operation retry; never claim cached graph was freshly verified. |
+| 403 | permission-denied feedback, suppress rejected mutation, refresh role if useful; do not clear credentials or turn it into projection FAILED. |
+| 404 projection/node | distinguish unavailable projection from absent selected node; no alternate version fallback. |
+| 409 not-ready/rebuild-conflict | status refresh and truthful active attempt; generation-changed uses explicit reload flow. |
+| 410 expired / 422 cursor-invalid or mismatch | stop that continuation, retain loaded data, offer explicit restart; do not silently fetch another cursor. |
+| 500 integrity/internal, 503 unavailable/schema/lifecycle, 504 timeout, network | safe operation-level feedback and bounded manual retry; canonical fallback link remains usable. |
+| worker unsupported/failure/timeout | list works; keep last valid layout if available and label it; retry worker explicitly, never run ELK on main thread. |
+
+**Status polling proposal:** one completion-scheduled timer (2 seconds while
+visible and PENDING/RUNNING or active attempt present); no setInterval overlap,
+no SSE invention. Pause/abort when hidden, unmounted, unauthorized or terminal;
+resume one status refresh on visibility. A detected transient failure stops the
+poll loop and exposes Retry rather than spinning indefinitely. Readable idle
+COMPLETED/STALE uses manual status refresh. Rebuild disables duplicate requests,
+checks resolved OWNER/ADMIN visibility, optionally confirms the exact version,
+submits once, displays accepted attempt and then polls status; HTTP 202 never
+means graph ready. A network error after POST has ambiguous acceptance: refresh
+status before resubmitting. Server RBAC remains authoritative. Failure details
+must not invent terminal attempt history absent from the status DTO; use available
+`last_failure_code` and active-attempt information only.
+
+### F. Package compatibility, layout protocol and rendering
+
+**Verified metadata; proposed exact pins:** on 2026-11-15 read-only npm registry
+queries returned `@xyflow/react@12.12.1` with React/ReactDOM peers `>=17`
+(and corresponding type peers), compatible by metadata with installed 18.3.1;
+`elkjs@0.12.1` exposes `lib/main`. Recommend those exact runtime pins and lockfile
+updates in Batch 1, with npm peer resolution reviewed (including any required
+type-only peers); no React/Vite upgrade or TypeScript migration. Neither package
+was installed and no build/worker spike is claimed in this planning task.
+Gate C requires import resolution, npm peer tree, dev/production Vite worker
+emission and browser execution before retaining pins. If a patch fails, report
+the incompatibility and propose a concrete compatible patch, never silently
+upgrade the frozen plan's dependency choice.
+
+Primary references: [React Flow installation](https://reactflow.dev/learn),
+[official package source](https://github.com/xyflow/xyflow/blob/main/packages/react/package.json),
+[ELK package](https://www.npmjs.com/package/elkjs),
+[ELK worker/API documentation](https://github.com/kieler/elkjs/blob/master/README.md),
+[Vite worker support](https://vite.dev/guide/features.html#web-workers),
+[React Flow accessibility](https://reactflow.dev/learn/advanced-use/accessibility)
+and [performance guidance](https://reactflow.dev/learn/advanced-use/performance).
+Registry commands are listed under verification below; search snapshots are
+not treated as the installed version or proof of build compatibility.
+
+Use a Vite module Worker created statically with
+`new Worker(new URL('../workers/graphLayout.worker.js', import.meta.url), {type:'module'})`.
+Inside it import `elkjs/lib/elk.bundled.js`; instantiate ELK within this worker,
+without a nested worker URL, so all expensive computation stays off main thread.
+No CDN/remote scripts, worker fetches or repository source/credentials in messages.
+Lazy-load the Explorer/React Flow page so existing routes avoid the heavy graph
+bundle; import React Flow base CSS once, then scoped token overrides in graph.css.
+
+**Proposed P4-U1 layout protocol v1 (local UI contract):**
+
+- Request `{type:'layout',protocolVersion:1,requestId,contextKey,generationId,
+  graphRevision,nodes:[{id,width,height}],edges:[{id,source,target}],options}`.
+  Only bounded plain structured-clone data, sorted lexically by stable UUID;
+  source/target remain canonical. No React elements, Maps, functions, raw evidence
+  or transport DTO mutation.
+- Response success echoes all identity/revision fields with finite positions
+  and optional edge-route points; failure echoes them with safe local code.
+  Guard length/IDs/endpoints/numeric coordinates before committing. A reply for
+  an old context/generation/revision/request is ignored.
+- Layout options are fixed per pinned package: layered directed layout, DOWN,
+  orthogonal routing, deterministic model order and fixed random seed supported
+  by the installed ELK metadata. Batch 1 verifies exact supported option IDs;
+  do not assume unknown options take effect. Fixed 220x80 node geometry is a
+  presentation proposal; long names never change box measurement on selection.
+- Only graph membership/edge topology or an explicit layout-direction change
+  increments graphRevision. Selection, inspector content, polling, highlighting,
+  focus, loading flags and viewport changes never request layout. Identical
+  sorted data/options must produce identical finite coordinates in repeated
+  fixture runs, including cycles, self-loops and disconnected nodes.
+- Keep the previous valid canvas during incremental layout. Apply one matching
+  result atomically; no CSS animation of x/y and no continuous fitView effects.
+  Fit once on first successful layout, then only on explicit Fit/Reset controls.
+  Pan/zoom and selected node remain stable when inspector changes. Automatic
+  focus pan is disabled if it causes movement; Focus selected is explicit.
+- Cancellation must terminate the active worker (discarding a promise alone
+  does not stop CPU work), then replace it for the latest graph; unmount does
+  the same. Proposed local watchdog: 10 seconds at the 300/600 boundary, followed
+  by termination and list fallback; this is a UI safeguard, not a change to the
+  frozen 5-second backend query deadline. Benchmark it on named hardware in B1/B3.
+- React Flow receives controlled, memoized node/edge arrays and stable custom
+  node/edge component types/handlers. Disable connection, deletion and drag
+  editing; retain pan/zoom/selection and keyboard focus. Arrowheads preserve
+  edge direction. Full kind labels remain in edge/list/inspector accessibility
+  text; visual labels may be limited to selected edges at dense zoom, with an
+  explicit legend. No fabricated grouping entities or ID changes for rendering.
+
+### G. Exact file-change inventory
+
+All CREATE paths below are **proposed new files**, not claims that they exist.
+All MODIFY/REUSE files were inspected. Grouping here is intentional: a reducer,
+one graph hook and one layout hook avoid a new global-state framework.
+
+| Action/path | Components, responsibility, dependencies and required tests |
+|---|---|
+| MODIFY `frontend/src/App.jsx` | Add Explorer and exact-version Model matchers before legacy architecture; lazy Explorer with accessible Suspense fallback and four-ID page key. Route/deep-link/order/malformed-ID/back-forward tests. |
+| MODIFY `frontend/src/pages/ArchitectureModelPage.jsx` | Optional exact version loader/chain guard and Explore Graph link built from verified loaded ID; preserve legacy behavior and all tabs. Old-version/context mismatch/current-model regression tests. |
+| CREATE `frontend/src/pages/ArchitectureExplorerPage.jsx` | Compose protected route context, validated version, role, graph/layout hooks, status, toolbar, canvas/list and inspector. One page orchestration, no direct fetch or graph semantics. Loading/mismatch/stale/route reset/rebuild integration tests. |
+| CREATE `frontend/src/contracts/graphContracts.js` | Frozen DTO JSDoc/guards, existing kind-label reuse, dependency allowlist, bounds and P4-U1 local vocabulary/worker protocol constants. Check fixtures against P4-Q1/P4-D1 fields; no invented server statuses. |
+| CREATE `frontend/src/services/graphService.js` | Thin relative Express-path mappings through apiClient for status, seven reads, rebuild and authenticated query health; repeated-key encoding, explicit IDs and signal options. Request/response/error/cancellation/forbidden-origin tests; actual Express transport must pass T-V before live workflow wiring. |
+| CREATE `frontend/src/hooks/architectureGraphState.js` | Pure initial state/reducer, operation fingerprint, atomic scope-aware UUID merge, dedup and cap decisions. No network/layout side effects. All generation/cursor/conflict/endpoint/cap boundary tests. |
+| CREATE `frontend/src/hooks/useArchitectureGraph.js` | Compose exact version validation, reducer, graph service, operation queue, status polling/rebuild, request epoch/cleanup. Hook tests with deferred promises/fake timers and duplicate events. |
+| CREATE `frontend/src/hooks/useGraphLayout.js` | Own one worker, revision-based requests, result guards, termination, watchdog and stable positions/viewport intent. Mock-worker late/error/cancel/selection-no-layout tests. |
+| CREATE `frontend/src/workers/graphLayout.worker.js` | Bounded deterministic DTO-to-ELK graph/layout response in worker, sorted fixed geometry, safe failures. Real worker dev/preview spike plus deterministic algorithm fixtures. |
+| CREATE `frontend/src/components/graph/GraphCanvas.jsx` | React Flow provider/canvas, memoized custom node/edge renderers, explicit fit/zoom, stable selection and arrows. Keyboard/viewport/text bounds/no-edit/no-selection-layout tests. |
+| CREATE `frontend/src/components/graph/GraphControls.jsx` | Mode/depth/kind filters, separate containment, path endpoint selection, operation Load more and clear/fit controls. Labels, disabled/in-flight state, bounds and containment separation tests. |
+| CREATE `frontend/src/components/graph/GraphInspector.jsx` | GraphNode/edge details and canonical evidence references/details through existing service with exact IDs; expand actions and full names. Selection-race, empty/error and evidence pagination tests. |
+| CREATE `frontend/src/components/graph/GraphStatusBanner.jsx` | Pure public state + independent active-attempt/degradation/truncation/cap messaging, status retry/rebuild callbacks. State matrix and accessible announcement tests. |
+| CREATE `frontend/src/components/graph/GraphListView.jsx` | Semantic loaded-node and relationship lists/tables with labels, direction, selection, traversal and pagination controls equivalent to Map. Keyboard-only and non-worker fallback tests. |
+| CREATE `frontend/src/styles/graph.css` | Scoped dark React Flow tokens, fixed label bounds, non-overlapping toolbar, visible focus, responsive stacked inspector and reduced motion. Browser checks at desktop/tablet/mobile. |
+| MODIFY `frontend/package.json`, `frontend/package-lock.json` | Exact verified graph package pins after Gate C. Keep scripts; no speculative toolchain upgrade. Build/dependency audit and lock diff review. |
+| CREATE `frontend/tests/component/graphContracts.test.js`, `architectureGraphState.test.js`, `graphService.test.js` | Frozen-fixture parity, serialized queries and identity/caps/pagination failure cases. Use Vitest include convention. |
+| CREATE `frontend/tests/component/useArchitectureGraph.test.jsx`, `useGraphLayout.test.jsx` | Request concurrency/races/poll cleanup/version freeze, worker cancellation/failure and deterministic fixture tests. |
+| CREATE `frontend/tests/component/ArchitectureExplorerPage.test.jsx`, `GraphCanvas.test.jsx`, `ArchitectureModelPage.test.jsx`, `GraphAccessibility.test.jsx` | Routed real page composition with mocked boundary, renderer/list/inspector/role UX, legacy/exact Model behavior and keyboard tests. Include App routing scenarios in Explorer test file. |
+| REUSE `frontend/src/services/{apiClient,architectureService,analysisService,projectService,repositoryService}.js` | Existing auth/canonical data/display helpers; apiClient signal/ApiError handling. No duplicate JWT client or current-version lookup for Explorer identity. |
+| REUSE `frontend/src/contracts/architectureContracts.js`, `auth/AuthContext.jsx`, `components/ProtectedRoute.jsx`, `components/dashboard/DashboardHeader.jsx`, `hooks/useProjectRole.js`, existing styles | Labels/theme/security/role conventions; do not modify global behavior to accommodate graph. |
+| REUSE `frontend/vite.config.js`, `frontend/tests/component/setup.js`, existing legacy/component tests | Existing worker detection and test runner; only propose configuration change if Gate C proves a concrete need. Run all existing suites, including canonical overview tests. |
+| CREATE `express/src/routes/graphRoutes.js` | Authenticated fixed nine-operation router with mergeParams for the version-scoped mount, per-operation validation and graphController handlers; no wildcard forwarding. Route/method/UUID/query/RBAC integration tests. |
+| CREATE `express/src/routes/graphHealthRoutes.js` | Authenticated GET-only query-health relay; no global liveness or existing health behavior changes. Delegate through the same controller/gateway without inventing project fields for the unscoped Python health contract; auth and outage-isolation tests. |
+| MODIFY `express/src/routes/index.js` | Mount graph and graph-health routers at the exact browser paths before broad canonical mounts. Existing route registration and auth behavior regression. |
+| CREATE `express/src/controllers/graphController.js` | Named handlers/thin shared relay helper select fixed paths/methods, resolve existing authoritative project access, enforce OWNER/ADMIN rebuild, build delegation inputs and return gateway status/body. Health uses authenticated identity and configured service boundary without fabricated project membership; no graph logic. Tests prove caller headers cannot spoof delegation and forbidden calls never reach gateway. |
+| CREATE `express/src/middleware/graphValidate.js` | Fixed parameter allowlists/scalar checks/UUID/numeric/direction/kind/cursor/correlation validation mirroring frozen bounds; normalized query object rather than raw req.query. Shared existing UUID/validation conventions reused; no parser or cursor-signature logic. Boundary/object/duplicate/unknown-field tests. |
+| MODIFY `express/src/services/analysisGatewayService.js` | Add opt-in graph response mode/status-body envelope, array serialization, safe graph error relay, complete-response deadline and graph disconnect/redirect handling. Keep default request/SSE behavior; reuse existing delegation/fetch/config infrastructure. Gateway wire/error/body-stall/no-secret regression tests. |
+| MODIFY `express/tests/unit/analysisGatewayService.test.js` | Add repeated-key and graph-mode status/422/5xx/malformed/timeout/abort/redirect tests alongside unchanged legacy scalar, 204, sanitization and SSE expectations. |
+| CREATE `express/tests/unit/graphValidate.test.js` | Pure middleware parameter/bounds/schema validation and safe normalized forwarding tests; includes contains separation and duplicate scalar rejection. |
+| CREATE `express/tests/integration/graphProxyApi.test.js` | Supertest app + existing MongoMemoryServer users/project access, JWT and test-seam coverage, role/project matrix, nine operations + health, delegation spoof resistance, actual shared gateway fetch against controlled local HTTP upstream, repeated parameters, all statuses/422 shapes, disconnect, malformed and delayed body. Mocking gateway.request alone is insufficient. |
+| REUSE `express/src/{middleware/authenticate.js,middleware/errorHandler.js,services/projectAuthorization.js,config/analysisConfig.js,errors/analysisErrors.js}` and Express test setup/config | Existing JWT/RBAC/error/config/test conventions stay intact. Use requireAccess/requireManageAccess and existing transport errors; no parallel gateway, dependencies or package changes required. Run analysisProxyApi/auth/project-access regressions. |
+| UPDATE `PROJECT_CONTEXT.md` during approved implementation | Record each batch's actual files/measurements/results and gates; one consolidated review and owner freeze at closure. |
+| READ ONLY `backend/**`, `master.txt`, ADRs, frozen contracts, CI/config/migrations and unrelated `express/**` files | M5 consumes existing Python contracts and changes only the listed authorized Express transport files; no database/auth/lifecycle/query ownership change. |
+
+### H. Five sequential implementation batches
+
+**Approval model:** owner reviews this complete unit once. After approval,
+execute sequentially without another planning approval between batches. Gate T
+owner authorization is resolved; T-V is Batch 2 transport verification and
+Gate C is Batch 1 package compatibility. Neither permits silent frozen-contract
+changes. One consolidated review follows all five batches. No batch has started.
+
+**Batch 1 — Compatibility, consumer contracts, exact routes and shell**
+
+- Deliver Gate C spike for exact pins/Vite worker; P4-U1 reducer/worker contract
+  foundation and schema fixtures; exact route matching/page shell; optional
+  exact-version canonical fallback and correct Explore Graph navigation.
+  Freeze the consumer mapping of the frozen graph endpoints, including the
+  Express browser path parity, status/body/error rules and trusted delegation
+  expectations in Section D; transport implementation follows in Batch 2.
+- Files: package/lock, App, Model page, Explorer shell, graphContracts,
+  architectureGraphState foundation, worker/layout spike in proposed files,
+  graph.css foundation and route/contract/Model tests from Section G.
+- Inputs: frozen Q1/D1/H1 plus canonical metadata; outputs: verified P4-U1 v1
+  local contract and shell with an honest not-yet-connected state. Consistent with
+  Section 6, freeze the owner-approved P4-U1 state/worker baseline after B1
+  acceptance checks; later batches implement it without silent contract changes.
+  This is covered by whole-plan approval and adds no per-batch planning approval.
+  No production mock data; use fixtures only in test harnesses. Graph calls
+  become live only after Batch 2 verifies the actual Express implementation.
+- Accept: exact old-version deep link survives refresh; wrong chain rejected;
+  legacy route still works; package/worker dev+build smoke passes; ELK supported
+  option IDs and 50/100, 300/600 fixture timings/bundle sizes are recorded.
+- Verify focused contract/route/Model tests, frontend tests and production build;
+  inspect dependency tree/audit and browser worker chunk. **DoD:** compatibility
+  evidence and local contract recorded; no remaining transport authority gate.
+
+**Batch 2 — Express graph transport, graph state and Explorer workflows**
+
+- Requires Batch 1 and whole revised-plan approval. First implement the listed
+  Express routes/controller/validation and additive shared-gateway graph mode;
+  prove T-V with unit/Supertest plus a controlled real HTTP upstream. Then
+  finalize graphService against those Express paths and complete
+  reducer/useArchitectureGraph, status banner and
+  controls; wire exact-version status, initial window, named continuation,
+  neighborhood, dependencies/dependents, containment, paths, detail and rebuild.
+- Files: graphService, reducer/hook/contracts, Explorer composition,
+  GraphControls/GraphStatusBanner, plus all listed Express route/controller/
+  validation/gateway/test files and associated frontend unit/hook/page tests.
+- Transport accept: all nine scoped operations plus authenticated health;
+  authoritative JWT/project roles and spoof-resistant delegation; exact repeated
+  query keys, unchanged 200/202, all graph 4xx/5xx codes/statuses and both 422
+  forms; full-body timeout/disconnect handling and safe protocol failures;
+  existing analysis/canonical/SSE/auth/RBAC behavior passes regression.
+- Accept: exact chain validated before calls; 50/100 initial request; all
+  paginated operations generation/fingerprint bound; atomic UUID dedup/caps;
+  no credential eviction on 403/transient errors; no overlapping graph merges
+  or polling; rebuild 202 truthful and role unresolved safe; last active
+  historical generation retained; no network request to Python/Neo4j.
+- Verify Express transport/gateway/auth/analysis proxy regressions and all
+  frontend service/reducer/hook/page tests with repeated query keys, delayed
+  responses, filter resets and pointer changes, then frontend test/build.
+  **DoD:** all workflow states proven through the approved Express contract;
+  mocking the gateway facade alone cannot close transport integration.
+
+**Batch 3 — React Flow canvas, ELK worker, inspector and navigation**
+
+- Requires Batch 2; finalize worker/useGraphLayout, GraphCanvas, GraphInspector
+  and initial list. Render fixed bounded nodes/actual-kind directed edges;
+  support explicit Fit, zoom, detail/evidence, expand and path selection.
+- Inputs: accepted immutable scoped graph + local revision; outputs: finite
+  deterministic positions, stable controlled canvas and inspector/list state.
+- Accept: repeated/permuted fixtures have stable positions; selection leaves
+  worker-call count, positions and viewport unchanged; stale worker ignored and
+  cancelled CPU work terminated; cycles/parallel edges/disconnected nodes work;
+  all retained graph/path data stays within 300/600 and labels stay in boxes.
+- Verify worker/hook/canvas/inspector tests plus real dev/preview browser worker
+  at 50/100 and 300/600, recording hardware and timings. **DoD:** off-main-thread
+  layout and responsiveness observed, no continuous auto-fit/focus jitter,
+  production worker chunk loaded correctly and safe list fallback available.
+
+**Batch 4 — Accessibility, degradation, responsive UX and hardening**
+
+- Requires Batch 3; finish GraphListView and keyboard parity, status/retry/cap
+  messages, role changes, polling visibility/cleanup and responsive styling.
+  Harden actual browser-visible Express error distinctions: local permission
+  denial versus upstream graph unavailability, integrity failures, expired
+  cursors and transport timeouts; test cancellation and no credential leakage.
+- Accept: native labeled controls/fieldset kind filters; Tab/Enter/Space
+  selection and traversal; Escape returns inspector focus to initiating node
+  or list control without forced viewport movement; no focus traps. Reduced
+  motion supported; busy/loading counts use polite live announcements and
+  errors use alerts without repeated poll announcements. List has full loaded
+  node/edge names, direction and action parity when canvas/worker fails.
+- Verify fake-timer lifecycle/error matrix tests, keyboard/focus tests and
+  desktop/mobile browser checks (including 360px width, long Unicode names,
+  200% text zoom and dense edges); tests do not claim jsdom validates geometry
+  or an actual Worker. **DoD:** explicit partial/degraded/historical states,
+  readable active graph during rebuild, no overlapping toolbar/text or lost
+  selection, and frozen canonical page regression passes.
+
+**Batch 5 — Consolidated browser/backend integration, regression and freeze evidence**
+
+- Requires all prior batches and working authorized browser transport. Add
+  final composition scenarios in existing proposed test files; run every
+  frontend and Express suites/audits, frontend build and relevant frozen API
+  contract regressions. Exercise actual React -> Express -> FastAPI ->
+  PostgreSQL/Neo4j; controlled upstream tests complement, not replace, that run.
+- Live journey: exact Model -> Explorer -> initial window -> select ->
+  dependencies/dependents -> containment -> path -> continuation -> list ->
+  rebuild -> explicit generation reload. Repeat with historical STALE version,
+  role-denied rebuild, unavailable graph, refresh and a newer publication.
+- Accept: all Section I criteria proven and exact commands/results captured;
+  inspect full diff for frozen-file changes and Express edits outside the
+  narrowly authorized transport inventory. Unsupported browser
+  transport, untested Worker or unresolved failures prevent freeze.
+- **DoD:** one consolidated independent M5 review, remediation of its findings,
+  verification of the B1-frozen P4-U1 contract, then explicit owner freeze of M5.
+  No M6 implementation or automatic
+  phase-complete claim follows from M5 completion.
+
+### I. Tests, verification commands and module Definition of Done
+
+Test fixtures must mirror actual canonical metadata and Q1/D1/H1 responses,
+including null fields, zero counts, repeated kinds, Unicode names and
+non-empty evidence refs. Required automated cases:
+
+1. Hash/path routes, refresh, back/forward, malformed route, specific matcher
+   precedence, exact fallback Model and legacy page. Older selected version
+   remains fixed while the analysis's current publication changes.
+2. Wrong version/project/repository/analysis rejected before graph call; wrong
+   query generation/schema refused; stale async completions ignored; node
+   detail and evidence selection races cannot replace current inspector.
+3. All seven reads/method/parameter names; repeated kinds; 12-kind dependency
+   semantics and canonical reverse arrows; containment excluded there; explicit
+   path bounds/truncation and no invented cursor; correct HTTP 202 rebuild.
+4. Every paginated operation: separate cursor/query scope; identical retry;
+   generation change invalidates all; expired/invalid cursor requires explicit
+   restart; no hidden parameter changes on continuation. Node/edge dedup and
+   conflicting duplicates; dangling endpoints; exact 300/600 and one-over cap
+   including duplicate-heavy pages and path union, without cursor loss.
+5. Initial/empty/partial/cap/PENDING/RUNNING/COMPLETED/STALE/FAILED and health
+   degradation; readable STALE rebuild failure; preserved cached data with honest
+   error; 403 does not log out; all approved graph errors/syntactic 422 variants.
+6. StrictMode, double-click, duplicate expansion, polling serialization,
+   visibility pause, unmount/context abort, stopped timers and late completion.
+7. Deterministic worker output, selection-only no relayout, no automatic refit,
+   finite coordinate validation, worker unavailable/error/messageerror/watchdog,
+   actual termination and obsolete response rejection. Fake Worker tests plus
+   real browser smoke; one cannot stand in for the other.
+8. Keyboard selection/action/focus restoration, accessible list equivalence,
+   safe metadata rendering, long text, responsive toolbar and canonical overview
+   regression. Preserve all four existing Node suites and existing Vitest tests.
+9. Express: production JWT enforcement/inactive-user denial and test-seam
+   boundaries; project outsiders and DEVELOPER/VIEWER rebuild denied before
+   upstream call; OWNER/ADMIN accepted, all members read; spoofed delegation
+   headers ignored. Exercise actual mounted routes and shared gateway against
+   a local HTTP fixture rather than stubbing its whole request method. Verify
+   array serialization, cursor escaping, scalar/object rejection, unchanged
+   success/202/error status-body mapping, raw 422 detail, all frozen graph
+   code/status pairs, malicious HTML/secret canaries, invalid JSON/redirects,
+   no-response 503, timeout 504 after early headers, disconnect cancellation,
+   cleaned listeners/timers and unaffected existing scalar/204/SSE callers.
+10. Cross-service live checks: exact-version metadata and graph context through
+   Express into unchanged Python, historical STALE readability, old active
+   graph during failed rebuild, generation-change recovery and browser refresh.
+   Simulate safe graph 503/504 and MongoDB/RBAC denial separately. Express health
+   relay requires JWT, preserves lower-case probe state and does not change
+   existing `/api/v1/health` availability.
+
+Commands discovered/proposed for execution **during implementation**:
+
+```text
+npm --prefix frontend ls --depth=0
+npm --prefix frontend run test:legacy
+npm --prefix frontend run test:ui
+npm --prefix frontend run test:ui -- tests/component/ArchitectureExplorerPage.test.jsx tests/component/ArchitectureModelPage.test.jsx
+npm --prefix frontend test
+npm --prefix frontend run build
+npm --prefix frontend audit --omit=dev
+npm --prefix frontend run dev
+npm --prefix frontend run preview
+npm --prefix express test -- tests/unit/analysisGatewayService.test.js tests/unit/graphValidate.test.js tests/integration/graphProxyApi.test.js tests/integration/analysisProxyApi.test.js
+npm --prefix express test
+npm --prefix express audit --omit=dev
+./venv/bin/pytest -q tests/p4/api tests/p4/integration/test_graph_api_pipeline.py
+git diff --check
+```
+
+Use Vite's printed URL/port for dev/preview browser checks; preview has no
+proven Express proxy configuration, so use a correctly deployed same-origin
+Express boundary for live preview, never change its target to Python. No lint,
+format/typecheck or browser-test command is invented; adding tooling requires
+demonstrated need and scope review. Record frontend bundle/worker asset sizes,
+layout duration and interaction observations on named hardware; throughput
+measurements cannot weaken 300/600 or backend safety limits.
+
+**Planning checks actually performed:** git branch/status and relevant source/
+contract/test/config inspection; installed Node/npm/frontend tree; read-only
+`npm view @xyflow/react version peerDependencies engines --json` and
+`npm view elkjs version engines main --json`. Registry queries succeeded after
+the sandbox's DNS failure was retried with approved network access. No installs,
+source edits, runtime spike, app tests/builds or live browser checks were
+performed during this planning task. Previous M4 test results remain historical
+verified evidence in Sections 12.18–12.19, not newly executed M5 checks.
+The owner-authorized revision additionally inspected the Express router,
+architecture controller, shared gateway/config/error types, authentication,
+project authorization, central error handler, Vitest setup, gateway unit tests
+and analysis-proxy Supertest integration tests. It confirmed reuse points and
+the headers-only timeout gap; no application/test/dependency change was made.
+
+**Module DoD:** exact version/context preserved in every route/request/retry;
+approved Express boundary proven; all frozen API semantics consumed accurately;
+50/100 initial query and 300/600 enforced without silent dropping; lazy bounded
+queries and explicit truncation; same-generation cursor invariants; separate
+hierarchy/dependency/path behavior; stable deterministic worker layout and
+viewport; equivalent accessible list/inspector; honest public/attempt/degraded
+states; authorized rebuild preserving historical graph; thin Express transport
+passes JWT/RBAC/delegation/status/error/timeout tests and real cross-service
+acceptance; legacy analysis/SSE/auth/canonical Model/dashboard regressions and
+test/build gates pass; independent review and owner freeze recorded.
+
+### J. Risks, approval decisions and handoff
+
+- **Owner authority decision — Gate T RESOLVED (2026-11-15):** the owner
+  explicitly approved minimum Express graph transport within M5. Section B/D/G
+  limits it to fixed graph routes, existing authentication/project RBAC,
+  trusted delegation, validation, shared-gateway serialization/status/error/
+  timeout handling and tests. No further transport authorization is needed
+  within this scope; T-V is implementation verification, not another approval.
+  The owner has approved the revised complete plan and requested that no
+  implementation begin yet.
+- **Plan approval recorded (2026-11-15):** all five batches as one sequential
+  unit, exact graph package pins subject to Gate C, P4-U1 state/merge/reset
+  semantics and worker/10-second watchdog/polling/layout defaults are approved
+  as the M5 implementation baseline. This does not change frozen architecture.
+- **Technical risks:** React Flow/ELK CJS/worker packaging on current Vite;
+  jsdom cannot prove geometry/real worker behavior; global SVG CSS can constrain
+  React Flow; dense graphs and parallel edges require explicit labels/list;
+  same-version generation changes invalidate cursors; no version-list API or
+  terminal attempt-history API exists. Mitigate with scoped styles, real browser
+  checks, atomic merges and honest UI rather than invented capabilities.
+- **Frozen boundaries:** no P1–P3/P4 M1–M4 Python implementation or contracts,
+  Q1/D1/H1, master, ADR, database ownership/schema or lifecycle/query semantics
+  are changed. Existing Express JWT/RBAC behavior is reused; only the scoped
+  additive transport inventory is authorized. All unrelated Express work
+  remains prohibited. This is an explicit owner-approved exception for the
+  existing gateway integration, not a reopening of P3 architecture contracts.
+  Unresolved/conflicting canonical records remain inspectable through existing
+  Model tabs, not synthetic graph content. P5/P6/M6 scope remains excluded.
+- **Execution status:** revised plan **OWNER APPROVED**; all five batches **NOT
+  STARTED**, P4-U1 **PLAN APPROVED / NOT FROZEN**, M5 **NOT IMPLEMENTED**. M1–M4
+  retain their owner-approved frozen status. Next action is to wait for the
+  owner's explicit instruction to begin Batch 1. No unresolved
+  architecture/authority decision remains within the authorized scope;
+  package compatibility and transport parity are implementation quality gates.
+
 ## 8. Dependency Graph and Implementation Order
 
 ```text
@@ -3372,9 +4209,9 @@ M1 lifecycle/infrastructure
 ```
 
 Critical-path backend sequence: M1 -> M2 -> M3 -> M4. M5 shell/layout work may
-overlap as described below, but live browser integration additionally depends on
-a compatible already implemented Express transport or a separate owner-approved
-decision outside P4 M1–M4. M6 test fixtures and harnesses can grow alongside
+overlap as described below. The 2026-11-15 owner decision authorizes minimum
+Express transport within M5; its implementation/parity verification precedes
+live browser integration in revised Batch 2. M6 test fixtures and harnesses can grow alongside
 every module, but final evaluation waits for every approved dependency.
 
 After the relevant P4-Q1 query DTO contract is stable, M4 Python API integration
@@ -3382,9 +4219,11 @@ and only M5 package compatibility, route shell, component shell and independent
 layout-worker work may proceed in parallel. M5 consumes P4-Q1/P4-D1 DTOs as
 defined and must not invent, fork or independently redefine them. M5 service,
 hook and page integration with live graph APIs waits for P4-D1 and verification
-that the completed Express boundary can carry the required calls. If it cannot,
-work stops for explicit owner direction; no agent may add Express implementation
-or bypass Express. This avoids DTO drift and preserves the security boundary.
+of the owner-authorized M5 Express transport (Section 7F, T-V). Gate T authority
+is resolved; no additional transport approval is needed within that scope after
+the revised whole plan is approved. React cannot bypass Express. Historical
+M1–M4 plans retain their no-Express boundary. This avoids DTO drift and preserves
+the security boundary.
 
 ## 9. Global Phase 4 Definition of Done
 
@@ -3459,7 +4298,7 @@ checks, not replaced by unit tests.
 | Cursor secret rotation/TTL and exact endpoint DTO field names | M3 B1 contract freeze; dedicated production secret, no JWT-secret reuse. |
 | React Flow/ELK compatible patches and deterministic worker options | M5 B1 before package pin/UI implementation. |
 | P4-owned published-header adapter query plan and deterministic pagination/watermark behavior | M1 B2 against real PostgreSQL; any need to alter the frozen P3 port is an explicit, unapproved change-control gate. |
-| Browser transport for P4 graph APIs under the no-new-Express boundary | Before M5 live API integration, verify whether the completed Express surface already supports the required transport. If not, stop for an explicit owner decision outside P4 M1–M4; do not add Express work or call Python directly. |
+| Browser transport for P4 graph APIs under the scoped Express boundary | **Gate T authority resolved by owner 2026-11-15.** Revised M5 B2 implements minimum transport in Section 7F; T-V requires status/error/query/auth/timeout parity and integration tests before frontend live wiring. Unrelated Express work remains prohibited. |
 | Cleanup grace, retry jitter and operational alert thresholds | M1/M2 implementation metrics, frozen before M6 outage testing. |
 | Capacity/performance baselines on named hardware | M6 B2; results recorded without weakening hard safety limits. |
 
@@ -3493,14 +4332,14 @@ Approval is sequential and non-transitive:
    P4-Q1/P4-H1 on 2026-11-13; M3 is not reopened by M4.
 6. **Detailed M4 planning — MASTER AGENT REVIEW COMPLETE / OWNER APPROVED.**
    Section 7E is the approved complete three-batch P4-D1 implementation baseline.
-   All batches are authorized as one sequential unit; implementation has not
-   started.
-7. **Implementation — M1, M2 & M3 FROZEN / COMPLETE; M4 AUTHORIZED / NOT
-   STARTED.**
+   All three batches have been implemented and independently reviewed.
+7. **Implementation — M1, M2, M3 & M4 FROZEN / COMPLETE.**
    The owner accepted M1, P4-L1/P4-S1/P4-W1, and M2. M3 Batches 1, 2, and 3 are
    fully implemented; the review remediation is verified against PostgreSQL 16 and
-   Neo4j Community 5.26.33, and P4-Q1/P4-H1 are frozen. M4 implementation is
-   authorized but no batch has started.
+   Neo4j Community 5.26.33, and P4-Q1/P4-H1 are frozen. M4's three batches are
+   implemented; the independent-review findings in Section 12.18 are remediated
+   and verified. The owner confirmed M4 complete and froze P4-D1 at version
+   `1.0.0` on 2026-11-14; M4 is not reopened by later modules.
 
 | Work item | Status |
 |---|---|
@@ -3519,9 +4358,12 @@ Approval is sequential and non-transitive:
 | P4 M3 implementation | **FROZEN / COMPLETE — REVIEW REMEDIATION VERIFIED** |
 | P4-Q1 / P4-H1 | **FROZEN v1.0.0 — OWNER CONFIRMED 2026-11-13** |
 | P4 M4 detailed plan | **MASTER AGENT REVIEW COMPLETE / OWNER APPROVED — ALL THREE BATCHES** |
-| P4 M4 implementation | **AUTHORIZED AS ONE SEQUENTIAL UNIT / NOT STARTED** |
+| P4 M4 implementation | **FROZEN / COMPLETE — REVIEW REMEDIATION VERIFIED** |
+| P4-D1 | **FROZEN v1.0.0 — OWNER CONFIRMED 2026-11-14** |
 | Preserved detailed roadmap | **REFERENCE PROPOSAL / NOT APPROVED AS DETAILED MODULE PLANS** |
-| Detailed M5–M6 planning | **NOT STARTED** |
+| P4 M5 detailed plan | **OWNER APPROVED — ALL FIVE BATCHES; SECTION 7F; GATE T AUTHORIZED** |
+| P4-U1 | **PLAN APPROVED / NOT FROZEN — IMPLEMENTATION NOT STARTED** |
+| Detailed M6 planning | **NOT STARTED** |
 | M5–M6 implementation | **NOT STARTED** |
 
 ### 12.1 M1 Batch 1 execution record
@@ -4312,6 +5154,91 @@ Approval is sequential and non-transitive:
   - Zero changes to Express, frontend, master.txt, frozen P1-P3 analysis modules, or frozen M1/M2/M3 graph modules.
   - Execution evidence is complete and ready for the consolidated independent M4 review and explicit P4-D1 contract freeze.
 
+### 12.18 Phase 4 Module 4 independent-review remediation
+
+- **Status/date:** all actionable findings from the 2026-11-14 independent M4
+  code review are remediated and verified. This supersedes the inaccurate
+  environment and boundary claims in Section 12.17; it does not rewrite that
+  collaborator-authored historical record. At this review checkpoint P4-D1 was
+  awaiting explicit owner freeze approval; Section 12.19 records the subsequent
+  approval.
+- **Frozen P3 boundary restored (high):** the pulled M4 work had changed the
+  frozen parser sandbox so pooled parser children applied OS isolation only on
+  Linux and a Windows probe created then immediately closed an unattached Job
+  Object. That behavior could allow pooled untrusted parsing without enforced
+  isolation outside Linux. The four affected P3 parser/benchmark files were
+  restored to their frozen pre-M4 behavior; no P3 contract or approved behavior
+  was redesigned.
+- **Real integration repaired (medium):** the PostgreSQL fixture now inserts the
+  cyclic analysis/version references in valid flush order, persists the graph
+  resource before its attempt, gives concurrent requests independent database
+  sessions, and explicitly deletes committed fixtures in reverse dependency
+  order. Neo4j seed data now uses the frozen `ProjectionManifest.generation_key`,
+  `ARCH_RELATIONSHIP` type, generation-scoped edge-key algorithm and complete
+  relationship property contract. The live PostgreSQL/Neo4j pipeline therefore
+  exercises actual production shapes rather than stale fixture assumptions.
+- **Concurrency coverage corrected (medium):** the rebuild integration test now
+  launches OWNER and ADMIN requests simultaneously behind a barrier and proves
+  both return HTTP 202 with the same durable queued attempt and attempt number.
+  It no longer describes sequential calls as concurrency evidence.
+- **Transport contract corrected (medium):** lifecycle DTO fields now use the
+  frozen `ProjectionPublicState` and `ProjectionAttemptState` enums, and
+  `projection_type` is the literal `architecture`. OpenAPI 422 responses now
+  document both graph-domain validation envelopes and FastAPI's actual
+  syntactic-validation `detail` envelope; focused tests reject unknown states
+  and verify the emitted union schema and runtime body.
+- **Verification evidence:**
+  - real PostgreSQL 16 + Neo4j pipeline test: **1 passed**;
+  - SQLite and real multi-store API pipeline file: **2 passed**;
+  - `pytest -q tests/p4 -k 'not integration'`: **312 passed, 33 deselected**;
+  - `pytest -q tests/p4`: **332 passed, 13 skipped**; skips are explicit
+    RabbitMQ/Neo4j environment-variable gates, while the corrected live
+    multi-store test was executed separately and passed;
+  - focused frozen parser/benchmark regression: **36 passed, 3 skipped**; the
+    three skips are Windows Job Object tests on Linux;
+  - complete repository regression: **1,087 passed, 16 skipped in 512.88 s**;
+  - Ruff: **passed**; MyPy: **216 source files passed**; Black: **344 files
+    unchanged**; `git diff --check`: **passed**.
+- **Scope retained:** no Express, frontend, dependency, migration, `master.txt`,
+  frozen F1/F2/F3, frozen P4 M1-M3 graph contract, lifecycle, projection or query
+  implementation was changed. The only P3 file edits in this remediation remove
+  the collaborator's unauthorized M4-era changes and restore the frozen baseline.
+
+### 12.19 M4/P4-D1 owner freeze confirmation
+
+- **Status approval (2026-11-14):** after reviewing the Section 12.18 remediation
+  and verification evidence, the owner confirmed M4 verified, complete and ready
+  to freeze. M4 is formally **FROZEN / COMPLETE** and P4-D1 is frozen at version
+  `1.0.0`.
+- **Boundary retained:** this is a status/freeze acknowledgement only. It changes
+  no implementation, approved architecture, public vocabulary, lifecycle,
+  persistence ownership or frozen P1-P3/P4 M1-M3 contract. Any later change to
+  M4 or P4-D1 requires explicit change control.
+- **Downstream handoff:** M5 may now consume frozen P4-Q1/P4-H1 and P4-D1 through
+  its approved dependency boundaries. No M5 planning or implementation is begun
+  by this status update.
+
+### 12.20 M5 scoped Express transport authorization and revised planning
+
+- **Owner decision (2026-11-15): Gate T authorization RESOLVED / APPROVED.**
+  Minimum Express graph transport is authorized within M5, exclusively through
+  the existing authentication/project authorization and Python analysis gateway.
+  The approved flow is React -> Express -> FastAPI -> Neo4j/PostgreSQL.
+- **Exact scope:** graph routes/registration/controller/validation, trusted
+  delegation, repeated query serialization, safe status/error-body relay,
+  bounded request/body timeouts/cancellation, authenticated query-health relay
+  and Express integration tests, as specified in Section 7F. No new database,
+  graph logic, authentication/RBAC redesign or frozen Python/ADR/master change.
+- **Planning record:** Section 7F retains five sequential batches; revised B2
+  implements and verifies transport before wiring graphService/browser workflows.
+  B4 and B5 cover transport degradation/security and full cross-service
+  regression. The global no-new-Express rule retains this sole scoped exception.
+- **Execution status:** documentation revision only. The revised whole plan is
+  **OWNER APPROVED — ALL FIVE BATCHES** on 2026-11-15; all batches remain
+  **NOT STARTED**. The owner explicitly requested recording approval without
+  starting implementation. Wait for an instruction to begin Batch 1; no
+  additional per-batch planning approval is required thereafter.
+
 ## 13. Current Handoff
 
 The approved architecture, frozen M1 contracts, completed M2 implementation,
@@ -4319,13 +5246,22 @@ approved detailed M3 plan, complete proposed M4 plan, preserved roadmap, phase
 DoD, risks and verified execution records are recorded in this sole rolling
 handoff.
 
-**Current status:** M1, M2, and M3 are frozen; M4 (Python API contract integration,
-mutation/authorization/degradation, query health probe, and backend integration
-composition) is fully implemented, remediated against all review findings, and
-verified across all three batches (54 API unit tests, 316 P4 tests, Black, Ruff,
-and MyPy passing cleanly).
+**Current status:** M1, M2, M3 and M4 are frozen and complete. M4's
+independent-review findings are remediated, its real PostgreSQL/Neo4j pipeline
+passes, the complete repository reports 1,087 passed and 16 intentional
+platform/environment skips, and Black, Ruff and MyPy pass. P4-D1 is frozen at
+version `1.0.0` by owner approval dated 2026-11-14.
 
-**Next action:** perform one consolidated independent M4 review against the
-implementation, test evidence, and execution ledger, followed by explicit owner
-approval to freeze P4-D1. Do not begin Module 5 (M5) until M4 is reviewed and
-frozen.
+**M5 planning status (2026-11-15):** Section 7F records the owner-approved
+five-batch React Architecture Explorer and minimum Express graph transport plan.
+Gate T owner authorization is resolved by the scoped exception recorded at the
+top of this file and in Section 7F. The transport does not exist yet: revised
+Batch 2 implements and verifies it before frontend live wiring. All M5 batches
+remain unstarted and P4-U1 is plan-approved but not frozen. The owner requested
+status recording only and explicitly instructed that implementation not begin.
+
+**Next action:** wait for the owner's explicit instruction to begin M5 Batch 1.
+The five-batch plan is approved as one sequential unit, including Batch 2
+Express transport/parity verification before browser graph integration; no
+additional planning approval between batches is required. No M5 or M6
+implementation has started.
