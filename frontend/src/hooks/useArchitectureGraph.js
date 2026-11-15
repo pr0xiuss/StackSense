@@ -30,6 +30,15 @@ import {
 } from '../contracts/graphContracts.js';
 
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 2000;
+const DEFAULT_DISCOVERY_POLL_INTERVAL_MS = 5000;
+const DEFAULT_DISCOVERY_TIMEOUT_MS = 180000;
+
+function shouldPollStatus(result) {
+  return Boolean(result && (result.discoveryPending ||
+    [PROJECTION_PUBLIC_STATUS.PENDING, PROJECTION_PUBLIC_STATUS.RUNNING].includes(result.status) ||
+    [PROJECTION_ATTEMPT_STATUS.QUEUED, PROJECTION_ATTEMPT_STATUS.RUNNING,
+      PROJECTION_ATTEMPT_STATUS.RETRYING].includes(result.active_attempt?.status)));
+}
 
 /**
  * Hardened error formatter for Architecture Graph operations.
@@ -54,12 +63,15 @@ export function formatGraphError(err, fallbackMessage = 'Operation failed') {
   }
 
   // 2. 404 Not Found - Projection or Version unavailable
+  if (code === 'graph_node_not_found') return 'This entity is not available in the current graph window.';
   if (status === 404) {
     return 'Architecture graph projection not found or unavailable for this version.';
   }
 
   // 3. 409 Conflict - Active rebuild already in progress
   if (status === 409) {
+    if (code === 'graph_generation_changed') return 'The graph generation changed. Reload this version to continue.';
+    if (code === 'graph_projection_not_ready') return 'The graph projection is still being prepared. Refresh status to check its progress.';
     return 'A rebuild operation is already in progress for this architecture version.';
   }
 
@@ -91,7 +103,9 @@ export function formatGraphError(err, fallbackMessage = 'Operation failed') {
 
 export function useArchitectureGraph(
   { projectId, repositoryId, analysisId, versionId },
-  { pollIntervalMs = DEFAULT_STATUS_POLL_INTERVAL_MS } = {}
+  { pollIntervalMs = DEFAULT_STATUS_POLL_INTERVAL_MS,
+    discoveryPollIntervalMs = DEFAULT_DISCOVERY_POLL_INTERVAL_MS,
+    discoveryTimeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS } = {}
 ) {
   const [state, dispatch] = useReducer(
     architectureGraphReducer,
@@ -102,6 +116,8 @@ export function useArchitectureGraph(
   const epochRef = useRef(0);
   const activeControllerRef = useRef(null);
   const pollTimerRef = useRef(null);
+  const discoveryRef = useRef({ deadline: null, waiting: false, seen: false });
+  const statusRequestRef = useRef(null);
 
   // Clear any existing poll timer
   const stopPolling = useCallback(() => {
@@ -121,33 +137,61 @@ export function useArchitectureGraph(
 
   // Fetch projection status
   const fetchStatus = useCallback(
-    async (epoch, signal) => {
-      if (!versionId || !projectId) return null;
-      try {
-        const statusRes = await graphService.getStatus(versionId, { projectId, signal });
-        if (epochRef.current === epoch) {
-          dispatch({
-            type: GRAPH_ACTION_TYPES.UPDATE_PROJECTION_STATUS,
-            payload: { status: statusRes },
-          });
-          return statusRes;
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError' && epochRef.current === epoch) {
-          const formatted = formatGraphError(err, 'Failed to fetch projection status');
-          dispatch({
-            type: GRAPH_ACTION_TYPES.FAIL_OPERATION,
-            payload: { opKey: 'status', error: formatted },
-          });
-          const status = err.status || err.statusCode || err.response?.status;
-          if (status === 403 || status === 404) {
-            stopPolling();
+    (epoch, signal = activeControllerRef.current?.signal) => {
+      if (statusRequestRef.current?.epoch === epoch) return statusRequestRef.current.promise;
+      const request = { epoch, promise: null };
+      request.promise = (async () => {
+        if (!versionId || !projectId) return null;
+        try {
+          const statusRes = await graphService.getStatus(versionId, { projectId, signal });
+          if (epochRef.current === epoch) {
+            discoveryRef.current = { deadline: null, waiting: false, seen: true };
+            dispatch({
+              type: GRAPH_ACTION_TYPES.UPDATE_PROJECTION_STATUS,
+              payload: { status: statusRes },
+            });
+            return statusRes;
+          }
+        } catch (err) {
+          if (!signal?.aborted && err.name !== 'AbortError' && epochRef.current === epoch) {
+            const status = err.status || err.statusCode || err.response?.status;
+            const code = err.code || err.error_code;
+            // Canonical context was validated before this call. A not-yet-created
+            // projection is expected until M1's periodic publication discovery runs.
+            // Never mask unrelated 404s, authorization errors or a disappearing graph.
+            if (status === 404 && code === 'graph_projection_not_found' && !discoveryRef.current.seen) {
+              const discovery = discoveryRef.current;
+              discovery.deadline ??= Date.now() + discoveryTimeoutMs;
+              if (Date.now() < discovery.deadline) {
+                discovery.waiting = true;
+                dispatch({ type: GRAPH_ACTION_TYPES.WAIT_FOR_PROJECTION });
+                return { discoveryPending: true }; // internal control result, not public status
+              }
+              discovery.waiting = false;
+              dispatch({ type: GRAPH_ACTION_TYPES.FAIL_OPERATION, payload: { opKey: 'status',
+                error: 'The graph scheduler has not created this projection yet. Automatic checks paused after three minutes. Refresh status to try again; if this persists, check graph worker health.' } });
+              stopPolling();
+              return null;
+            }
+            discoveryRef.current.waiting = false;
+            const formatted = formatGraphError(err, 'Failed to fetch projection status');
+            dispatch({
+              type: GRAPH_ACTION_TYPES.FAIL_OPERATION,
+              payload: { opKey: 'status', error: formatted },
+            });
+            if (status === 403 || status === 404) {
+              stopPolling();
+            }
           }
         }
-      }
-      return null;
+        return null;
+      })().finally(() => {
+        if (statusRequestRef.current === request) statusRequestRef.current = null;
+      });
+      statusRequestRef.current = request;
+      return request.promise;
     },
-    [versionId, projectId, stopPolling]
+    [versionId, projectId, stopPolling, discoveryTimeoutMs]
   );
 
   // Poll status while attempt is running or projection is pending
@@ -162,22 +206,13 @@ export function useArchitectureGraph(
         if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
         const res = await fetchStatus(epoch);
         if (res && epochRef.current === epoch) {
-          const isPending =
-            res.status === PROJECTION_PUBLIC_STATUS.PENDING ||
-            res.status === PROJECTION_PUBLIC_STATUS.RUNNING;
-          const attemptRunning =
-            res.active_attempt &&
-            (res.active_attempt.status === PROJECTION_ATTEMPT_STATUS.QUEUED ||
-              res.active_attempt.status === PROJECTION_ATTEMPT_STATUS.RUNNING ||
-              res.active_attempt.status === PROJECTION_ATTEMPT_STATUS.RETRYING);
-
-          if ((isPending || attemptRunning) && (typeof document === 'undefined' || document.visibilityState !== 'hidden')) {
+          if (shouldPollStatus(res) && (typeof document === 'undefined' || document.visibilityState !== 'hidden')) {
             scheduleStatusPoll(epoch);
           }
         }
-      }, pollIntervalMs);
+      }, discoveryRef.current.waiting ? discoveryPollIntervalMs : pollIntervalMs);
     },
-    [fetchStatus, stopPolling, pollIntervalMs]
+    [fetchStatus, stopPolling, pollIntervalMs, discoveryPollIntervalMs]
   );
 
   // 1. Validate context and canonical version on mount or ID changes
@@ -186,6 +221,7 @@ export function useArchitectureGraph(
     cancelActiveRequests();
 
     const currentEpoch = ++epochRef.current;
+    discoveryRef.current = { deadline: null, waiting: false, seen: false };
     const controller = new AbortController();
     activeControllerRef.current = controller;
 
@@ -250,16 +286,7 @@ export function useArchitectureGraph(
         // Immediately fetch projection status
         const statusRes = await fetchStatus(currentEpoch, controller.signal);
         if (statusRes && epochRef.current === currentEpoch) {
-          const isPending =
-            statusRes.status === PROJECTION_PUBLIC_STATUS.PENDING ||
-            statusRes.status === PROJECTION_PUBLIC_STATUS.RUNNING;
-          const attemptRunning =
-            statusRes.active_attempt &&
-            (statusRes.active_attempt.status === PROJECTION_ATTEMPT_STATUS.QUEUED ||
-              statusRes.active_attempt.status === PROJECTION_ATTEMPT_STATUS.RUNNING ||
-              statusRes.active_attempt.status === PROJECTION_ATTEMPT_STATUS.RETRYING);
-
-          if (isPending || attemptRunning) {
+          if (shouldPollStatus(statusRes)) {
             scheduleStatusPoll(currentEpoch);
           }
         }
@@ -276,6 +303,7 @@ export function useArchitectureGraph(
     return () => {
       stopPolling();
       controller.abort();
+      if (epochRef.current === currentEpoch) epochRef.current += 1;
     };
   }, [projectId, repositoryId, analysisId, versionId, fetchStatus, scheduleStatusPoll, stopPolling, cancelActiveRequests]);
 
@@ -297,19 +325,12 @@ export function useArchitectureGraph(
           currentAttempt === PROJECTION_ATTEMPT_STATUS.RUNNING ||
           currentAttempt === PROJECTION_ATTEMPT_STATUS.RETRYING;
 
-        if (isPending || attemptRunning) {
-          fetchStatus(epochRef.current).then((res) => {
-            if (res && epochRef.current) {
-              const stillPending =
-                res.status === PROJECTION_PUBLIC_STATUS.PENDING ||
-                res.status === PROJECTION_PUBLIC_STATUS.RUNNING;
-              const stillAttemptRunning =
-                res.active_attempt &&
-                (res.active_attempt.status === PROJECTION_ATTEMPT_STATUS.QUEUED ||
-                  res.active_attempt.status === PROJECTION_ATTEMPT_STATUS.RUNNING ||
-                  res.active_attempt.status === PROJECTION_ATTEMPT_STATUS.RETRYING);
-              if (stillPending || stillAttemptRunning) {
-                scheduleStatusPoll(epochRef.current);
+        if (isPending || attemptRunning || discoveryRef.current.waiting) {
+          const epoch = epochRef.current;
+          fetchStatus(epoch).then((res) => {
+            if (res && epochRef.current === epoch) {
+              if (shouldPollStatus(res)) {
+                scheduleStatusPoll(epoch);
               }
             }
           });
@@ -333,7 +354,7 @@ export function useArchitectureGraph(
     const hasActiveGen = Boolean(state.status.active_generation_id);
 
     // Only trigger initial window if readable, has active gen, and zero nodes currently loaded
-    if (isReadable && hasActiveGen && state.loadedNodeCount === 0 && !state.operations.window?.inFlight) {
+    if (isReadable && hasActiveGen && !state.isOutOfDate && state.loadedNodeCount === 0 && !state.operations.window) {
       const currentEpoch = epochRef.current;
       const opKey = 'window';
 
@@ -349,6 +370,7 @@ export function useArchitectureGraph(
           edgeLimit: DEFAULT_EDGE_LIMIT,
           pageSize: DEFAULT_PAGE_SIZE,
           timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
+          signal: activeControllerRef.current?.signal,
         })
         .then((subgraph) => {
           if (epochRef.current === currentEpoch) {
@@ -373,6 +395,8 @@ export function useArchitectureGraph(
     state.status,
     state.loadedNodeCount,
     state.operations.window?.inFlight,
+    state.isOutOfDate,
+    state.requestEpoch,
     projectId,
     versionId,
   ]);
@@ -381,24 +405,20 @@ export function useArchitectureGraph(
 
   // Refresh status manually
   const refreshStatus = useCallback(async () => {
+    stopPolling();
+    discoveryRef.current.deadline = null; // explicit manual retry starts a new bounded wait
     const currentEpoch = epochRef.current;
     const statusRes = await fetchStatus(currentEpoch);
+    if (statusRes && state.loadedNodeCount === 0 && state.operations.window?.error) {
+      dispatch({ type: GRAPH_ACTION_TYPES.CLEAR_EXPLORATION });
+    }
     if (statusRes && epochRef.current === currentEpoch) {
-      const isPending =
-        statusRes.status === PROJECTION_PUBLIC_STATUS.PENDING ||
-        statusRes.status === PROJECTION_PUBLIC_STATUS.RUNNING;
-      const attemptRunning =
-        statusRes.active_attempt &&
-        (statusRes.active_attempt.status === PROJECTION_ATTEMPT_STATUS.QUEUED ||
-          statusRes.active_attempt.status === PROJECTION_ATTEMPT_STATUS.RUNNING ||
-          statusRes.active_attempt.status === PROJECTION_ATTEMPT_STATUS.RETRYING);
-
-      if (isPending || attemptRunning) {
+      if (shouldPollStatus(statusRes)) {
         scheduleStatusPoll(currentEpoch);
       }
     }
     return statusRes;
-  }, [fetchStatus, scheduleStatusPoll]);
+  }, [fetchStatus, scheduleStatusPoll, stopPolling, state.loadedNodeCount, state.operations.window?.error]);
 
   // Request rebuild mutation (requires OWNER/ADMIN role)
   const requestRebuild = useCallback(async () => {
@@ -430,7 +450,7 @@ export function useArchitectureGraph(
 
       dispatch({
         type: GRAPH_ACTION_TYPES.START_OPERATION,
-        payload: { opKey, mode: 'neighborhood', fingerprint: `${entityId}:${direction}:${depth}` },
+        payload: { opKey, mode: 'neighborhood', fingerprint: `${entityId}:${direction}:${depth}`, request: { ...options, entityId, direction, depth } },
       });
 
       try {
@@ -474,7 +494,7 @@ export function useArchitectureGraph(
 
       dispatch({
         type: GRAPH_ACTION_TYPES.START_OPERATION,
-        payload: { opKey, mode: 'dependencies', fingerprint: `${entityId}:${depth}` },
+        payload: { opKey, mode: 'dependencies', fingerprint: `${entityId}:${depth}`, request: { ...options, entityId, depth } },
       });
 
       try {
@@ -517,7 +537,7 @@ export function useArchitectureGraph(
 
       dispatch({
         type: GRAPH_ACTION_TYPES.START_OPERATION,
-        payload: { opKey, mode: 'dependents', fingerprint: `${entityId}:${depth}` },
+        payload: { opKey, mode: 'dependents', fingerprint: `${entityId}:${depth}`, request: { ...options, entityId, depth } },
       });
 
       try {
@@ -561,7 +581,7 @@ export function useArchitectureGraph(
 
       dispatch({
         type: GRAPH_ACTION_TYPES.START_OPERATION,
-        payload: { opKey, mode: 'containment', fingerprint: `${entityId}:${direction}:${depth}` },
+        payload: { opKey, mode: 'containment', fingerprint: `${entityId}:${direction}:${depth}`, request: { ...options, entityId, direction, depth } },
       });
 
       try {
@@ -627,7 +647,7 @@ export function useArchitectureGraph(
         if (epochRef.current === currentEpoch) {
           dispatch({
             type: GRAPH_ACTION_TYPES.MERGE_PATHS,
-            payload: { pathResult },
+            payload: { pathResult, opKey },
           });
         }
       } catch (err) {
@@ -666,6 +686,25 @@ export function useArchitectureGraph(
             cursor: op.cursor,
             timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
           });
+        } else if (op.request) {
+          const { entityId, ...requestOptions } = op.request;
+          const method = {
+            neighborhood: 'getNeighborhood',
+            dependencies: 'getDependencies',
+            dependents: 'getDependents',
+            containment: 'getContainment',
+          }[op.mode];
+          if (method) {
+            subgraph = await graphService[method](versionId, entityId, {
+              ...requestOptions,
+              projectId,
+              nodeLimit: requestOptions.nodeLimit || DEFAULT_NODE_LIMIT,
+              edgeLimit: requestOptions.edgeLimit || DEFAULT_EDGE_LIMIT,
+              cursor: op.cursor,
+              timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
+              signal: activeControllerRef.current?.signal,
+            });
+          }
         }
 
         if (subgraph && epochRef.current === currentEpoch) {
@@ -695,9 +734,11 @@ export function useArchitectureGraph(
         payload: { nodeId },
       });
       if (nodeId) {
+        const currentEpoch = epochRef.current;
         graphService
           .getNodeDetail(versionId, nodeId, { projectId, timeoutSeconds: DEFAULT_TIMEOUT_SECONDS })
           .then((detail) => {
+            if (epochRef.current !== currentEpoch) return;
             dispatch({
               type: GRAPH_ACTION_TYPES.SET_NODE_DETAIL,
               payload: { detail },

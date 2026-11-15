@@ -129,7 +129,7 @@ Celery worker. Celery Beat runs the M1 recovery schedule that republishes jobs
 whose initial broker delivery was lost. For a foreground development session:
 
 ```bash
-./venv/bin/celery -A backend.worker.celery_app:celery_app worker --loglevel=info
+./venv/bin/celery -A backend.worker.celery_app:celery_app worker --loglevel=info --queues=analysis.jobs,graph.maintenance,graph.projections
 ./venv/bin/celery -A backend.worker.celery_app:celery_app beat --loglevel=info
 ```
 
@@ -146,6 +146,32 @@ systemctl --user enable --now stacksense-celery-worker.service stacksense-celery
 Do not also run foreground workers after enabling these services. Check them
 with `systemctl --user status stacksense-celery-worker.service` and follow logs
 with `journalctl --user -u stacksense-celery-worker.service -f`.
+
+The Architecture Explorer also requires `GRAPH_PROJECTION_DISPATCH_ENABLED=true`
+in the local `.env`, a running Neo4j container, and both graph queues above.
+Use the existing dedicated graph services alongside the analysis services:
+
+```bash
+systemctl --user link "$PWD/ops/systemd/stacksense-celery-graph-worker.service"
+systemctl --user link "$PWD/ops/systemd/stacksense-celery-graph-projection-worker.service"
+systemctl --user daemon-reload
+systemctl --user enable --now stacksense-celery-graph-worker.service stacksense-celery-graph-projection-worker.service
+```
+
+After pulling worker/scheduler changes, run `systemctl --user daemon-reload`
+and `systemctl --user restart stacksense-celery-worker.service stacksense-celery-beat.service`.
+The reconciler discovers existing published versions automatically; a missing
+projection is not a missing Architecture Model. A worker listening only on
+`analysis.jobs` cannot process graph maintenance or projection messages. The
+checked-in example leaves dispatch disabled until graph infrastructure is ready.
+
+The local and example environment set `GRAPH_RECONCILIATION_INTERVAL_SECONDS=5`
+so new published models are normally discovered within one five-second scheduler
+cycle, plus queueing and projection execution time. Restart
+`stacksense-celery-beat.service` after changing this setting; editing `.env`
+alone does not reconfigure an already running Beat process. The Python fallback
+without an environment override remains 60 seconds. This operational setting
+does not change dispatch-recovery delays, retries, leases or graph verification.
 
 Syntax extraction uses a bounded pool of reusable, OS-isolated parser children.
 The defaults are four parser children per active analysis and 64 files before a

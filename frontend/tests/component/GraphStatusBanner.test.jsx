@@ -4,6 +4,12 @@ import { describe, it, expect, vi } from 'vitest';
 import { GraphStatusBanner } from '../../src/components/graph/GraphStatusBanner.jsx';
 
 describe('GraphStatusBanner component tests', () => {
+  it('explains publication discovery without showing a false failure or public lifecycle state', () => {
+    render(<GraphStatusBanner discoveryPending status={null} />);
+    expect(screen.getByText(/Waiting for the graph scheduler/)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ready|Projection Failed|PENDING/)).not.toBeInTheDocument();
+  });
   it('renders Ready badge for COMPLETED status with active generation', () => {
     render(
       <GraphStatusBanner

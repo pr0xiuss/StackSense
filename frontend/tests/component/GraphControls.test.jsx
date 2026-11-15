@@ -137,7 +137,7 @@ describe('GraphControls component tests', () => {
     const onClear = vi.fn();
     render(<GraphControls onFit={onFit} onClear={onClear} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Fit View' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fit all loaded nodes' }));
     expect(onFit).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));

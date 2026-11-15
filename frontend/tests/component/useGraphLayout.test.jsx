@@ -58,6 +58,7 @@ describe('useGraphLayout hook', () => {
         height: 80,
       });
       expect(result.current.isLayoutRunning).toBe(false);
+      expect(result.current.layoutRevision).toBe(1);
     } finally {
       globalThis.Worker = origWorker;
     }

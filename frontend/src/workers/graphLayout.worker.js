@@ -5,6 +5,7 @@
  * Uses bundled ELK without nested worker spawning.
  */
 import ELK from 'elkjs/lib/elk.bundled.js';
+import { compactGraphLayers } from './compactGraphLayout.js';
 
 const elk = new ELK();
 
@@ -60,25 +61,7 @@ self.addEventListener('message', async (event) => {
     const layoutResult = await elk.layout(elkGraph);
 
     // Extract positioned node coordinates
-    const positions = {};
-    if (Array.isArray(layoutResult.children)) {
-      for (const child of layoutResult.children) {
-        positions[child.id] = {
-          x: child.x || 0,
-          y: child.y || 0,
-          width: child.width || DEFAULT_NODE_WIDTH,
-          height: child.height || DEFAULT_NODE_HEIGHT,
-        };
-      }
-    }
-
-    // Extract edge routing points if calculated
-    const edgeRoutes = {};
-    if (Array.isArray(layoutResult.edges)) {
-      for (const edge of layoutResult.edges) {
-        edgeRoutes[edge.id] = edge.sections || [];
-      }
-    }
+    const positions = compactGraphLayers(layoutResult.children || []);
 
     self.postMessage({
       type: 'layout-success',
@@ -88,7 +71,8 @@ self.addEventListener('message', async (event) => {
       generationId,
       graphRevision,
       positions,
-      edgeRoutes,
+      // React Flow routes against compacted positions; old ELK sections no longer apply.
+      edgeRoutes: {},
     });
   } catch (err) {
     self.postMessage({

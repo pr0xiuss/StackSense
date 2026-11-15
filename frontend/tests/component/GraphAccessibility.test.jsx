@@ -242,7 +242,7 @@ describe('GraphAccessibility & Hardening Test Suite', () => {
 
       expect(screen.getByRole('button', { name: /execute/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /fit view/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /fit all loaded nodes/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
     });
   });

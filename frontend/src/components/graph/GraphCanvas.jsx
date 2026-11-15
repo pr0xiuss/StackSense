@@ -1,9 +1,10 @@
-import React, { useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
   Background,
   Controls,
+  MiniMap,
   Handle,
   Position,
   MarkerType,
@@ -19,7 +20,7 @@ import '../../styles/graph.css';
  */
 function ArchitectureNode({ data, selected }) {
   const node = data?.node || {};
-  const isConfirmed = node.fact_status === 'CONFIRMED';
+  const isConfirmed = ['confirmed', 'supported'].includes(node.fact_status?.toLowerCase());
   const onSelectNode = data?.onSelectNode;
 
   const handleKeyDown = (e) => {
@@ -111,28 +112,63 @@ function GraphCanvasInner({
   selectedNodeId,
   onSelectNode,
   fitViewTrigger,
+  focusRequest = null,
+  onFocusComplete,
   isLayoutRunning,
+  layoutReady = true,
   layoutError,
+  emptyTitle = 'No entities in this window',
+  emptyDescription = 'This bounded query has not loaded any entities. Return to the model or load an available graph window.',
 }) {
-  const { fitView } = useReactFlow();
+  const { fitView, setViewport, setCenter } = useReactFlow();
   const hasFittedInitialRef = useRef(false);
+  const consumedFocusRef = useRef(null);
+  const lastFitTriggerRef = useRef(fitViewTrigger);
+  const [canvasReady, setCanvasReady] = useState(false);
+  const handleInit = useCallback(() => setCanvasReady(true), []);
+  const containerRef = useRef(null);
+  const showReadableView = useCallback(() => {
+    const width = containerRef.current?.clientWidth || 800;
+    const boundsWidth = Math.max(...Object.values(positions).map((p) => p.x + p.width)) + 24;
+    const zoom = Math.max(0.55, Math.min(0.9, width / boundsWidth));
+    setViewport({ x: 12, y: 12, zoom });
+  }, [positions, setViewport]);
 
   // Fit view once when positions are first populated
   useEffect(() => {
     const hasPositions = Object.keys(positions).length > 0;
-    if (hasPositions && !hasFittedInitialRef.current) {
+    if (hasPositions && layoutReady && !isLayoutRunning && !hasFittedInitialRef.current) {
+      // Explicit navigation owns the initial camera; do not race it with the
+      // default top-of-graph viewport on a list -> map mount.
       hasFittedInitialRef.current = true;
-      requestAnimationFrame(() => {
-        fitView({ padding: 0.2, duration: 250 });
+      if (focusRequest) return;
+      const frame = requestAnimationFrame(() => {
+        // Open at the top at readable scale, not a microscopic fit of hundreds of nodes.
+        showReadableView();
       });
+      return () => cancelAnimationFrame(frame);
     }
-  }, [positions, fitView]);
+  }, [positions, isLayoutRunning, layoutReady, showReadableView, focusRequest]);
+
+  useEffect(() => {
+    if (!canvasReady || !layoutReady || isLayoutRunning || !focusRequest || focusRequest.pending) return;
+    const position = positions[focusRequest.nodeId];
+    if (!position || consumedFocusRef.current === focusRequest.sequence) return;
+    const frame = requestAnimationFrame(() => {
+      consumedFocusRef.current = focusRequest.sequence;
+      setCenter(position.x + (position.width || 220) / 2,
+        position.y + (position.height || 80) / 2, { zoom: 1, duration: 250 });
+      onFocusComplete?.(focusRequest.sequence);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [canvasReady, layoutReady, isLayoutRunning, focusRequest, positions, setCenter, onFocusComplete]);
 
   // Fit view on explicit user trigger from toolbar controls
   useEffect(() => {
-    if (fitViewTrigger > 0) {
+    if (fitViewTrigger > 0 && fitViewTrigger !== lastFitTriggerRef.current) {
       fitView({ padding: 0.2, duration: 250 });
     }
+    lastFitTriggerRef.current = fitViewTrigger;
   }, [fitViewTrigger, fitView]);
 
   // Convert normalized dictionary nodes to React Flow node format
@@ -154,23 +190,29 @@ function GraphCanvasInner({
 
   // Convert normalized dictionary edges to React Flow edge format
   const rfEdges = useMemo(() => {
+    const adjacentCount = Object.values(edges).filter((edge) =>
+      selectedNodeId === edge.source_entity_id || selectedNodeId === edge.target_entity_id).length;
     return Object.values(edges).map((e) => {
       const isContainment = e.canonical_kind === 'contains';
+      const connected = selectedNodeId === e.source_entity_id || selectedNodeId === e.target_entity_id;
       return {
         id: e.architecture_relationship_id,
         source: e.source_entity_id,
         target: e.target_entity_id,
-        label: e.canonical_kind,
+        // High-fanout selections must not paint hundreds of overlapping labels.
+        // Exact kinds remain available in the structured relationship table.
+        label: connected && adjacentCount <= 12 ? e.canonical_kind : undefined,
         animated: false,
         markerEnd: {
           type: MarkerType.ArrowClosed,
           width: 14,
           height: 14,
-          color: isContainment ? '#a855f7' : '#6366f1',
+          color: connected ? '#38bdf8' : isContainment ? '#a855f7' : '#6366f1',
         },
         style: {
-          stroke: isContainment ? '#a855f7' : '#6366f1',
-          strokeWidth: 1.5,
+          stroke: connected ? '#38bdf8' : isContainment ? '#a855f7' : '#6366f1',
+          strokeWidth: connected ? 2 : 1,
+          opacity: selectedNodeId && !connected ? 0.12 : connected ? 1 : 0.35,
           strokeDasharray: isContainment ? '4 3' : undefined,
         },
         labelStyle: {
@@ -184,7 +226,7 @@ function GraphCanvasInner({
         },
       };
     });
-  }, [edges]);
+  }, [edges, selectedNodeId]);
 
   const handleNodeClick = useCallback(
     (_, node) => {
@@ -226,17 +268,23 @@ function GraphCanvasInner({
           </svg>
         </div>
         <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem', color: '#f8fafc' }}>
-          No Elements In Active Window
+          {emptyTitle}
         </h3>
         <p style={{ fontSize: '0.85rem', color: '#94a3b8', lineHeight: 1.5, margin: 0, maxWidth: '420px' }}>
-          Projection is ready. Select an exploration mode or trigger a traversal above to populate graph nodes.
+          {emptyDescription}
         </p>
       </div>
     );
   }
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div ref={containerRef} className="graph-canvas-surface">
+      <div className="graph-canvas-navigation">
+        <span>Compact layers · Pan to explore · Select to trace connections</span>
+        <button type="button" className="graph-btn" onClick={showReadableView}>Readable view</button>
+        {selectedNodeId && positions[selectedNodeId] && <button type="button" className="graph-btn"
+          onClick={() => { const pos = positions[selectedNodeId]; setCenter(pos.x + 110, pos.y + 40, { zoom: 1, duration: 250 }); }}>Focus selected</button>}
+      </div>
       {isLayoutRunning && (
         <div
           style={{
@@ -280,6 +328,7 @@ function GraphCanvasInner({
       )}
 
       <ReactFlow
+        onInit={handleInit}
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
@@ -288,6 +337,8 @@ function GraphCanvasInner({
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={true}
+        autoPanOnNodeFocus={false}
+        deleteKeyCode={null}
         zoomOnScroll={true}
         panOnScroll={false}
         panOnDrag={true}
@@ -296,6 +347,7 @@ function GraphCanvasInner({
       >
         <Background color="#1e293b" gap={20} size={1} />
         <Controls showInteractive={false} />
+        <MiniMap pannable zoomable style={{ width: 150, height: 100 }} nodeColor="#6366f1" maskColor="rgba(7,13,25,.65)" ariaLabel="Graph navigation minimap" />
       </ReactFlow>
     </div>
   );

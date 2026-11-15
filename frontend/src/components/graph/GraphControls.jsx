@@ -34,6 +34,7 @@ export function GraphControls({
   onExecuteQuery = null,
   onClear = null,
   onFit = null,
+  disabled = false,
 }) {
   const [depth, setDepth] = useState(1);
   const [direction, setDirection] = useState('both');
@@ -42,7 +43,7 @@ export function GraphControls({
   const [sourceNodeId, setSourceNodeId] = useState('');
   const [targetNodeId, setTargetNodeId] = useState('');
 
-  const isInFlight = activeOperation?.inFlight || false;
+  const isInFlight = disabled || activeOperation?.inFlight || false;
   const hasCursor = Boolean(activeOperation?.cursor);
 
   // Relationship kinds available for the current mode
@@ -315,9 +316,9 @@ export function GraphControls({
             className="graph-btn graph-btn-ghost"
             onClick={onFit}
             title="Fit graph to view"
-            aria-label="Fit View"
+            aria-label="Fit all loaded nodes"
           >
-            Fit View
+            Fit all
           </button>
         )}
         {onClear && (

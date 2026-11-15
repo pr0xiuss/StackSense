@@ -75,7 +75,7 @@ describe('GraphInspector component', () => {
     expect(screen.getByText('svc-order')).toBeInTheDocument();
     expect(screen.getByText(entityId)).toBeInTheDocument();
     expect(screen.getByText('CONFIRMED')).toBeInTheDocument();
-    expect(screen.getByText('Attached Evidence (2):')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Attached Evidence \(2\)/ }));
     expect(screen.getByText('ev-01')).toBeInTheDocument();
     expect(screen.getByText('ev-02')).toBeInTheDocument();
   });
@@ -141,6 +141,24 @@ describe('GraphInspector component', () => {
     expect(screen.getByText('OrderService')).toBeInTheDocument();
     expect(screen.getByText('PaymentGateway')).toBeInTheDocument();
     expect(screen.getByText('rel-order-payment')).toBeInTheDocument();
+  });
+
+  it('keeps actions before bounded evidence and resets evidence on selection', () => {
+    const node = { ...mockSelectedNode, evidence_logical_ids: Array.from({ length: 220 }, (_, i) => `reference-${i}`) };
+    const { rerender } = render(<GraphInspector selectedNode={node} onExpandNeighborhood={vi.fn()} />);
+    expect(screen.queryByText('reference-0')).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: /Attached Evidence \(220\)/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    const action = screen.getByRole('button', { name: /Expand Neighborhood of/ });
+    expect(action.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(screen.getAllByText('Evidence reference')).toHaveLength(5);
+    expect(screen.queryByText('reference-5')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next evidence' }));
+    expect(screen.queryByText('reference-0')).not.toBeInTheDocument();
+    expect(screen.getByText('reference-5')).toBeInTheDocument();
+    rerender(<GraphInspector selectedNode={{ ...mockSelectedNode, architecture_entity_id: targetId }} />);
+    expect(screen.getByRole('button', { name: /Attached Evidence \(2\)/ })).toHaveAttribute('aria-expanded', 'false');
   });
 });
 

@@ -120,10 +120,10 @@ describe('ArchitectureExplorerPage & Explorer Routing', () => {
       expect(architectureService.getVersion).toHaveBeenCalledWith(versionId, { projectId });
     });
 
-    expect(await screen.findByText('Architecture Graph Explorer — v1', undefined, { timeout: 8000 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Architecture Explorer' }, { timeout: 8000 })).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Architecture Explorer Breadcrumb' })).toBeInTheDocument();
 
-    const backLink = screen.getByRole('link', { name: /back to exact model/i });
+    const backLink = screen.getByRole('link', { name: /^← Architecture Model$/i });
     expect(backLink).toHaveAttribute(
       'href',
       `#/projects/${projectId}/repositories/${repositoryId}/analyses/${analysisId}/architecture/${versionId}`
@@ -137,7 +137,13 @@ describe('ArchitectureExplorerPage & Explorer Routing', () => {
     const nodeCard = screen.getByText('AuthGatewayService').closest('.arch-graph-node');
     fireEvent.click(nodeCard);
     expect(screen.getByText('svc-auth-gw')).toBeInTheDocument();
-    expect(screen.getByText('Attached Evidence (1):')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Attached Evidence \(1\)/ })).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByRole('button', { name: /Structured List/ }));
+    expect(screen.queryByTestId('graph-inspector')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Fit all loaded nodes' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('graph-list-view')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View on map' }));
+    expect(screen.getByTestId('graph-inspector')).toBeInTheDocument();
 
     // Toggle structured list tab
     const listTabBtn = screen.getByRole('button', { name: /structured list/i });
@@ -145,6 +151,27 @@ describe('ArchitectureExplorerPage & Explorer Routing', () => {
     expect(listTabBtn).toHaveClass('active');
     expect(screen.getByTestId('graph-list-view')).toBeInTheDocument();
   }, 15000);
+
+  it('list Neighbors selects its anchor, executes the request and opens neighborhood mode even when nodes were already loaded', async () => {
+    vi.spyOn(architectureService, 'getVersion').mockResolvedValue(mockVersion);
+    vi.spyOn(projectService, 'getProject').mockResolvedValue({ id: projectId, name: 'Project' });
+    vi.spyOn(repositoryService, 'getRepository').mockResolvedValue({ id: repositoryId, name: 'Repository' });
+    vi.spyOn(graphService, 'getStatus').mockResolvedValue(mockStatus);
+    vi.spyOn(graphService, 'getWindow').mockResolvedValue(mockWindow);
+    vi.spyOn(graphService, 'getNodeDetail').mockResolvedValue(mockWindow.nodes[0]);
+    const neighbors = vi.spyOn(graphService, 'getNeighborhood').mockResolvedValue(mockWindow);
+    render(<ArchitectureExplorerPage projectId={projectId} repositoryId={repositoryId} analysisId={analysisId} versionId={versionId} />);
+    await screen.findByText('AuthGatewayService');
+    fireEvent.click(screen.getByRole('button', { name: /Structured List/ }));
+    const button = screen.getByRole('button', { name: 'Expand neighborhood of AuthGatewayService' });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(neighbors).toHaveBeenCalledWith(versionId, entityId, expect.objectContaining({ projectId, depth: 1, direction: 'both' })));
+    expect(screen.queryByTestId('graph-list-view')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Mode:')).toHaveValue('neighborhood');
+    expect(screen.getByTestId(`arch-node-${entityId}`)).toHaveClass('selected');
+    expect(neighbors).toHaveBeenCalledTimes(1);
+  });
 
   it('exercises complete live journey: initial window -> select -> expand -> continuation -> list -> rebuild -> generation reload', async () => {
     const node1 = {
@@ -309,10 +336,13 @@ describe('ArchitectureExplorerPage & Explorer Routing', () => {
       />
     );
 
-    // Error alert banner is rendered
+    // A failed projection is not presented as ready, and query controls stay disabled.
     expect(await screen.findByRole('alert', undefined, { timeout: 8000 })).toBeInTheDocument();
     expect(screen.getByText(/Graph service is temporarily unavailable. Loaded data is preserved./i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Projection is ready/i)).not.toBeInTheDocument();
+    expect(screen.getByText('Graph unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /mode/i })).toBeDisabled();
   }, 15000);
 
   it('rejects version chain mismatch in Explorer page', async () => {

@@ -13,6 +13,7 @@ import {
 
 export function GraphStatusBanner({
   status,
+  discoveryPending = false,
   isOutOfDate = false,
   generationChangeMessage = null,
   isCapReached = false,
@@ -30,6 +31,10 @@ export function GraphStatusBanner({
 
   return (
     <div className="graph-status-container" role="region" aria-label="Graph projection status">
+      {discoveryPending && <div className="graph-banner graph-banner-pending" role="status" aria-live="polite">
+        <span className="graph-spinner" aria-hidden="true" />
+        <span>Architecture published. Waiting for the graph scheduler; this page checks automatically. Analysis does not need to be rerun.</span>
+      </div>}
       {/* 1. Critical Errors */}
       {error && (
         <div className="graph-banner graph-banner-error" role="alert">
@@ -131,7 +136,7 @@ export function GraphStatusBanner({
               type="button"
               className="graph-btn graph-btn-secondary"
               onClick={onRebuild}
-              disabled={isRebuilding || (activeAttempt && activeAttempt.status === PROJECTION_ATTEMPT_STATUS.RUNNING)}
+              disabled={isRebuilding || (activeAttempt && ['QUEUED', 'RUNNING', 'RETRYING'].includes(activeAttempt.status))}
               title="Request a durable re-projection in Neo4j"
             >
               {isRebuilding ? 'Rebuilding...' : 'Rebuild Graph'}
