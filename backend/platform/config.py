@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     storage_root: str = "data/storage"
 
+    # P5 delivery: no unmeasured operational defaults or automatic activation.
+    delivery_dispatch_enabled: bool = False
+    delivery_operational_approval: bool = False
+    delivery_runtime_json: str | None = None
+    delivery_policy_json: str | None = None
+    delivery_fleet_json: str | None = None
+    delivery_manual_retry_json: str | None = None
+
     # Repository source acquisition
     allowed_source_roots: list[str] = [
         "data/staged",

@@ -24,6 +24,7 @@ from backend.platform.analysis.infra.lifecycle_model import (
     AnalysisModel,
     AnalysisStageModel,
 )
+from backend.platform.delivery.persistence import DELIVERY_TABLES
 from backend.platform.dependency_injection import get_database_settings
 from backend.platform.graph.persistence import (
     GraphProjectionAttemptModel,
@@ -71,6 +72,7 @@ _ = (
 )
 
 target_metadata = Base.metadata
+_delivery_tables = DELIVERY_TABLES  # Additive P5 metadata registration only.
 
 
 def get_database_url() -> str:
