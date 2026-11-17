@@ -8,6 +8,7 @@ from backend.api.v1.auth import router as auth_router
 from backend.api.v1.delivery import router as delivery_router
 from backend.api.v1.graph import router as graph_router
 from backend.api.v1.ingestions import router as ingestions_router
+from backend.api.v1.knowledge import router as knowledge_router
 from backend.api.v1.project_access import router as project_access_router
 from backend.api.v1.projects import router as projects_router
 from backend.api.v1.repositories import router as repositories_router
@@ -29,3 +30,4 @@ router.include_router(analyses_router)
 router.include_router(architecture_router)
 router.include_router(graph_router)
 router.include_router(delivery_router)
+router.include_router(knowledge_router)
