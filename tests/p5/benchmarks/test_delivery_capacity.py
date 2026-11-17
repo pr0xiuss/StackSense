@@ -2,8 +2,13 @@
 
 import json
 import platform
-import resource
 from time import perf_counter
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
+
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -23,10 +28,13 @@ from tests.p5.integration.test_delivery_postgres import policy
 
 def current_rss_mib():
     # Current per-process RSS, not a threshold against pytest lifetime peak.
-    with open("/proc/self/status") as status:
-        for line in status:
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) / 1024
+    try:
+        with open("/proc/self/status") as status:
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
     return None
 
 
@@ -66,10 +74,11 @@ def test_bounded_backfill_dispatch_measurements(delivery_engine):
                 "dispatch_seconds": round(dispatch_seconds, 6),
                 "current_rss_before_mib": before,
                 "current_rss_after_mib": current_rss_mib(),
-                "parent_lifetime_peak_mib_informational_only": resource.getrusage(
-                    resource.RUSAGE_SELF
-                ).ru_maxrss
-                / 1024,
+                "parent_lifetime_peak_mib_informational_only": (
+                    resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+                    if resource is not None
+                    else None
+                ),
             }
         )
     )

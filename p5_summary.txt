@@ -1,0 +1,44 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\shrey\Downloads\stackSense\StackSense
+configfile: pytest.ini
+plugins: anyio-4.15.1
+collected 322 items
+
+tests\p5\benchmarks\test_delivery_capacity.py s                          [  0%]
+tests\p5\benchmarks\test_knowledge_capacity.py ..                        [  0%]
+tests\p5\delivery\test_api.py .....................                      [  7%]
+tests\p5\delivery\test_barrier.py ssssssssssssssssssssssss               [ 14%]
+tests\p5\delivery\test_c0_consumers.py .................                 [ 20%]
+tests\p5\delivery\test_cancellation.py s                                 [ 20%]
+tests\p5\delivery\test_contracts.py .................................... [ 31%]
+..                                                                       [ 32%]
+tests\p5\delivery\test_dispatch.py ss                                    [ 32%]
+tests\p5\delivery\test_execution_control.py ........                     [ 35%]
+tests\p5\delivery\test_fencing.py s                                      [ 35%]
+tests\p5\delivery\test_model.py ........................................ [ 48%]
+..                                                                       [ 48%]
+tests\p5\delivery\test_publication.py s                                  [ 49%]
+tests\p5\delivery\test_recovery.py ss                                    [ 49%]
+tests\p5\delivery\test_registry.py .........                             [ 52%]
+tests\p5\delivery\test_rollout.py ssss                                   [ 53%]
+tests\p5\delivery\test_source.py .............................           [ 62%]
+tests\p5\integration\test_c0_publication.py sssssssssssss                [ 66%]
+tests\p5\integration\test_delivery_acceptance.py ss                      [ 67%]
+tests\p5\integration\test_delivery_postgres.py ssssssssssssssssssssssss  [ 74%]
+tests\p5\integration\test_delivery_rabbitmq.py sss                       [ 75%]
+tests\p5\knowledge\test_api.py ............                              [ 79%]
+tests\p5\knowledge\test_cleanup.py ....                                  [ 80%]
+tests\p5\knowledge\test_contracts.py .......                             [ 82%]
+tests\p5\knowledge\test_elasticsearch.py ...                             [ 83%]
+tests\p5\knowledge\test_model.py ..............                          [ 88%]
+tests\p5\knowledge\test_persistence.py ....                              [ 89%]
+tests\p5\knowledge\test_projection.py ............                       [ 93%]
+tests\p5\knowledge\test_publication.py ..                                [ 93%]
+tests\p5\knowledge\test_reader.py .....                                  [ 95%]
+tests\p5\knowledge\test_repository.py ...                                [ 96%]
+tests\p5\knowledge\test_service.py .....                                 [ 97%]
+tests\p5\knowledge\test_status.py ....                                   [ 99%]
+tests\p5\knowledge\test_verification.py ...                              [100%]
+
+======================= 244 passed, 78 skipped in 1.45s =======================
