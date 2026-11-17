@@ -10,7 +10,11 @@ celery_app = Celery(
     "stacksense",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["backend.worker.tasks", "backend.worker.graph_tasks"],
+    include=[
+        "backend.worker.tasks",
+        "backend.worker.graph_tasks",
+        "backend.worker.delivery_tasks",
+    ],
 )
 
 beat_schedule = {
@@ -38,6 +42,27 @@ if settings.graph_projection_dispatch_enabled:
         "options": {"queue": settings.graph_queue_name},
     }
 
+if settings.delivery_dispatch_enabled:
+    if (
+        not settings.delivery_operational_approval
+        or not settings.delivery_runtime_json
+        or not settings.delivery_policy_json
+        or not settings.delivery_fleet_json
+    ):
+        raise ValueError(
+            "P5 delivery requires explicit operational approval/configuration"
+        )
+    from backend.platform.delivery.service import RuntimeBudgets
+
+    delivery_budgets = RuntimeBudgets.model_validate_json(
+        settings.delivery_runtime_json
+    )
+    beat_schedule["reconcile-delivery"] = {
+        "task": "stacksense.reconcile_delivery",
+        "schedule": delivery_budgets.reconcile_seconds,
+        "options": {"queue": settings.analysis_queue_name},
+    }
+
 celery_app.conf.update(
     task_default_queue=settings.analysis_queue_name,
     task_serializer="json",
@@ -51,6 +76,11 @@ celery_app.conf.update(
     worker_concurrency=settings.analysis_worker_concurrency,
     worker_max_tasks_per_child=settings.analysis_worker_max_tasks_per_child,
     task_routes={
+        "stacksense.execute_delivery_work": {"queue": settings.analysis_queue_name},
+        "stacksense.reconcile_delivery": {"queue": settings.analysis_queue_name},
+        "stacksense.delivery_runtime_heartbeat": {
+            "queue": settings.analysis_queue_name
+        },
         "stacksense.execute_analysis": {"queue": settings.analysis_queue_name},
         "stacksense.recover_analysis_jobs": {"queue": settings.analysis_queue_name},
         "stacksense.reconcile_graph_projections": {
