@@ -180,6 +180,11 @@ def test_configuration_failure_closes_clients_and_has_safe_error(monkeypatch, fa
         "import_module",
         lambda _: SimpleNamespace(Elasticsearch=Client),
     )
+    monkeypatch.setattr(
+        configuration.importlib.metadata,
+        "version",
+        lambda _: _deployment_configuration()["client_version"],
+    )
     configuration.configured_backend.cache_clear()
     with pytest.raises(SearchBackendUnavailableError) as error:
         configuration.configured_backend(json.dumps(_deployment_configuration()))
