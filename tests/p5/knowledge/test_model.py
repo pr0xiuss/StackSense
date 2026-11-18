@@ -294,7 +294,7 @@ def test_knowledge_projection_sorting_and_digest():
         architecture_summaries=1,
         total_records=3,
     )
-    source_digest = "e" * 64
+    source_digest = scope.canonical_digest
     proj_digest = compute_projection_digest(
         c1_version=C1_CONTRACT_VERSION,
         scope=scope,

@@ -10,19 +10,25 @@ import base64
 import hashlib
 import hmac
 import json
+import math
+import sys
 from datetime import UTC, datetime
 from time import monotonic
+from typing import Any
 from uuid import UUID
 
-from backend.platform.delivery.contracts import ArtifactReference, VersionScope
+from sqlalchemy.exc import SQLAlchemyError
+
+from backend.platform.delivery.contracts import ArtifactReference
 from backend.platform.knowledge.contracts import (
     MAX_SEARCH_CURSOR_LENGTH,
-    SearchCapabilities,
+    SearchBackendUnavailableError,
     SearchCursorExpiredError,
     SearchCursorInvalidError,
     SearchDeadlineExceededError,
     SearchGenerationChangedError,
     SearchHit,
+    SearchIntegrityError,
     SearchNotReadyError,
     SearchPage,
     SearchRequest,
@@ -33,6 +39,9 @@ from backend.platform.knowledge.model import (
     KnowledgeDocumentKind,
     SourceReferenceDescriptor,
     canonical_json,
+    compute_knowledge_key,
+    compute_storage_key,
+    stored_record_digest,
 )
 from backend.platform.knowledge.repository import SqlAlchemySearchRepository
 
@@ -42,10 +51,10 @@ def encode_cursor(
     generation_id: UUID,
     project_id: UUID,
     architecture_version_id: UUID,
-    offset: int,
     query_hash: str,
     secret: str,
-    ttl_seconds: float = 900.0,
+    ttl_seconds: float,
+    state: dict[str, object],
 ) -> str:
     """Encode pagination state into a signed, URL-safe base64 cursor."""
     now = datetime.now(UTC).timestamp()
@@ -55,9 +64,9 @@ def encode_cursor(
         "gen": str(generation_id),
         "proj": str(project_id),
         "arch": str(architecture_version_id),
-        "off": offset,
         "qh": query_hash,
         "exp": expires_at,
+        "state": state,
     }
     raw_json = canonical_json(fields)
     signature = hmac.new(
@@ -81,18 +90,27 @@ def decode_cursor(
     expected_architecture_version_id: UUID,
     expected_query_hash: str,
     secret: str,
-) -> int:
-    """Decode and validate a signed pagination cursor, returning target offset."""
+) -> dict[str, Any]:
+    """Decode an exact signed PIT/search-after envelope, never an offset."""
     if len(cursor) > MAX_SEARCH_CURSOR_LENGTH:
         raise SearchCursorInvalidError(
             "Pagination cursor exceeds maximum permitted length"
         )
 
     try:
-        raw_bytes = base64.urlsafe_b64decode(cursor.encode("ascii"))
+        raw_bytes = base64.b64decode(
+            cursor.encode("ascii"), altchars=b"-_", validate=True
+        )
         envelope = json.loads(raw_bytes.decode("utf-8"))
-        fields = envelope["f"]
+        fields: dict[str, Any] = envelope["f"]
         signature = envelope["sig"]
+        if (
+            set(envelope) != {"f", "sig"}
+            or not isinstance(fields, dict)
+            or set(fields) != {"v", "gen", "proj", "arch", "qh", "exp", "state"}
+            or fields.get("v") != C1_CONTRACT_VERSION
+        ):
+            raise ValueError("Unsupported cursor shape/version")
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise SearchCursorInvalidError("Pagination cursor is malformed") from exc
 
@@ -100,13 +118,22 @@ def decode_cursor(
     expected_sig = hmac.new(
         secret.encode("utf-8"), raw_json.encode("utf-8"), hashlib.sha256
     ).hexdigest()
-    if not hmac.compare_digest(signature, expected_sig):
+    if not isinstance(signature, str) or not hmac.compare_digest(
+        signature, expected_sig
+    ):
         raise SearchCursorInvalidError(
             "Pagination cursor signature verification failed"
         )
 
+    expiry = fields.get("exp")
+    if (
+        not isinstance(expiry, (int, float))
+        or isinstance(expiry, bool)
+        or not math.isfinite(expiry)
+    ):
+        raise SearchCursorInvalidError("Invalid cursor expiry")
     now = datetime.now(UTC).timestamp()
-    if now > fields.get("exp", 0):
+    if now > expiry:
         raise SearchCursorExpiredError("Pagination cursor has expired")
 
     if fields.get("gen") != str(expected_generation_id):
@@ -122,37 +149,7 @@ def decode_cursor(
     if fields.get("qh") != expected_query_hash:
         raise SearchCursorInvalidError("Pagination cursor query parameter mismatch")
 
-    try:
-        offset = int(fields["off"])
-        if offset < 0:
-            raise ValueError
-        return offset
-    except (ValueError, KeyError) as exc:
-        raise SearchCursorInvalidError("Invalid pagination offset in cursor") from exc
-
-
-def _make_scope_fallback(
-    project_id: UUID,
-    architecture_version_id: UUID,
-    repository_id: UUID | None = None,
-    snapshot_id: UUID | None = None,
-    analysis_id: UUID | None = None,
-) -> VersionScope:
-    return VersionScope(
-        project_id=project_id,
-        architecture_version_id=architecture_version_id,
-        repository_id=repository_id or project_id,
-        snapshot_id=snapshot_id or architecture_version_id,
-        analysis_id=analysis_id or architecture_version_id,
-        sequence_number=1,
-        published_at=datetime.now(UTC),
-        canonical_digest="0" * 64,
-        source_contract_version="1.0.0",
-        analyzer_version="1.0.0",
-        ir_schema_version="1.0.0",
-        architecture_schema_version="1.0.0",
-        configuration_fingerprint="0" * 64,
-    )
+    return fields
 
 
 class SearchReader:
@@ -163,187 +160,269 @@ class SearchReader:
         *,
         backend: SearchIndexBackend,
         repository: SqlAlchemySearchRepository,
-        cursor_secret: str = "stacksense-search-cursor-default-secret",
+        cursor_secret: str,
+        cursor_ttl_seconds: float,
     ) -> None:
         self._backend = backend
         self._repo = repository
         self._cursor_secret = cursor_secret
+        if len(cursor_secret.encode()) < 32:
+            raise ValueError("search cursor secret must have at least 32 bytes")
+        self._cursor_ttl = cursor_ttl_seconds
+        if not math.isfinite(cursor_ttl_seconds) or cursor_ttl_seconds <= 0:
+            raise ValueError("explicit positive cursor lifetime required")
 
-    def search(self, request: SearchRequest) -> SearchPage:
-        """Execute scoped lexical search.
+    def search(
+        self, request: SearchRequest, *, actor_id: UUID | None = None
+    ) -> SearchPage:
+        """Only committed exact references and signed PIT/search-after sessions."""
+        from backend.platform.delivery.contracts import DeliveryContractError
+        from backend.platform.knowledge.repository import SearchPublicationPort
 
-        Enforces exact-ID priority and safe cursor pagination.
-        """
-        start_time = monotonic()
-        deadline = start_time + request.timeout_seconds
-
-        if monotonic() > deadline:
-            raise SearchDeadlineExceededError("Search operation deadline exceeded")
-
-        # 1. Resolve active generation
-        resource = self._repo.get_resource(
-            request.project_id, request.architecture_version_id
-        )
-        if (
-            resource is None
-            or resource.status != "READY"
-            or resource.active_generation_id is None
-        ):
-            raise SearchNotReadyError("Search projection is not ready for queries")
-
-        gen = self._repo.get_generation(resource.active_generation_id)
-        if gen is None or gen.state != "ACTIVE":
-            raise SearchNotReadyError("Active search generation is not in ACTIVE state")
-
-        # 2. Acquire reader pin protecting generation from concurrent cleanup
-        pin_ttl = max(request.timeout_seconds * 3, 60.0)
-        pin = self._repo.acquire_read_pin(
-            generation_id=gen.generation_id,
-            ttl_seconds=pin_ttl,
-        )
-
+        request = SearchRequest.model_validate(request)
+        deadline = monotonic() + request.timeout_seconds
+        pit_id: str | None = None
+        pin_id: UUID | None = None
+        keep_open = False
         try:
-            if monotonic() > deadline:
-                raise SearchDeadlineExceededError("Search operation deadline exceeded")
-
-            # 3. Compute deterministic query hash for cursor tampering protection
-            query_hash_payload = {
-                "q": request.q.strip().lower(),
-                "doc_kinds": (
-                    [k.value for k in request.document_kinds]
-                    if request.document_kinds
-                    else None
-                ),
-                "ent_kinds": (
-                    list(request.entity_kinds) if request.entity_kinds else None
-                ),
-                "statuses": list(request.statuses) if request.statuses else None,
-            }
-            query_hash = hashlib.sha256(
-                canonical_json(query_hash_payload).encode("utf-8")
-            ).hexdigest()
-
-            # 4. Decode cursor offset if resuming a paginated query
-            offset = 0
-            if request.cursor:
-                offset = decode_cursor(
-                    request.cursor,
-                    expected_generation_id=gen.generation_id,
-                    expected_project_id=request.project_id,
-                    expected_architecture_version_id=request.architecture_version_id,
-                    expected_query_hash=query_hash,
-                    secret=self._cursor_secret,
+            with self._backend.operation(deadline):
+                self._repo.read_deadline(deadline)
+                resource = self._repo.get_resource(
+                    request.project_id, request.architecture_version_id
                 )
-
-            # 5. Final pointer check ensuring active generation has not changed
-            active_gen_check = self._repo.get_active_generation(
-                project_id=request.project_id,
-                architecture_version_id=request.architecture_version_id,
-            )
-            if (
-                active_gen_check is None
-                or active_gen_check.generation_id != gen.generation_id
-            ):
-                raise SearchGenerationChangedError(
-                    "Active search generation changed during query execution"
+                if resource is None or resource.active_generation_id is None:
+                    raise SearchNotReadyError()
+                gen = self._repo.get_generation(resource.active_generation_id)
+                receipt = self._repo.get_publication_receipt(
+                    resource.active_generation_id
                 )
-
-            # 6. Execute backend search
-            doc_kinds = (
-                tuple(k.value for k in request.document_kinds)
-                if request.document_kinds
-                else None
-            )
-            raw_matches = self._backend.search_records(
-                gen.index_name,
-                query=request.q,
-                document_kinds=doc_kinds,
-                entity_kinds=request.entity_kinds,
-                statuses=request.statuses,
-            )
-
-            total_hits = len(raw_matches)
-            page_slice = raw_matches[offset : offset + request.limit]
-            has_more = (offset + len(page_slice)) < total_hits
-
-            # 7. Generate next cursor if additional pages exist
-            next_cursor = None
-            if has_more:
-                next_cursor = encode_cursor(
-                    generation_id=gen.generation_id,
-                    project_id=request.project_id,
-                    architecture_version_id=request.architecture_version_id,
-                    offset=offset + len(page_slice),
-                    query_hash=query_hash,
-                    secret=self._cursor_secret,
-                )
-
-            # 8. Resolve authoritative VersionScope from publication receipt or fallback
-            receipt = self._repo.get_publication_receipt(gen.generation_id)
-            if receipt is not None:
+                if gen is None or receipt is None:
+                    raise SearchIntegrityError("Accepted search reference is missing")
                 ref = ArtifactReference.model_validate_json(
                     json.dumps(receipt.artifact_reference)
                 )
-                scope = ref.scope
-            else:
-                rep_id = (
-                    UUID(raw_matches[0]["repository_id"])
-                    if raw_matches
-                    else gen.project_id
+                if (
+                    ref.scope.project_id != request.project_id
+                    or ref.scope.architecture_version_id
+                    != request.architecture_version_id
+                ):
+                    raise SearchIntegrityError("Search reference scope mismatch")
+                manifest = SearchPublicationPort(self._repo._session).require_accepted(
+                    ref
                 )
-                snap_id = (
-                    UUID(raw_matches[0]["snapshot_id"])
-                    if raw_matches
-                    else gen.attempt_id
+                physical = self._backend.inspect_index(manifest.index_name)
+                if (
+                    physical["uuid"] != manifest.index_uuid
+                    or physical["sealed"] is not True
+                ):
+                    raise SearchIntegrityError("Search physical identity/seal mismatch")
+                query_hash = hashlib.sha256(
+                    canonical_json(
+                        {
+                            "q": request.q,
+                            "mode": request.mode,
+                            "kinds": request.document_kinds,
+                            "entity_kinds": request.entity_kinds,
+                            "statuses": request.statuses,
+                            "limit": request.limit,
+                            "actor": str(actor_id) if actor_id else None,
+                            "index": manifest.index_uuid,
+                            "profile": ref.binding.model_dump(mode="json"),
+                        }
+                    ).encode()
+                ).hexdigest()
+                after = None
+                expiry = datetime.now(UTC).timestamp() + self._cursor_ttl
+                if request.cursor:
+                    fields = decode_cursor(
+                        request.cursor,
+                        expected_generation_id=gen.generation_id,
+                        expected_project_id=request.project_id,
+                        expected_architecture_version_id=request.architecture_version_id,
+                        expected_query_hash=query_hash,
+                        secret=self._cursor_secret,
+                    )
+                    state = fields.get("state")
+                    if not isinstance(state, dict) or not isinstance(
+                        state.get("pit"), str
+                    ):
+                        raise SearchCursorInvalidError()
+                    pit_id = state["pit"]
+                    after = state.get("after")
+                    if not isinstance(after, list) or not after:
+                        raise SearchCursorInvalidError()
+                    expiry = fields["exp"]
+                    try:
+                        pin_id = UUID(state["pin"])
+                    except (ValueError, TypeError, KeyError) as exc:
+                        raise SearchCursorInvalidError() from exc
+                    pin = self._repo.require_read_pin(pin_id, gen.generation_id, pit_id)
+                else:
+                    pit_id = self._backend.open_pit(
+                        manifest.index_name, self._cursor_ttl
+                    )
+                    pin_id = self._repo.acquire_read_pin(
+                        generation_id=gen.generation_id,
+                        pit_id=pit_id,
+                        ttl_seconds=self._cursor_ttl,
+                    ).pin_id
+                    pin = self._repo.require_read_pin(pin_id, gen.generation_id, pit_id)
+                rows, total, pit_id = self._backend.search_page(
+                    manifest.index_name,
+                    pit_id=pit_id,
+                    scope=ref.scope,
+                    generation_id=str(gen.generation_id),
+                    index_uuid=manifest.index_uuid,
+                    query=request.q,
+                    document_kinds=(
+                        tuple(k.value for k in request.document_kinds)
+                        if request.document_kinds
+                        else None
+                    ),
+                    entity_kinds=request.entity_kinds,
+                    statuses=request.statuses,
+                    size=request.limit + 1,
+                    after=after,
                 )
-                an_id = (
-                    UUID(raw_matches[0]["analysis_id"])
-                    if raw_matches
-                    else gen.attempt_id
-                )
-                scope = _make_scope_fallback(
+                pin.pit_id = pit_id  # Elasticsearch may rotate PIT handles.
+                self._repo._session.flush()
+                hits = []
+                for rec in rows[: request.limit]:
+                    if (
+                        stored_record_digest(rec, ref.scope)
+                        != rec.get("record_semantic_digest")
+                        or rec.get("storage_key")
+                        != compute_storage_key(
+                            c1_version=C1_CONTRACT_VERSION,
+                            knowledge_key=rec["knowledge_key"],
+                            generation_id=gen.generation_id,
+                        )
+                        or rec.get("knowledge_key")
+                        != compute_knowledge_key(
+                            c1_version=C1_CONTRACT_VERSION,
+                            project_id=ref.scope.project_id,
+                            architecture_version_id=ref.scope.architecture_version_id,
+                            document_kind=KnowledgeDocumentKind(rec["document_kind"]),
+                            canonical_reference=rec["canonical_reference"],
+                        )
+                    ):
+                        raise SearchIntegrityError("Search record integrity mismatch")
+                    if any(
+                        rec.get(key) != value
+                        for key, value in {
+                            "project_id": str(ref.scope.project_id),
+                            "architecture_version_id": str(
+                                ref.scope.architecture_version_id
+                            ),
+                            "generation_id": str(gen.generation_id),
+                            "index_uuid": manifest.index_uuid,
+                            "repository_id": str(ref.scope.repository_id),
+                            "analysis_id": str(ref.scope.analysis_id),
+                            "snapshot_id": str(ref.scope.snapshot_id),
+                        }.items()
+                    ):
+                        raise SearchIntegrityError(
+                            "Returned search record scope mismatch"
+                        )
+                    hits.append(
+                        SearchHit(
+                            knowledge_key=rec["knowledge_key"],
+                            document_kind=KnowledgeDocumentKind(rec["document_kind"]),
+                            canonical_reference=rec["canonical_reference"],
+                            title=rec["title"],
+                            kind=rec.get("kind"),
+                            status=rec.get("status"),
+                            source_logical_id=rec.get("source_logical_id"),
+                            target_logical_id=rec.get("target_logical_id"),
+                            evidence_ids=tuple(rec.get("evidence_ids") or ()),
+                            source_reference=(
+                                SourceReferenceDescriptor.model_validate_json(
+                                    json.dumps(rec["source_reference"])
+                                )
+                                if rec.get("source_reference")
+                                else None
+                            ),
+                            rank_tier=rec["_rank_tier"],
+                            score=rec["_score"],
+                            scope=ref.scope,
+                        )
+                    )
+                if monotonic() >= deadline:
+                    raise SearchDeadlineExceededError()
+                if self._backend.inspect_index(manifest.index_name) != physical:
+                    raise SearchIntegrityError(
+                        "Search physical identity changed during read"
+                    )
+                self._repo.read_deadline(deadline)
+                current = self._repo.get_active_generation(
                     project_id=request.project_id,
                     architecture_version_id=request.architecture_version_id,
-                    repository_id=rep_id,
-                    snapshot_id=snap_id,
-                    analysis_id=an_id,
                 )
-
-            # 9. Assemble typed SearchHit instances
-            hits: list[SearchHit] = []
-            for rec in page_slice:
-                src_ref = None
-                if rec.get("source_reference"):
-                    src_ref = SourceReferenceDescriptor.model_validate(
-                        rec["source_reference"]
+                if (
+                    gen is None
+                    or current is None
+                    or current.generation_id != gen.generation_id
+                ):
+                    raise SearchGenerationChangedError()
+                has_more = len(rows) > request.limit
+                next_cursor = None
+                if has_more:
+                    next_cursor = encode_cursor(
+                        generation_id=gen.generation_id,
+                        project_id=request.project_id,
+                        architecture_version_id=request.architecture_version_id,
+                        query_hash=query_hash,
+                        secret=self._cursor_secret,
+                        ttl_seconds=expiry - datetime.now(UTC).timestamp(),
+                        state={
+                            "pit": pit_id,
+                            "after": rows[request.limit - 1]["_sort"],
+                            "pin": str(pin_id),
+                        },
                     )
-
-                hit = SearchHit(
-                    knowledge_key=rec["knowledge_key"],
-                    document_kind=KnowledgeDocumentKind(rec["document_kind"]),
-                    canonical_reference=rec["canonical_reference"],
-                    title=rec["title"],
-                    kind=rec.get("kind"),
-                    status=rec.get("status"),
-                    source_logical_id=rec.get("source_logical_id"),
-                    target_logical_id=rec.get("target_logical_id"),
-                    evidence_ids=tuple(rec.get("evidence_ids") or ()),
-                    source_reference=src_ref,
-                    rank_tier=rec["_rank_tier"],
-                    score=rec["_score"],
-                    scope=scope,
+                page = SearchPage(
+                    scope=ref.scope,
+                    generation_id=gen.generation_id,
+                    index_uuid=manifest.index_uuid,
+                    items=tuple(hits),
+                    total_hits=total,
+                    has_more=has_more,
+                    next_cursor=next_cursor,
                 )
-                hits.append(hit)
-
-            return SearchPage(
-                c1_version="1.0.0",
-                scope=scope,
-                generation_id=gen.generation_id,
-                items=tuple(hits),
-                total_hits=total_hits,
-                has_more=has_more,
-                next_cursor=next_cursor,
-                capabilities=SearchCapabilities(),
-            )
+            keep_open = has_more
+            return page
+        except DeliveryContractError as exc:
+            raise SearchIntegrityError(
+                "Search accepted metadata integrity failure"
+            ) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SearchIntegrityError("Malformed accepted search data") from exc
+        except SQLAlchemyError as exc:
+            if getattr(getattr(exc, "orig", None), "sqlstate", None) in {
+                "57014",
+                "55P03",
+            }:
+                raise SearchDeadlineExceededError() from exc
+            raise SearchBackendUnavailableError("Search metadata unavailable") from exc
         finally:
-            self._repo.release_read_pin(pin.pin_id)
+            succeeded = sys.exc_info()[0] is None
+            if not keep_open:
+                if pit_id is not None:
+                    self._backend.close_pit(pit_id)
+                if pin_id is not None:
+                    self._repo.release_read_pin(pin_id)
+            if succeeded:
+                # Includes result mapping and PIT/pin cleanup, not just HTTP.
+                self._repo.read_deadline(deadline)
+                current = self._repo.get_active_generation(
+                    project_id=request.project_id,
+                    architecture_version_id=request.architecture_version_id,
+                )
+                if (
+                    gen is None
+                    or current is None
+                    or current.generation_id != gen.generation_id
+                ):
+                    raise SearchGenerationChangedError()
+                if monotonic() >= deadline:
+                    raise SearchDeadlineExceededError()

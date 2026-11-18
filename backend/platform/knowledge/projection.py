@@ -163,6 +163,12 @@ class KnowledgeProjector:
             SearchCapacityExceededError: if document exceeds approved capacity caps.
         """
         self._validate_scope(document=document, scope=scope)
+        if (
+            document.analyzer_version != scope.analyzer_version
+            or document.ir_schema_version != scope.ir_schema_version
+            or document.architecture_schema_version != scope.architecture_schema_version
+        ):
+            raise SearchIntegrityError("Published source version mismatch")
         self._validate_capacity(
             document=document, canonical_source_bytes=canonical_source_bytes
         )

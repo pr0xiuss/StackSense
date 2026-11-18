@@ -47,7 +47,7 @@ def pub_env(sample_doc_and_scope):
         repository=repo,
         document_loader=lambda s: doc,
     )
-    port = SearchPublicationPort(session)
+    port = SearchPublicationPort(session, backend=backend)
 
     binding = HandlerProfile(
         slot=WorkSlot(kind=WorkKind.SEARCH),

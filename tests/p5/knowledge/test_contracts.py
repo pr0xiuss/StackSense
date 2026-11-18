@@ -209,6 +209,22 @@ def test_search_hit_validation():
         )
 
 
+@pytest.mark.parametrize(
+    "query", ["x" * MAX_SEARCH_QUERY_LENGTH, "界" * MAX_SEARCH_QUERY_LENGTH]
+)
+def test_query_ceiling_counts_characters_not_utf8_bytes(query):
+    request = SearchRequest(
+        project_id=uuid4(), architecture_version_id=uuid4(), q=query
+    )
+    assert len(request.q) == MAX_SEARCH_QUERY_LENGTH
+    with pytest.raises(ValidationError):
+        SearchRequest(
+            project_id=request.project_id,
+            architecture_version_id=request.architecture_version_id,
+            q=query + "x",
+        )
+
+
 def test_search_page_validation():
     scope = make_test_scope()
     gen_id = uuid4()
@@ -224,6 +240,7 @@ def test_search_page_validation():
         c1_version=C1_CONTRACT_VERSION,
         scope=scope,
         generation_id=gen_id,
+        index_uuid="fixture-index-uuid",
         items=(hit,),
         total_hits=1,
         has_more=False,
@@ -240,6 +257,7 @@ def test_search_page_validation():
             c1_version=C1_CONTRACT_VERSION,
             scope=scope,
             generation_id=gen_id,
+            index_uuid="fixture-index-uuid",
             items=(),
             total_hits=-1,
             has_more=False,

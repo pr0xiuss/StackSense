@@ -68,6 +68,7 @@ class SearchGenerationModel(Base):
     architecture_version_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     candidate_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     attempt_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    attempt_identity: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     artifact_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     index_name: Mapped[str] = mapped_column(String(255), nullable=False)
     index_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -92,7 +93,7 @@ class SearchGenerationModel(Base):
         UniqueConstraint("candidate_id", name="uq_search_generation_candidate"),
         CheckConstraint(
             "state IN ('PREPARING', 'SEALED', 'ACTIVE', 'HISTORICAL', "
-            "'FAILED', 'CLEANUP_MARKED')",
+            "'FAILED', 'CLEANUP_MARKED', 'DELETED')",
             name="ck_search_generation_state",
         ),
         Index("ix_search_generation_scope", "project_id", "architecture_version_id"),

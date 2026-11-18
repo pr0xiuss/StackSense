@@ -3,3 +3,5 @@ name: docker
 include:
   - path: infra/docker/compose.yml
     env_file: .env
+  - path: infra/docker/search.compose.yml
+    env_file: .env

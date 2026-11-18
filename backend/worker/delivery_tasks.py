@@ -13,6 +13,7 @@ from backend.platform.delivery.contracts import (
 )
 from backend.platform.delivery.dependencies import build_delivery_coordinator
 from backend.platform.delivery.service import DeliveryCoordinator
+from backend.platform.delivery_composition import get_output_handler_registry
 from backend.platform.dependency_injection import get_database_engine
 from backend.worker.celery_app import celery_app
 
@@ -20,7 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 def _runtime() -> DeliveryCoordinator | None:
-    return build_delivery_coordinator(get_database_engine(), get_settings(), celery_app)
+    return build_delivery_coordinator(
+        get_database_engine(),
+        get_settings(),
+        celery_app,
+        registry=get_output_handler_registry(),
+    )
 
 
 @celery_app.task(bind=True, name="stacksense.execute_delivery_work", max_retries=0)
