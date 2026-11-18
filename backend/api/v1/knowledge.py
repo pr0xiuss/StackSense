@@ -6,11 +6,17 @@ structured error responses, and no independent authentication per §7.4, §7.8, 
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, ValidationError
+from starlette.requests import Request
+from starlette.responses import Response
 
 from backend.platform.analysis.application.dependencies import (
     DelegatedRequestContext,
@@ -19,6 +25,14 @@ from backend.platform.analysis.application.dependencies import (
     require_delegated_project,
 )
 from backend.platform.analysis.architecture.service import ArchitectureQueryService
+from backend.platform.delivery.api_contracts import DeliveryApiError
+from backend.platform.delivery.dependencies import get_delivery_reader
+from backend.platform.delivery.reprojection import (
+    AuthorizedReprojectionPrincipal,
+    ReprojectionKey,
+    SearchReprojectionAccepted,
+)
+from backend.platform.delivery.source import PublishedVersionReader
 from backend.platform.knowledge.contracts import (
     DEFAULT_SEARCH_LIMIT,
     DEFAULT_SEARCH_TIMEOUT_SECONDS,
@@ -42,13 +56,79 @@ from backend.platform.knowledge.contracts import (
 )
 from backend.platform.knowledge.dependencies import (
     get_search_reader,
+    get_search_rebuild_service,
     get_search_status_service,
 )
 from backend.platform.knowledge.model import KnowledgeDocumentKind
 from backend.platform.knowledge.reader import SearchReader
+from backend.platform.knowledge.rebuild import SearchRebuildService
 from backend.platform.knowledge.service import SearchStatusService
 
-router = APIRouter(tags=["Knowledge Search"])
+
+class SearchRoute(APIRoute):
+    """Map M2 dependency failures as well as endpoint failures safely."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def bounded_handler(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except RequestValidationError:
+                return _error_response(
+                    "search_invalid_request", "Invalid search request", 422
+                )
+            except SearchError as exc:
+                return _handle_search_error(exc)
+            except DeliveryApiError as exc:
+                return _error_response(
+                    exc.code, "Search rebuild could not be accepted", exc.status
+                )
+            except ValidationError:
+                return _error_response(
+                    "search_invalid_request",
+                    "Invalid search request or accepted metadata",
+                    422,
+                )
+
+        return bounded_handler
+
+
+router = APIRouter(tags=["Knowledge Search"], route_class=SearchRoute)
+
+
+class SearchRebuildRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    idempotency_key: ReprojectionKey
+
+
+@router.post(
+    "/architecture-versions/{version_id}/search/rebuild",
+    response_model=SearchReprojectionAccepted,
+    status_code=202,
+)
+def rebuild_search(
+    version_id: UUID,
+    project_id: UUID,
+    body: SearchRebuildRequest,
+    context: Annotated[DelegatedRequestContext, Depends(get_delegated_context)],
+    versions: Annotated[
+        ArchitectureQueryService, Depends(get_architecture_query_service)
+    ],
+    source: Annotated[PublishedVersionReader, Depends(get_delivery_reader)],
+    service: Annotated[SearchRebuildService, Depends(get_search_rebuild_service)],
+) -> SearchReprojectionAccepted:
+    require_delegated_project(context, project_id)
+    if context.actor_id is None:
+        raise DeliveryApiError("delivery_reprojection_forbidden", 403)
+    scope = source.inspect_requested(versions.get_version(version_id, project_id)).scope
+    return service.request(
+        scope,
+        body.idempotency_key,
+        AuthorizedReprojectionPrincipal(
+            actor_id=context.actor_id, project_id=project_id, role=context.role
+        ),
+    )
 
 
 def _error_response(code: str, message: str, status_code: int) -> JSONResponse:
@@ -66,7 +146,7 @@ def _error_response(code: str, message: str, status_code: int) -> JSONResponse:
 
 def _handle_search_error(exc: SearchError) -> JSONResponse:
     if isinstance(exc, SearchNotReadyError):
-        return _error_response(exc.code, exc.message, 404)
+        return _error_response(exc.code, exc.message, 409)
     if isinstance(exc, SearchGenerationChangedError):
         return _error_response(exc.code, exc.message, 409)
     if isinstance(exc, SearchCursorExpiredError):
@@ -78,7 +158,7 @@ def _handle_search_error(exc: SearchError) -> JSONResponse:
     if isinstance(exc, SearchBackendUnavailableError):
         return _error_response(exc.code, exc.message, 503)
     if isinstance(exc, SearchCapabilityUnavailableError):
-        return _error_response(exc.code, exc.message, 400)
+        return _error_response(exc.code, exc.message, 422)
     if isinstance(exc, SearchIntegrityError):
         return _error_response(exc.code, exc.message, 500)
     return _error_response(exc.code, exc.message, 400)
@@ -103,7 +183,10 @@ def search_architecture_knowledge(
         ArchitectureQueryService, Depends(get_architecture_query_service)
     ],
     reader: Annotated[SearchReader, Depends(get_search_reader)],
-    q: Annotated[str, Query(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)],
+    q: Annotated[
+        str, Query(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH, pattern=r"\S")
+    ],
+    mode: Annotated[str, Query()] = "lexical",
     limit: Annotated[int, Query(ge=1, le=MAX_SEARCH_LIMIT)] = DEFAULT_SEARCH_LIMIT,
     cursor: Annotated[str | None, Query(max_length=MAX_SEARCH_CURSOR_LENGTH)] = None,
     document_kinds: Annotated[list[str] | None, Query()] = None,
@@ -116,6 +199,10 @@ def search_architecture_knowledge(
     """Execute scoped lexical search against an architecture version's search index."""
     require_delegated_project(context, project_id)
     versions.get_version(version_id, project_id)
+    if mode not in {"lexical", "semantic", "hybrid"}:
+        return _error_response("search_invalid_mode", "Unknown search mode", 422)
+    if mode != "lexical":
+        return _handle_search_error(SearchCapabilityUnavailableError())
 
     parsed_doc_kinds: tuple[KnowledgeDocumentKind, ...] | None = None
     if document_kinds:
@@ -124,7 +211,7 @@ def search_architecture_knowledge(
         except ValueError:
             return _error_response(
                 "invalid_document_kind",
-                f"Unknown document kind in {document_kinds}",
+                "Unknown search document kind",
                 422,
             )
 
@@ -142,7 +229,7 @@ def search_architecture_knowledge(
     )
 
     try:
-        return reader.search(request)
+        return reader.search(request, actor_id=context.actor_id)
     except SearchError as exc:
         return _handle_search_error(exc)
 

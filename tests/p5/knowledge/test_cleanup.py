@@ -36,7 +36,7 @@ def cleanup_env():
     engine.dispose()
 
 
-def test_cleanup_orphans_removes_marked_generation(cleanup_env):
+def test_cleanup_mark_is_not_retirement_or_deletion_authority(cleanup_env):
     service, backend, repo, session = cleanup_env
     scope = make_test_scope()
     profile = make_test_profile()
@@ -71,9 +71,9 @@ def test_cleanup_orphans_removes_marked_generation(cleanup_env):
     assert idx_name in backend._indexes
 
     deleted = service.cleanup_orphans(older_than_seconds=0.0)
-    assert deleted == 1
-    assert idx_name not in backend._indexes
-    assert repo.get_generation(gen_id) is None
+    assert deleted == 0
+    assert idx_name in backend._indexes
+    assert repo.get_generation(gen_id) is not None
 
 
 def test_cleanup_protects_active_generation(cleanup_env):

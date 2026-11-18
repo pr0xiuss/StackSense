@@ -1,6 +1,6 @@
 """Phase 5 Module 2 — Knowledge Projection and Search Index.
 
-This package exports the frozen domain vocabulary, immutable records,
+This package exports the C1 candidate vocabulary, immutable records,
 search contracts, error taxonomy, deterministic projector, durable persistence,
 Elasticsearch operations, independent verifier, and work handlers for P5-M2.
 """
@@ -27,8 +27,10 @@ from backend.platform.knowledge.contracts import (
     SearchIntegrityError,
     SearchNotReadyError,
     SearchPage,
+    SearchReadPort,
     SearchRequest,
     SearchStatus,
+    SearchStatusPort,
 )
 from backend.platform.knowledge.dependencies import (
     create_search_handler_registration,
@@ -145,7 +147,9 @@ __all__ = [
     "SearchNotReadyError",
     "SearchPage",
     "SearchRequest",
+    "SearchReadPort",
     "SearchStatus",
+    "SearchStatusPort",
     # Projection
     "ALLOWED_METADATA_KEYS",
     "MAX_CANONICAL_SOURCE_BYTES",

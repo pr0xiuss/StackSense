@@ -50,6 +50,13 @@ def repo_session():
 
 
 def make_dummy_manifest(scope, profile, candidate_id, generation_id):
+    from backend.platform.knowledge.elasticsearch import (
+        SEARCH_INDEX_MAPPINGS,
+        SEARCH_INDEX_SETTINGS,
+        compute_mapping_hash,
+        compute_settings_hash,
+    )
+
     counts = KnowledgeCounts(
         entities=1,
         relationships=0,
@@ -69,8 +76,8 @@ def make_dummy_manifest(scope, profile, candidate_id, generation_id):
         artifact_id=uuid4(),
         index_name="test-idx",
         index_uuid="uuid-1234",
-        settings_hash="2" * 64,
-        mapping_hash="3" * 64,
+        settings_hash=compute_settings_hash(SEARCH_INDEX_SETTINGS),
+        mapping_hash=compute_mapping_hash(SEARCH_INDEX_MAPPINGS),
         counts=counts,
         key_set_digest="4" * 64,
         payload_digest="5" * 64,
@@ -127,6 +134,17 @@ def test_search_repository_stage_and_active(repo_session):
 
 
 def test_search_publication_port_activation(repo_session):
+    from backend.platform.knowledge.elasticsearch import (
+        SEARCH_INDEX_MAPPINGS,
+        SEARCH_INDEX_SETTINGS,
+        InMemorySearchBackend,
+    )
+
+    backend = InMemorySearchBackend()
+    physical = backend.create_index(
+        "test-idx", SEARCH_INDEX_SETTINGS, SEARCH_INDEX_MAPPINGS
+    )
+    backend.drain_and_seal_index("test-idx")
     repo = SqlAlchemySearchRepository(repo_session)
     scope = make_test_scope()
     profile = make_test_profile()
@@ -139,7 +157,9 @@ def test_search_publication_port_activation(repo_session):
     gen_id = uuid4()
     cand_id = uuid4()
     attempt_id = uuid4()
-    manifest = make_dummy_manifest(scope, profile, cand_id, gen_id)
+    manifest = make_dummy_manifest(scope, profile, cand_id, gen_id).model_copy(
+        update={"index_uuid": physical}
+    )
 
     gen = repo.stage_candidate(
         resource_id=resource.id,
@@ -150,7 +170,7 @@ def test_search_publication_port_activation(repo_session):
         artifact_id=manifest.artifact_id,
         generation_id=gen_id,
         index_name="test-idx",
-        index_uuid="uuid-1234",
+        index_uuid=physical,
         counts=manifest.counts,
         manifest=manifest,
     )
@@ -177,12 +197,15 @@ def test_search_publication_port_activation(repo_session):
         dispatch_epoch=uuid4(),
         candidate_id=cand_id,
     )
+    manifest = manifest.model_copy(update={"attempt": attempt})
+    gen.manifest_bytes = manifest.to_canonical_bytes()
+    gen.manifest_digest = manifest.content_digest()
     prepared = PreparedOutput(
         attempt=attempt,
         candidate=CandidateSeal(
             generation_id=gen_id,
             artifact_id=manifest.artifact_id,
-            size_bytes=100,
+            size_bytes=manifest.size_bytes(),
             digests=OutputDigests(content=manifest.content_digest()),
             sealed=True,
         ),
@@ -193,7 +216,7 @@ def test_search_publication_port_activation(repo_session):
         deadline=datetime.now(UTC) + timedelta(minutes=5),
     )
 
-    port = SearchPublicationPort(repo_session)
+    port = SearchPublicationPort(repo_session, backend=backend)
     accepted = port.publish_prepared(prepared, pub_ctx)
 
     assert accepted.reference.generation_id == gen_id
@@ -202,7 +225,7 @@ def test_search_publication_port_activation(repo_session):
     # Verify DB state
     assert gen.state == "ACTIVE"
     assert resource.active_generation_id == gen_id
-    assert resource.status == "READY"
+    assert resource.status == "COMPLETED"
 
     # Verify receipt exists
     receipt = repo_session.scalar(
@@ -266,12 +289,15 @@ def test_search_publication_rejects_unsealed_or_cleanup_marked(repo_session):
         dispatch_epoch=uuid4(),
         candidate_id=cand_id,
     )
+    manifest = manifest.model_copy(update={"attempt": attempt})
+    gen.manifest_bytes = manifest.to_canonical_bytes()
+    gen.manifest_digest = manifest.content_digest()
     prepared = PreparedOutput(
         attempt=attempt,
         candidate=CandidateSeal(
             generation_id=gen_id,
             artifact_id=manifest.artifact_id,
-            size_bytes=100,
+            size_bytes=manifest.size_bytes(),
             digests=OutputDigests(content=manifest.content_digest()),
             sealed=True,
         ),

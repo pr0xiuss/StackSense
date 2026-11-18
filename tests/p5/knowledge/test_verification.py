@@ -42,6 +42,7 @@ def test_search_verifier_success(sample_doc_and_scope):
         scope=scope,
         profile=profile,
         candidate_id=cand_id,
+        attempt_id=uuid4(),
         generation_id=gen_id,
         index_name=idx_name,
         index_uuid=idx_uuid,
@@ -84,6 +85,7 @@ def test_search_verifier_count_mismatch(sample_doc_and_scope):
         scope=scope,
         profile=profile,
         candidate_id=cand_id,
+        attempt_id=uuid4(),
         generation_id=gen_id,
         index_name=idx_name,
         index_uuid=idx_uuid,
@@ -125,6 +127,7 @@ def test_search_verifier_payload_digest_mismatch(sample_doc_and_scope):
         scope=scope,
         profile=profile,
         candidate_id=cand_id,
+        attempt_id=uuid4(),
         generation_id=gen_id,
         index_name=idx_name,
         index_uuid=idx_uuid,
@@ -132,4 +135,7 @@ def test_search_verifier_payload_digest_mismatch(sample_doc_and_scope):
     )
 
     assert result.verified is False
-    assert result.failure_code == "payload_digest_mismatch"
+    assert result.failure_code == "stored_payload_mismatch"
+    # Recomputed content remains equal; only the persisted digest label was
+    # corrupted. The verifier must reject that label without trusting it.
+    assert result.actual_payload_digest == result.expected_payload_digest

@@ -57,6 +57,7 @@ def reader_env():
         backend=backend,
         repository=repo,
         cursor_secret="test-secret-key-32-bytes-long-1234",
+        cursor_ttl_seconds=120,
     )
 
     yield reader, backend, repo, session
@@ -80,7 +81,28 @@ def stage_and_publish_test_index(
     cand_id = uuid4()
     idx_name = f"test-index-{gen_id.hex[:8]}"
 
-    idx_uuid = backend.create_index(idx_name, {}, {})
+    from backend.platform.knowledge.elasticsearch import (
+        SEARCH_INDEX_MAPPINGS,
+        SEARCH_INDEX_SETTINGS,
+    )
+
+    idx_uuid = backend.create_index(
+        idx_name, SEARCH_INDEX_SETTINGS, SEARCH_INDEX_MAPPINGS
+    )
+    from backend.platform.knowledge.model import KnowledgeDocumentKind, KnowledgeRecord
+
+    records = [
+        KnowledgeRecord.create(
+            scope=scope,
+            document_kind=KnowledgeDocumentKind(record["document_kind"]),
+            canonical_reference=record["canonical_reference"],
+            title=record["title"],
+            kind=record.get("kind"),
+            status=record.get("status"),
+            text_fields=record.get("text_fields", {}),
+        ).to_stored_envelope(generation_id=gen_id, index_uuid=idx_uuid)
+        for record in records
+    ]
     backend.bulk_index_records(idx_name, records)
     backend.drain_and_seal_index(idx_name)
 
@@ -104,7 +126,7 @@ def stage_and_publish_test_index(
     )
 
     # Publish via port
-    port = SearchPublicationPort(session)
+    port = SearchPublicationPort(session, backend=backend)
     binding = HandlerProfile(
         slot=WorkSlot(kind=WorkKind.SEARCH),
         profile=profile,
@@ -128,12 +150,19 @@ def stage_and_publish_test_index(
         dispatch_epoch=uuid4(),
         candidate_id=cand_id,
     )
+    manifest = manifest.model_copy(
+        update={"attempt": attempt, "index_name": idx_name, "index_uuid": idx_uuid}
+    )
+    generation = repo.get_generation(gen_id)
+    generation.attempt_id = attempt.attempt_id
+    generation.manifest_bytes = manifest.to_canonical_bytes()
+    generation.manifest_digest = manifest.content_digest()
     prepared = PreparedOutput(
         attempt=attempt,
         candidate=CandidateSeal(
             generation_id=gen_id,
             artifact_id=manifest.artifact_id,
-            size_bytes=100,
+            size_bytes=manifest.size_bytes(),
             digests=OutputDigests(content=manifest.content_digest()),
             sealed=True,
         ),
@@ -227,6 +256,97 @@ def test_search_exact_id_ranking_and_text_match(reader_env):
     assert repo.get_active_read_pin_count(gen_id) == 0
 
 
+def test_c1_consumer_port_with_actual_reader(reader_env):
+    from tests.p5.knowledge.test_c1_consumers import consume_page
+
+    reader, backend, repo, session = reader_env
+    scope, actor = make_test_scope(), uuid4()
+    rows = [
+        {
+            "document_kind": "entity",
+            "canonical_reference": f"entity:{i}",
+            "title": f"Service {i}",
+            "kind": "service",
+            "status": "confirmed",
+        }
+        for i in range(3)
+    ]
+    _, generation, index_name = stage_and_publish_test_index(
+        repo, backend, session, scope, rows
+    )
+    exact_index_uuid = backend.inspect_index(index_name)["uuid"]
+    request = SearchRequest(
+        project_id=scope.project_id,
+        architecture_version_id=scope.architecture_version_id,
+        q="Service",
+        limit=1,
+    )
+    seen = set()
+    while True:
+        page = consume_page(reader, request, actor)
+        assert page.generation_id == generation
+        assert page.index_uuid == exact_index_uuid
+        assert not seen.intersection(hit.knowledge_key for hit in page.items)
+        seen.update(hit.knowledge_key for hit in page.items)
+        if not page.has_more:
+            break
+        request = SearchRequest.model_validate_json(
+            request.model_copy(update={"cursor": page.next_cursor}).model_dump_json()
+        )
+    assert len(seen) == 3
+    assert repo.get_active_read_pin_count(generation) == 0
+
+
+@pytest.mark.parametrize("loss", ["replacement", "index_missing", "index_recreated"])
+def test_pinned_continuation_never_switches_generation_or_index(reader_env, loss):
+    from backend.platform.knowledge.contracts import (
+        SearchBackendUnavailableError,
+        SearchGenerationChangedError,
+        SearchIntegrityError,
+    )
+    from backend.platform.knowledge.elasticsearch import (
+        SEARCH_INDEX_MAPPINGS,
+        SEARCH_INDEX_SETTINGS,
+    )
+
+    reader, backend, repo, session = reader_env
+    scope, actor = make_test_scope(), uuid4()
+    rows = [
+        {
+            "document_kind": "entity",
+            "canonical_reference": f"entity:{i}",
+            "title": f"Service {i}",
+        }
+        for i in range(2)
+    ]
+    _, generation, index = stage_and_publish_test_index(
+        repo, backend, session, scope, rows
+    )
+    request = SearchRequest(
+        project_id=scope.project_id,
+        architecture_version_id=scope.architecture_version_id,
+        q="Service",
+        limit=1,
+    )
+    first = reader.search(request, actor_id=actor)
+    assert first.has_more and first.generation_id == generation
+    if loss == "replacement":
+        stage_and_publish_test_index(repo, backend, session, scope, rows)
+        expected = SearchGenerationChangedError
+    else:
+        backend.delete_index(index)
+        if loss == "index_recreated":
+            backend.create_index(index, SEARCH_INDEX_SETTINGS, SEARCH_INDEX_MAPPINGS)
+            backend.drain_and_seal_index(index)
+            expected = SearchIntegrityError
+        else:
+            expected = SearchBackendUnavailableError
+    with pytest.raises(expected):
+        reader.search(
+            request.model_copy(update={"cursor": first.next_cursor}), actor_id=actor
+        )
+
+
 def test_search_pagination_cursor(reader_env):
     reader, backend, repo, session = reader_env
     scope = make_test_scope()
@@ -307,14 +427,14 @@ def test_cursor_security_validations():
         generation_id=gen_id,
         project_id=proj_id,
         architecture_version_id=arch_id,
-        offset=10,
+        state={"pit": "fixture-pit", "after": [1, "key"], "pin": str(uuid4())},
         query_hash=qh,
         secret=secret,
         ttl_seconds=60.0,
     )
 
     # Valid decode
-    off = decode_cursor(
+    fields = decode_cursor(
         cursor,
         expected_generation_id=gen_id,
         expected_project_id=proj_id,
@@ -322,7 +442,7 @@ def test_cursor_security_validations():
         expected_query_hash=qh,
         secret=secret,
     )
-    assert off == 10
+    assert fields["state"]["after"] == [1, "key"]
 
     # 1. Tampered signature
     with pytest.raises(SearchCursorInvalidError):
@@ -373,7 +493,7 @@ def test_cursor_security_validations():
         generation_id=gen_id,
         project_id=proj_id,
         architecture_version_id=arch_id,
-        offset=10,
+        state={"pit": "fixture-pit", "after": [1, "key"], "pin": str(uuid4())},
         query_hash=qh,
         secret=secret,
         ttl_seconds=-10.0,

@@ -44,13 +44,14 @@ def knowledge_api():
     class MockReader:
         error = None
 
-        def search(self, request):
+        def search(self, request, *, actor_id=None):
             if self.error:
                 raise self.error
             return SearchPage(
                 c1_version="1.0.0",
                 scope=scope,
                 generation_id=uuid4(),
+                index_uuid="fixture-index-uuid",
                 items=(),
                 total_hits=0,
                 has_more=False,
@@ -65,7 +66,7 @@ def knowledge_api():
                 raise self.error
             return SearchStatus(
                 scope=scope,
-                resource_state="READY",
+                resource_state="COMPLETED",
                 freshness="CURRENT",
                 is_readable=True,
                 is_current_version=True,
@@ -113,11 +114,12 @@ def test_all_delegated_roles_can_search_and_read_status(knowledge_api, role):
     search_res = client.get(search_path(scope))
     assert search_res.status_code == 200
     assert search_res.json()["c1_version"] == "1.0.0"
+    assert search_res.json()["index_uuid"] == "fixture-index-uuid"
 
     # 2. Status endpoint
     status_res = client.get(status_path(scope))
     assert status_res.status_code == 200
-    assert status_res.json()["resource_state"] == "READY"
+    assert status_res.json()["resource_state"] == "COMPLETED"
     assert status_res.json()["freshness"] == "CURRENT"
 
 
@@ -141,9 +143,20 @@ def test_invalid_document_kind_rejected(knowledge_api):
 
 
 @pytest.mark.parametrize(
+    "query", ["&limit=0", "&timeout_seconds=inf", "&statuses=runtime_true"]
+)
+def test_request_validation_uses_safe_typed_envelope(knowledge_api, query):
+    client, _, _, _, scope = knowledge_api
+    response = client.get(search_path(scope) + query)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "search_invalid_request"
+    assert response.json()["error"]["details"] == {}
+
+
+@pytest.mark.parametrize(
     ("error", "expected_status", "expected_code"),
     [
-        (SearchNotReadyError(), 404, "search_not_ready"),
+        (SearchNotReadyError(), 409, "search_not_ready"),
         (SearchGenerationChangedError(), 409, "search_generation_changed"),
         (SearchCursorExpiredError(), 410, "search_cursor_expired"),
         (SearchCursorInvalidError(), 422, "search_cursor_invalid"),

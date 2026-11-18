@@ -10,15 +10,21 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from datetime import UTC, datetime
+from time import monotonic
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.platform.analysis.architecture.model import ArchitectureDocument
+from backend.platform.delivery.api_contracts import WorkSummary
 from backend.platform.delivery.contracts import (
     ArtifactReference,
+    AttemptIdentity,
+    AttemptRetirementReader,
     CandidateSeal,
+    DeliveryContractError,
     DeliveryExecutionFailure,
     DeliveryFailure,
     OutputDigests,
@@ -29,7 +35,14 @@ from backend.platform.delivery.contracts import (
     WorkHandler,
 )
 from backend.platform.knowledge.contracts import (
+    CapabilityState,
+    SearchBackendUnavailableError,
     SearchCapabilities,
+    SearchDeadlineExceededError,
+    SearchError,
+    SearchFreshness,
+    SearchIntegrityError,
+    SearchResourceState,
     SearchStatus,
 )
 from backend.platform.knowledge.elasticsearch import (
@@ -62,14 +75,37 @@ class SearchWorkHandler(WorkHandler):
         document_loader: Callable[[VersionScope], ArchitectureDocument],
         verifier: SearchVerifier | None = None,
         projector: KnowledgeProjector | None = None,
+        index_settings: dict[str, object] | None = None,
     ) -> None:
         self._backend = backend
         self._repo = repository
         self._document_loader = document_loader
         self._verifier = verifier or SearchVerifier(backend)
         self._projector = projector or KnowledgeProjector()
+        self._index_settings = (
+            index_settings if index_settings is not None else SEARCH_INDEX_SETTINGS
+        )
 
     def execute(self, context: WorkExecutionContext) -> PreparedOutput:
+        remaining = (context.deadline - datetime.now(UTC)).total_seconds()
+        try:
+            with self._backend.operation(monotonic() + remaining):
+                return self._execute(context)
+        except SearchError as exc:
+            transient = isinstance(
+                exc, (SearchBackendUnavailableError, SearchDeadlineExceededError)
+            )
+            raise DeliveryExecutionFailure(
+                DeliveryFailure(
+                    code=exc.code,
+                    retry_class=(
+                        RetryClass.TRANSIENT if transient else RetryClass.INTEGRITY
+                    ),
+                    source_capability="search",
+                )
+            ) from exc
+
+    def _execute(self, context: WorkExecutionContext) -> PreparedOutput:
         """Execute candidate index construction and audit verification."""
         context.control.checkpoint()
         if context.control.should_stop():
@@ -110,16 +146,16 @@ class SearchWorkHandler(WorkHandler):
         # 3. Create physical candidate index
         generation_id = uuid4()
         artifact_id = uuid4()
-        short_proj = scope.project_id.hex[:8]
-        short_gen = generation_id.hex[:8]
-        index_name = f"stacksense-search-{short_proj}-{short_gen}"
+        index_name = f"stacksense-search-{scope.project_id.hex}-{generation_id.hex}"
+        self._repo.reserve_candidate(attempt, generation_id, artifact_id, index_name)
 
         try:
             index_uuid = self._backend.create_index(
                 index_name=index_name,
-                settings=SEARCH_INDEX_SETTINGS,
+                settings=self._index_settings,
                 mappings=SEARCH_INDEX_MAPPINGS,
             )
+            self._repo.bind_candidate_index(generation_id, attempt, index_uuid)
         except Exception as exc:
             raise DeliveryExecutionFailure(
                 DeliveryFailure(
@@ -139,7 +175,6 @@ class SearchWorkHandler(WorkHandler):
             index_name=index_name, records=envelopes
         )
         if bulk_result.failed > 0:
-            self._backend.delete_index(index_name)
             raise DeliveryExecutionFailure(
                 DeliveryFailure(
                     code="bulk_indexing_failed",
@@ -153,7 +188,6 @@ class SearchWorkHandler(WorkHandler):
         try:
             self._backend.drain_and_seal_index(index_name)
         except Exception as exc:
-            self._backend.delete_index(index_name)
             raise DeliveryExecutionFailure(
                 DeliveryFailure(
                     code="index_sealing_failed",
@@ -169,13 +203,14 @@ class SearchWorkHandler(WorkHandler):
             scope=scope,
             profile=profile,
             candidate_id=attempt.candidate_id,
+            attempt_id=attempt.attempt_id,
             generation_id=generation_id,
             index_name=index_name,
             index_uuid=index_uuid,
             expected_projection=projection,
+            expected_settings=self._index_settings,
         )
         if not verification.verified:
-            self._backend.delete_index(index_name)
             raise DeliveryExecutionFailure(
                 DeliveryFailure(
                     code=f"verification_{verification.failure_code}",
@@ -186,6 +221,7 @@ class SearchWorkHandler(WorkHandler):
 
         # 7. Create SearchManifest and stage in PostgreSQL
         manifest = SearchManifest(
+            attempt=attempt,
             c1_version="1.0.0",
             scope=scope,
             profile=profile,
@@ -195,7 +231,7 @@ class SearchWorkHandler(WorkHandler):
             artifact_id=artifact_id,
             index_name=index_name,
             index_uuid=index_uuid,
-            settings_hash=compute_settings_hash(SEARCH_INDEX_SETTINGS),
+            settings_hash=compute_settings_hash(self._index_settings),
             mapping_hash=compute_mapping_hash(SEARCH_INDEX_MAPPINGS),
             counts=projection.counts,
             key_set_digest=verification.actual_key_set_digest,
@@ -224,6 +260,9 @@ class SearchWorkHandler(WorkHandler):
             counts=projection.counts,
             manifest=manifest,
         )
+        # M1 uses a NEW physical transaction for publication. A flush cannot
+        # make the sealed descriptor visible to that transaction.
+        self._repo.commit_staging()
 
         context.control.checkpoint()
 
@@ -247,59 +286,113 @@ class SearchStatusService:
     Projects search resource state, freshness, and capabilities.
     """
 
-    def __init__(self, repository: SqlAlchemySearchRepository) -> None:
+    def __init__(
+        self,
+        repository: SqlAlchemySearchRepository,
+        *,
+        scope_reader: Callable[[UUID, UUID], VersionScope] | None = None,
+        backend: SearchIndexBackend | None = None,
+        current_version_reader: Callable[[VersionScope], bool | None] | None = None,
+        work_reader: Callable[[VersionScope], WorkSummary | None] | None = None,
+    ) -> None:
         self._repo = repository
+        self._scope_reader = scope_reader
+        self._backend = backend
+        self._current_version_reader = current_version_reader
+        self._work_reader = work_reader
 
     def get_status(
         self,
         project_id: UUID,
         architecture_version_id: UUID,
     ) -> SearchStatus:
+        try:
+            return self._get_status(project_id, architecture_version_id)
+        except (DeliveryContractError, ValueError, KeyError, TypeError) as exc:
+            raise SearchIntegrityError(
+                "Search status metadata integrity failure"
+            ) from exc
+
+    def _get_status(
+        self, project_id: UUID, architecture_version_id: UUID
+    ) -> SearchStatus:
         """Project current status, active generation reference, and readiness."""
         resource = self._repo.get_resource(project_id, architecture_version_id)
-        dummy_scope = VersionScope(
-            project_id=project_id,
-            architecture_version_id=architecture_version_id,
-            repository_id=project_id,
-            snapshot_id=architecture_version_id,
-            analysis_id=architecture_version_id,
-            sequence_number=1,
-            published_at=datetime.now(UTC),
-            canonical_digest="0" * 64,
-            source_contract_version="1.0.0",
-            analyzer_version="1.0.0",
-            ir_schema_version="1.0.0",
-            architecture_schema_version="1.0.0",
-            configuration_fingerprint="0" * 64,
+        capabilities = SearchCapabilities(
+            lexical=(
+                CapabilityState.AVAILABLE
+                if self._backend is not None
+                else CapabilityState.UNAVAILABLE
+            )
+        )
+        if self._scope_reader is None:
+            from backend.platform.knowledge.contracts import SearchNotReadyError
+
+            raise SearchNotReadyError("Authoritative version scope unavailable")
+        dummy_scope = self._scope_reader(project_id, architecture_version_id)
+        if (dummy_scope.project_id, dummy_scope.architecture_version_id) != (
+            project_id,
+            architecture_version_id,
+        ):
+            raise SearchIntegrityError("Search status scope mismatch")
+        work = self._work_reader(dummy_scope) if self._work_reader else None
+        attempt_state = work.state if work else None
+        state_map = {
+            "PENDING": "PENDING",
+            "QUEUED": "PENDING",
+            "RUNNING": "RUNNING",
+            "RETRYING": "RUNNING",
+            "FAILED": "FAILED",
+            "CANCELLED": "FAILED",
+            "COMPLETED": "COMPLETED",
+        }
+        current = (
+            self._current_version_reader(dummy_scope)
+            if self._current_version_reader
+            else None
         )
 
         if resource is None:
             return SearchStatus(
                 scope=dummy_scope,
-                resource_state="PENDING",
-                freshness="UNAVAILABLE",
+                resource_state=cast(
+                    SearchResourceState, state_map.get(attempt_state or "", "PENDING")
+                ),
+                freshness=(
+                    "FAILED"
+                    if attempt_state in {"FAILED", "CANCELLED"}
+                    else "BUILDING" if work else "UNAVAILABLE"
+                ),
+                attempt_state=attempt_state,
+                is_current_version=current,
                 is_readable=False,
                 unavailable_reason="No search resource exists for the requested scope",
-                capabilities=SearchCapabilities(),
+                capabilities=capabilities,
             )
 
         if resource.active_generation_id is None:
-            if resource.status == "FAILED":
+            public_state = state_map.get(attempt_state or "", resource.status)
+            if public_state == "FAILED":
                 return SearchStatus(
                     scope=dummy_scope,
                     resource_state="FAILED",
                     freshness="FAILED",
+                    attempt_state=attempt_state,
+                    is_current_version=current,
+                    last_failure_code=work.reason if work else None,
                     is_readable=False,
                     unavailable_reason="Search candidate generation failed",
-                    capabilities=SearchCapabilities(),
+                    capabilities=capabilities,
                 )
             return SearchStatus(
                 scope=dummy_scope,
-                resource_state=resource.status,
+                resource_state=cast(SearchResourceState, public_state),
                 freshness="BUILDING",
                 is_readable=False,
+                attempt_state=attempt_state,
+                is_current_version=current,
                 unavailable_reason="Search generation is building",
-                capabilities=SearchCapabilities(),
+                capabilities=capabilities,
             )
 
         gen = self._repo.get_generation(resource.active_generation_id)
@@ -310,7 +403,7 @@ class SearchStatusService:
                 freshness="UNAVAILABLE",
                 is_readable=False,
                 unavailable_reason="Active generation metadata is missing",
-                capabilities=SearchCapabilities(),
+                capabilities=capabilities,
             )
 
         receipt = self._repo.get_publication_receipt(gen.generation_id)
@@ -319,10 +412,34 @@ class SearchStatusService:
             ref = ArtifactReference.model_validate_json(
                 json.dumps(receipt.artifact_reference)
             )
+            if ref.scope != dummy_scope or ref.generation_id != gen.generation_id:
+                raise SearchIntegrityError("Search status accepted scope mismatch")
 
         active_scope = ref.scope if ref else dummy_scope
-        freshness = "CURRENT" if gen.state == "ACTIVE" else "STALE"
-        is_current = gen.state == "ACTIVE"
+        # Active within a version is not proof it is the newest repository
+        # version. Until a bounded public observation exists, say unknown.
+        freshness = (
+            "CURRENT" if current is True else "STALE" if current is False else "UNKNOWN"
+        )
+        is_current = current
+        readable = False
+        if ref is not None:
+            from backend.platform.knowledge.repository import SearchPublicationPort
+
+            manifest = SearchPublicationPort(self._repo._session).require_accepted(ref)
+            if self._backend is not None:
+                try:
+                    physical = self._backend.inspect_index(manifest.index_name)
+                    readable = (
+                        physical["uuid"] == manifest.index_uuid
+                        and physical["sealed"] is True
+                    )
+                except Exception:
+                    readable = False
+        if not readable:
+            freshness = "UNAVAILABLE"
+        elif attempt_state in {"PENDING", "QUEUED", "RUNNING", "RETRYING"}:
+            freshness = "BUILDING"
 
         sealed_dt = gen.sealed_at
         if sealed_dt is not None and sealed_dt.tzinfo is None:
@@ -330,16 +447,19 @@ class SearchStatusService:
 
         return SearchStatus(
             scope=active_scope,
-            resource_state=resource.status,
-            freshness=freshness,
+            resource_state=("STALE" if current is False else "COMPLETED"),
+            freshness=cast(SearchFreshness, freshness),
             active_reference=ref,
-            attempt_state=gen.state,
-            is_readable=(
-                resource.status == "READY" and gen.state in ("ACTIVE", "HISTORICAL")
+            attempt_state=attempt_state,
+            last_failure_code=(
+                work.reason
+                if work and attempt_state in {"FAILED", "CANCELLED"}
+                else None
             ),
+            is_readable=readable,
             is_current_version=is_current,
             last_verified_at=sealed_dt,
-            capabilities=SearchCapabilities(),
+            capabilities=capabilities,
         )
 
 
@@ -354,12 +474,16 @@ class SearchCleanupService:
         repository: SqlAlchemySearchRepository,
         backend: SearchIndexBackend,
         session: Session,
+        retirement_reader: AttemptRetirementReader | None = None,
     ) -> None:
         self._repo = repository
         self._backend = backend
         self._session = session
+        self._retirement_reader = retirement_reader
 
-    def cleanup_orphans(self, *, older_than_seconds: float = 3600.0) -> int:
+    def cleanup_orphans(
+        self, *, older_than_seconds: float | None = None, max_items: int | None = None
+    ) -> int:
         """Safely delete indices for orphan, failed, or cleanup-marked candidates.
 
         Guarantees:
@@ -367,13 +491,65 @@ class SearchCleanupService:
         - Never deletes generations with active reader pins.
         - Never deletes currently active generation pointers.
         """
+        if (
+            older_than_seconds is None
+            or older_than_seconds < 0
+            or max_items is None
+            or max_items <= 0
+            or self._retirement_reader is None
+        ):
+            return 0  # Destructive maintenance is disabled without approval/port.
         candidates = self._repo.get_cleanup_candidates(
-            older_than_seconds=older_than_seconds
+            older_than_seconds=older_than_seconds,
+            max_items=max_items,
         )
         cleaned_count = 0
 
         for gen in candidates:
+            from backend.platform.knowledge.repository import SearchPublicationPort
+
+            attempt: AttemptIdentity | None
+            if gen.attempt_identity is not None:
+                attempt = AttemptIdentity.model_validate_json(
+                    json.dumps(gen.attempt_identity)
+                )
+            elif gen.manifest_bytes is not None:
+                attempt = SearchPublicationPort._manifest(gen).attempt
+            else:
+                continue
+            if attempt is None or not gen.index_uuid:
+                # Unknown creation outcomes require reconciliation, not adoption.
+                continue
+            retirement = self._retirement_reader.read_retirement(attempt)
+            if (
+                retirement is None
+                or retirement.outcome == "COMPLETED"
+                or retirement.attempt != attempt
+            ):
+                continue
+            # End the read transaction before acquiring producer exclusion.
+            generation_id, resource_id = gen.generation_id, gen.resource_id
+            self._session.commit()
+            self._session.scalar(
+                select(SearchResourceModel)
+                .where(SearchResourceModel.id == resource_id)
+                .with_for_update()
+            )
+            locked_gen = self._session.scalar(
+                select(type(gen))
+                .where(type(gen).generation_id == generation_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if locked_gen is None:
+                self._session.rollback()
+                continue
+            gen = locked_gen
             if gen.state in ("ACTIVE", "HISTORICAL"):
+                self._session.rollback()
+                continue
+            if self._repo.get_publication_receipt(gen.generation_id) is not None:
+                self._session.rollback()
                 continue
 
             res = self._session.scalar(
@@ -382,15 +558,39 @@ class SearchCleanupService:
                 )
             )
             if res is not None and res.active_generation_id == gen.generation_id:
+                self._session.rollback()
                 continue
 
             active_pins = self._repo.get_active_read_pin_count(gen.generation_id)
             if active_pins > 0:
+                self._session.rollback()
                 continue
-
-            self._backend.delete_index(gen.index_name)
-            self._session.delete(gen)
-            self._session.flush()
+            index_name, index_uuid = gen.index_name, gen.index_uuid
+            gen.state = "CLEANUP_MARKED"
+            self._session.commit()  # Publisher now rejects; no locks across I/O.
+            try:
+                physical = self._backend.inspect_index(index_name)
+            except SearchBackendUnavailableError as exc:
+                # A prior delete may have succeeded before the tombstone commit.
+                # Only an authoritative exact-index 404 is idempotent success;
+                # transport/auth failures never authorize deletion or completion.
+                if getattr(exc.__cause__, "status_code", None) != 404:
+                    raise
+                tombstone = self._repo.get_generation(generation_id)
+                if tombstone is not None:
+                    tombstone.state = "DELETED"
+                self._session.commit()
+                cleaned_count += 1
+                continue
+            if physical["uuid"] != index_uuid:
+                continue
+            if physical["sealed"] is not True:
+                self._backend.drain_and_seal_index(index_name)
+            self._backend.delete_index(index_name)
+            tombstone = self._repo.get_generation(generation_id)
+            if tombstone is not None:
+                tombstone.state = "DELETED"
+            self._session.commit()
             cleaned_count += 1
 
         return cleaned_count

@@ -33,6 +33,7 @@ from backend.platform.delivery.dependencies import (
 from backend.platform.delivery.model import Eligibility
 from backend.platform.delivery.service import DeliveryCoordinator
 from backend.platform.delivery.source import PublishedVersionReader
+from backend.platform.delivery_composition import get_output_handler_registry
 from backend.platform.errors import AnalysisAccessDeniedError
 
 router = APIRouter(tags=["Delivery"])
@@ -48,7 +49,10 @@ def get_delivery_coordinator() -> DeliveryCoordinator | None:
 
     try:
         return build_delivery_coordinator(
-            get_database_engine(), get_settings(), celery_app
+            get_database_engine(),
+            get_settings(),
+            celery_app,
+            registry=get_output_handler_registry(),
         )
     except ValueError, SQLAlchemyError:
         logging.getLogger(__name__).warning(

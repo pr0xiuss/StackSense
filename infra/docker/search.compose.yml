@@ -1,0 +1,81 @@
+# Included by the root compose.yml: docker compose up -d
+# LOCAL DEVELOPMENT ONLY. These budgets are not approved production settings.
+# Passwords and TLS material are generated once in persistent Docker volumes.
+services:
+  search-certificates:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.6
+    user: "0:0"
+    entrypoint: ["/bin/bash", "/opt/stacksense/search-setup.sh", "certificates"]
+    volumes:
+      - ./search-setup.sh:/opt/stacksense/search-setup.sh:ro
+      - stacksense_search_state:/state
+      - stacksense_kibana_config:/kibana-config
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.6
+    container_name: stacksense-elasticsearch
+    restart: unless-stopped
+    depends_on:
+      search-certificates:
+        condition: service_completed_successfully
+    mem_limit: ${SEARCH_ES_MEMORY:-1536m}
+    cpus: ${SEARCH_ES_CPUS:-2}
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "true"
+      xpack.security.http.ssl.certificate_authorities: /usr/share/elasticsearch/config/state/certs/ca/ca.crt
+      xpack.security.http.ssl.certificate: /usr/share/elasticsearch/config/state/certs/elasticsearch/elasticsearch.crt
+      xpack.security.http.ssl.key: /usr/share/elasticsearch/config/state/certs/elasticsearch/elasticsearch.key
+      ELASTIC_PASSWORD_FILE: /usr/share/elasticsearch/config/state/elastic_password
+      ES_JAVA_OPTS: "-Xms${SEARCH_ES_HEAP:-512m} -Xmx${SEARCH_ES_HEAP:-512m}"
+    ports:
+      - "127.0.0.1:${SEARCH_ES_PORT:-9200}:9200"
+    volumes:
+      - stacksense_elasticsearch_data:/usr/share/elasticsearch/data
+      - stacksense_search_state:/usr/share/elasticsearch/config/state:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail --max-time 5 --cacert config/state/certs/ca/ca.crt -u elastic:$$(cat config/state/elastic_password) 'https://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=3s' >/dev/null"]
+      interval: 10s
+      timeout: 6s
+      retries: 30
+      start_period: 30s
+
+  search-credentials:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.6
+    user: "0:0"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/opt/stacksense/search-setup.sh", "credentials"]
+    volumes:
+      - ./search-setup.sh:/opt/stacksense/search-setup.sh:ro
+      - stacksense_search_state:/state:ro
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.5.6
+    container_name: stacksense-kibana
+    restart: unless-stopped
+    depends_on:
+      search-credentials:
+        condition: service_completed_successfully
+    mem_limit: ${SEARCH_KIBANA_MEMORY:-1536m}
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=${SEARCH_KIBANA_HEAP_MB:-768}"
+    ports:
+      - "127.0.0.1:${SEARCH_KIBANA_PORT:-5601}:5601"
+    volumes:
+      - stacksense_kibana_config:/usr/share/kibana/config:ro
+      - stacksense_kibana_data:/usr/share/kibana/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail --max-time 5 http://localhost:5601/api/status >/dev/null"]
+      interval: 10s
+      timeout: 6s
+      retries: 30
+      start_period: 60s
+
+volumes:
+  stacksense_elasticsearch_data:
+  stacksense_search_state:
+  stacksense_kibana_config:
+  stacksense_kibana_data:

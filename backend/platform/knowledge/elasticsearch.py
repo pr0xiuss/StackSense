@@ -7,7 +7,11 @@ deterministic hash computation, and sealed candidate isolation per §7.4 and §7
 from __future__ import annotations
 
 import hashlib
+import json
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+from time import monotonic
 from typing import Any, Final, NamedTuple, Protocol
 from uuid import uuid4
 
@@ -66,6 +70,89 @@ SEARCH_INDEX_MAPPINGS: Final[dict[str, Any]] = {
     },
 }
 
+# Closed sub-objects: dynamic field discovery changes the mapping fingerprint
+# and permits arbitrary source metadata to expand the index schema.
+SEARCH_INDEX_MAPPINGS["properties"]["text_fields"] = {
+    "dynamic": "strict",
+    "properties": {
+        key: {"type": "text"}
+        for key in (
+            "name",
+            "kind",
+            "status",
+            "namespace",
+            "source_logical_id",
+            "target_logical_id",
+            "path",
+            "source_record_type",
+            "strength",
+            "polarity",
+            "target_descriptor",
+            "reason",
+            "conflict_type",
+            "subject_key",
+            "analyzer_version",
+            "architecture_schema_version",
+            "configuration_fingerprint",
+            "content_digest",
+            "ir_schema_version",
+        )
+    },
+}
+SEARCH_INDEX_MAPPINGS["properties"]["safe_metadata"] = {
+    "dynamic": "strict",
+    "properties": {
+        key: {"type": "keyword"}
+        for key in (
+            "framework",
+            "architectural_role",
+            "runtime_role",
+            "application_namespace",
+            "method",
+            "path",
+            "database_engine",
+            "infrastructure_kind",
+            "dependency_name",
+            "manifest_declared",
+            "source_referenced",
+        )
+    },
+}
+SEARCH_INDEX_MAPPINGS["properties"]["source_reference"] = {
+    "dynamic": "strict",
+    "properties": {
+        **{
+            key: {"type": "keyword"}
+            for key in (
+                "source_record_type",
+                "path",
+                "artifact_id",
+                "source_fact_key",
+                "producer_id",
+                "producer_version",
+                "strength",
+                "polarity",
+            )
+        },
+        "source_range": {
+            "dynamic": "strict",
+            "properties": {
+                key: {"type": "long"}
+                for key in (
+                    "start_line",
+                    "end_line",
+                    "start_column",
+                    "end_column",
+                    "start_col",
+                    "end_col",
+                    "start_byte",
+                    "end_byte",
+                )
+            },
+        },
+    },
+}
+
 
 def compute_mapping_hash(mappings: dict[str, Any]) -> str:
     """Compute deterministic SHA-256 digest of mapping definition."""
@@ -99,6 +186,25 @@ class BulkIndexResult:
 class SearchIndexBackend(Protocol):
     """Protocol for physical search index storage and lifecycle operations."""
 
+    def operation(self, deadline: float) -> AbstractContextManager[None]: ...
+    def open_pit(self, index_name: str, ttl_seconds: float) -> str: ...
+    def close_pit(self, pit_id: str) -> None: ...
+    def search_page(
+        self,
+        index_name: str,
+        *,
+        pit_id: str,
+        scope: Any,
+        generation_id: str,
+        index_uuid: str,
+        query: str,
+        document_kinds: tuple[str, ...] | None,
+        entity_kinds: tuple[str, ...] | None,
+        statuses: tuple[str, ...] | None,
+        size: int,
+        after: list[Any] | None,
+    ) -> tuple[list[dict[str, Any]], int, str]: ...
+
     def create_index(
         self,
         index_name: str,
@@ -125,6 +231,10 @@ class SearchIndexBackend(Protocol):
     def read_all_record_summaries(self, index_name: str) -> list[RecordSummary]:
         """Perform match-all read of records for independent verification."""
         ...
+
+    def inspect_index(self, index_name: str) -> dict[str, Any]: ...
+
+    def iter_records(self, index_name: str) -> Iterator[dict[str, Any]]: ...
 
     def search_records(
         self,
@@ -153,6 +263,71 @@ class InMemorySearchBackend:
     def __init__(self) -> None:
         self._indexes: dict[str, dict[str, Any]] = {}
         self._simulate_failure: str | None = None
+        self._pits: dict[str, tuple[str, float]] = {}
+
+    @contextmanager
+    def operation(self, deadline: float) -> Iterator[None]:
+        from backend.platform.knowledge.contracts import SearchDeadlineExceededError
+
+        if monotonic() >= deadline:
+            raise SearchDeadlineExceededError()
+        yield
+        if monotonic() >= deadline:
+            raise SearchDeadlineExceededError()
+
+    def open_pit(self, index_name: str, ttl_seconds: float) -> str:
+        self.inspect_index(index_name)
+        pit = uuid4().hex
+        self._pits[pit] = (index_name, monotonic() + ttl_seconds)
+        return pit
+
+    def close_pit(self, pit_id: str) -> None:
+        self._pits.pop(pit_id, None)
+
+    def search_page(
+        self,
+        index_name: str,
+        *,
+        pit_id: str,
+        scope: Any,
+        generation_id: str,
+        index_uuid: str,
+        query: str,
+        document_kinds: tuple[str, ...] | None,
+        entity_kinds: tuple[str, ...] | None,
+        statuses: tuple[str, ...] | None,
+        size: int,
+        after: list[Any] | None,
+    ) -> tuple[list[dict[str, Any]], int, str]:
+        from backend.platform.knowledge.contracts import SearchCursorExpiredError
+
+        pit = self._pits.get(pit_id)
+        if pit is None or pit[0] != index_name or monotonic() >= pit[1]:
+            raise SearchCursorExpiredError()
+        rows = self.search_records(
+            index_name,
+            query=query,
+            document_kinds=document_kinds,
+            entity_kinds=entity_kinds,
+            statuses=statuses,
+        )
+        filtered = []
+        for row in rows:
+            if row.get("project_id") != str(scope.project_id) or row.get(
+                "architecture_version_id"
+            ) != str(scope.architecture_version_id):
+                continue
+            if (
+                row.get("generation_id") != generation_id
+                or row.get("index_uuid") != index_uuid
+            ):
+                continue
+            row["_sort"] = [row["_rank_tier"], -row["_score"], row["knowledge_key"]]
+            filtered.append(row)
+        total = len(filtered)
+        if after is not None:
+            filtered = [r for r in filtered if r["_sort"] > after]
+        return filtered[:size], total, pit_id
 
     def simulate_failure(self, failure_kind: str | None) -> None:
         """Configure simulation of backend errors.
@@ -205,7 +380,10 @@ class InMemorySearchBackend:
         successful = 0
         for rec in records:
             storage_key = rec["storage_key"]
-            idx["records"][storage_key] = dict(rec)
+            previous = idx["records"].get(storage_key)
+            if previous is not None and canonical_json(previous) != canonical_json(rec):
+                raise SearchIntegrityError("candidate document overwrite forbidden")
+            idx["records"][storage_key] = json.loads(canonical_json(rec))
             successful += 1
 
         return BulkIndexResult(total=len(records), successful=successful, failed=0)
@@ -225,6 +403,24 @@ class InMemorySearchBackend:
         if idx is None:
             raise SearchBackendUnavailableError(f"Index {index_name} not found")
         idx["sealed"] = True
+
+    def inspect_index(self, index_name: str) -> dict[str, Any]:
+        if self._simulate_failure == "outage":
+            raise SearchBackendUnavailableError("Storage backend is unreachable")
+        idx = self._indexes.get(index_name)
+        if idx is None:
+            raise SearchBackendUnavailableError("Exact search index is missing")
+        return {
+            "uuid": idx["uuid"],
+            "sealed": idx["sealed"],
+            "mapping_hash": compute_mapping_hash(idx["mappings"]),
+            "settings_hash": compute_settings_hash(idx["settings"]),
+        }
+
+    def iter_records(self, index_name: str) -> Iterator[dict[str, Any]]:
+        self.inspect_index(index_name)
+        for key in sorted(self._indexes[index_name]["records"]):
+            yield json.loads(canonical_json(self._indexes[index_name]["records"][key]))
 
     def read_all_record_summaries(self, index_name: str) -> list[RecordSummary]:
         if self._simulate_failure == "outage":

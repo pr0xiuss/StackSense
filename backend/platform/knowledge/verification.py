@@ -8,11 +8,19 @@ from __future__ import annotations
 
 import collections
 import hashlib
-from typing import Final
-from uuid import UUID, uuid4
+from typing import Any, Final
+from uuid import UUID
 
 from backend.platform.delivery.contracts import ProducerProfile, VersionScope
-from backend.platform.knowledge.elasticsearch import SearchIndexBackend
+from backend.platform.knowledge.contracts import SearchIntegrityError
+from backend.platform.knowledge.elasticsearch import (
+    SEARCH_INDEX_MAPPINGS,
+    SEARCH_INDEX_SETTINGS,
+    RecordSummary,
+    SearchIndexBackend,
+    compute_mapping_hash,
+    compute_settings_hash,
+)
 from backend.platform.knowledge.model import (
     C1_CONTRACT_VERSION,
     KnowledgeCounts,
@@ -20,6 +28,7 @@ from backend.platform.knowledge.model import (
     KnowledgeProjection,
     SearchVerificationResult,
     canonical_json,
+    stored_record_digest,
 )
 
 VERIFIER_VERSION: Final[str] = "1.0.0"
@@ -39,22 +48,69 @@ class SearchVerifier:
         scope: VersionScope,
         profile: ProducerProfile,
         candidate_id: UUID,
+        attempt_id: UUID,
         generation_id: UUID,
         index_name: str,
         index_uuid: str,
         expected_projection: KnowledgeProjection,
+        expected_settings: dict[str, Any] | None = None,
     ) -> SearchVerificationResult:
         """Independently read back candidate index.
 
         Audits returned summaries against expected projection.
         """
-        attempt_id = uuid4()
-        summaries = self._backend.read_all_record_summaries(index_name)
+        actual = self._backend.inspect_index(index_name)
+        physical_valid = (
+            actual["uuid"] == index_uuid
+            and actual["sealed"] is True
+            and actual["mapping_hash"] == compute_mapping_hash(SEARCH_INDEX_MAPPINGS)
+            and actual["settings_hash"]
+            == compute_settings_hash(
+                expected_settings
+                if expected_settings is not None
+                else SEARCH_INDEX_SETTINGS
+            )
+        )
+        expected_envelopes = {
+            r.to_stored_envelope(generation_id=generation_id, index_uuid=index_uuid)[
+                "storage_key"
+            ]: r.to_stored_envelope(generation_id=generation_id, index_uuid=index_uuid)
+            for r in expected_projection.records
+        }
+        summaries = []
+        seen: set[str] = set()
+        payload_valid = True
+        for record in self._backend.iter_records(index_name):
+            key = record.get("storage_key", "")
+            expected = expected_envelopes.get(key)
+            if (
+                key in seen
+                or expected is None
+                or canonical_json(record) != canonical_json(expected)
+            ):
+                payload_valid = False
+            seen.add(key)
+            recomputed_digest = stored_record_digest(record, scope)
+            if recomputed_digest != record.get("record_semantic_digest"):
+                payload_valid = False
+            summaries.append(
+                RecordSummary(
+                    key,
+                    record.get("knowledge_key", ""),
+                    record.get("document_kind", ""),
+                    recomputed_digest,
+                )
+            )
+        physical_valid = (
+            physical_valid and self._backend.inspect_index(index_name) == actual
+        )
 
         # 1. Compute actual counts
         kind_counts: collections.Counter[str] = collections.Counter()
         for s in summaries:
             kind_counts[s.document_kind] += 1
+        if set(kind_counts) - {kind.value for kind in KnowledgeDocumentKind}:
+            raise SearchIntegrityError("Unexpected physical document kind")
 
         actual_counts = KnowledgeCounts(
             entities=kind_counts[KnowledgeDocumentKind.ENTITY.value],
@@ -101,7 +157,10 @@ class SearchVerifier:
         failure_code: str | None = None
         failure_reason: str | None = None
 
-        if actual_counts != expected_projection.counts:
+        if not physical_valid:
+            verified = False
+            failure_code = "physical_identity_or_seal_mismatch"
+        elif actual_counts != expected_projection.counts:
             verified = False
             failure_code = "count_mismatch"
             failure_reason = (
@@ -122,6 +181,9 @@ class SearchVerifier:
                 f"Actual payload digest {actual_payload_digest} != "
                 f"expected {expected_payload_digest}"
             )
+        elif not payload_valid:
+            verified = False
+            failure_code = "stored_payload_mismatch"
 
         return SearchVerificationResult(
             c1_version=C1_CONTRACT_VERSION,

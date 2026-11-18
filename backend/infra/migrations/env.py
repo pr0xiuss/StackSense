@@ -25,6 +25,7 @@ from backend.platform.analysis.infra.lifecycle_model import (
     AnalysisStageModel,
 )
 from backend.platform.delivery.persistence import DELIVERY_TABLES
+from backend.platform.delivery.reprojection import SearchReprojectionOperation
 from backend.platform.dependency_injection import get_database_settings
 from backend.platform.graph.persistence import (
     GraphProjectionAttemptModel,
@@ -34,6 +35,7 @@ from backend.platform.identity.infra.user_model import (
     UserCredentialModel,
     UserModel,
 )
+from backend.platform.knowledge.persistence import SEARCH_TABLES
 from backend.platform.projects.infra.access_model import ProjectAccessModel
 from backend.platform.projects.infra.base import Base
 from backend.platform.projects.infra.model import ProjectModel
@@ -47,6 +49,7 @@ if config.config_file_name is not None:
 
 # Import persistence models above so they are registered with Base.metadata.
 _ = (
+    SearchReprojectionOperation,
     ProjectModel,
     ProjectAccessModel,
     RepositoryModel,
@@ -73,6 +76,7 @@ _ = (
 
 target_metadata = Base.metadata
 _delivery_tables = DELIVERY_TABLES  # Additive P5 metadata registration only.
+_search_tables = SEARCH_TABLES
 
 
 def get_database_url() -> str:

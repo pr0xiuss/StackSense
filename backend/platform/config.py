@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     delivery_policy_json: str | None = None
     delivery_fleet_json: str | None = None
     delivery_manual_retry_json: str | None = None
+    delivery_search_reprojection_json: str | None = None
 
     # Repository source acquisition
     allowed_source_roots: list[str] = [
@@ -93,6 +94,15 @@ class Settings(BaseSettings):
         default=128 * 1024 * 1024,
         ge=1024,
     )
+
+    # P5 search deployment is absent until operational limits are approved.
+    search_deployment_json: SecretStr | None = None
+    search_cursor_secret: SecretStr | None = None
+
+    @field_validator("search_deployment_json", "search_cursor_secret", mode="before")
+    @classmethod
+    def optional_search_secret(cls, value: Any) -> Any:
+        return None if value == "" else value
 
     # Architecture graph infrastructure (Phase 4 Module 1 Batch 1)
     neo4j_uri: str = "bolt://localhost:7687"

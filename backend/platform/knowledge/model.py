@@ -1,6 +1,6 @@
 """P5-C1 knowledge model, immutable records, canonical hashing, and manifest.
 
-This module defines the frozen domain vocabulary and deterministic records for
+This module defines the C1 candidate vocabulary and deterministic records for
 Phase 5 Module 2 (Knowledge Projection & Search Index), adhering to §7.4 of
 PROJECT_CONTEXT.md.
 """
@@ -26,10 +26,36 @@ from pydantic import (
 )
 
 from backend.platform.delivery.contracts import (
+    AttemptIdentity,
     Digest,
     ProducerProfile,
     VersionScope,
 )
+
+
+class ImmutableDict(dict[str, Any]):
+    """JSON-compatible defensive value; frozen models alone are shallow."""
+
+    def _reject(self, *args: Any, **kwargs: Any) -> Any:
+        raise TypeError("immutable knowledge value")
+
+    __setitem__ = _reject
+    __delitem__ = _reject
+    clear = _reject
+    pop = _reject
+    popitem = _reject
+    setdefault = _reject
+    update = _reject
+    __ior__ = _reject
+
+
+def immutable_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return ImmutableDict({k: immutable_value(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(immutable_value(v) for v in value)
+    return value
+
 
 C1_CONTRACT_VERSION: Final[Literal["1.0.0"]] = "1.0.0"
 SUMMARY_CANONICAL_REFERENCE: Final[str] = "__architecture_summary__"
@@ -78,6 +104,11 @@ class SourceReferenceDescriptor(BaseModel):
     producer_version: str | None = None
     strength: str | None = None
     polarity: str | None = None
+
+    @field_validator("source_range", mode="after")
+    @classmethod
+    def freeze_range(cls, value: Any) -> Any:
+        return immutable_value(value)
 
     @field_validator("path")
     @classmethod
@@ -225,6 +256,11 @@ class KnowledgeRecord(BaseModel):
     safe_metadata: dict[str, Any] = Field(default_factory=dict)
     record_digest: Digest
 
+    @field_validator("text_fields", "safe_metadata", mode="after")
+    @classmethod
+    def freeze_maps(cls, value: Any) -> Any:
+        return immutable_value(value)
+
     @field_validator("evidence_ids", mode="after")
     @classmethod
     def _sort_evidence_ids(cls, v: tuple[str, ...]) -> tuple[str, ...]:
@@ -232,6 +268,14 @@ class KnowledgeRecord(BaseModel):
 
     @model_validator(mode="after")
     def _validate_record_digest(self) -> Self:
+        if self.knowledge_key != compute_knowledge_key(
+            c1_version=self.c1_version,
+            project_id=self.scope.project_id,
+            architecture_version_id=self.scope.architecture_version_id,
+            document_kind=self.document_kind,
+            canonical_reference=self.canonical_reference,
+        ):
+            raise KnowledgeModelError("knowledge key does not match record identity")
         expected = self.compute_semantic_digest()
         if self.record_digest != expected:
             raise KnowledgeModelError(
@@ -339,6 +383,7 @@ class KnowledgeRecord(BaseModel):
         index_uuid: str,
     ) -> dict[str, Any]:
         """Generate the exact Elasticsearch _source document envelope."""
+        KnowledgeRecord.model_validate(self)
         storage_k = compute_storage_key(
             c1_version=self.c1_version,
             knowledge_key=self.knowledge_key,
@@ -373,6 +418,44 @@ class KnowledgeRecord(BaseModel):
             "record_semantic_digest": self.record_digest,
         }
         return env
+
+
+def stored_record_digest(record: dict[str, Any], scope: VersionScope) -> str:
+    """Recompute semantic integrity from read-back values, never digest labels.
+
+    Non-materialized scope provenance comes from the accepted immutable scope;
+    all stored identity fields are included using their actual returned values.
+    Physical generation/UUID/key fields are checked independently by readers.
+    """
+    identity = scope.semantic_identity()
+    for key in (
+        "project_id",
+        "architecture_version_id",
+        "repository_id",
+        "snapshot_id",
+        "analysis_id",
+    ):
+        identity[key] = record.get(key)
+    payload = {
+        key: record.get(key)
+        for key in (
+            "c1_version",
+            "document_kind",
+            "canonical_reference",
+            "knowledge_key",
+            "title",
+            "text_fields",
+            "kind",
+            "status",
+            "source_logical_id",
+            "target_logical_id",
+            "evidence_ids",
+            "source_reference",
+            "safe_metadata",
+        )
+    }
+    payload["scope_identity"] = identity
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
 def compute_projection_digest(
@@ -413,6 +496,11 @@ class KnowledgeProjection(BaseModel):
     source_content_digest: Digest
     omitted_metadata_counts: dict[str, int] = Field(default_factory=dict)
 
+    @field_validator("omitted_metadata_counts", mode="after")
+    @classmethod
+    def freeze_omissions(cls, value: Any) -> Any:
+        return immutable_value(value)
+
     @field_validator("records", mode="after")
     @classmethod
     def _sort_records(
@@ -422,6 +510,25 @@ class KnowledgeProjection(BaseModel):
 
     @model_validator(mode="after")
     def _validate_projection_digest(self) -> Self:
+        if self.source_content_digest != self.scope.canonical_digest:
+            raise KnowledgeModelError("projection source digest differs from scope")
+        if any(record.scope != self.scope for record in self.records):
+            raise KnowledgeModelError("projection contains foreign-scope records")
+        if len({record.knowledge_key for record in self.records}) != len(self.records):
+            raise KnowledgeModelError("projection contains duplicate records")
+        actual = {kind: 0 for kind in KnowledgeDocumentKind}
+        for record in self.records:
+            actual[record.document_kind] += 1
+        if self.counts != KnowledgeCounts(
+            entities=actual[KnowledgeDocumentKind.ENTITY],
+            relationships=actual[KnowledgeDocumentKind.RELATIONSHIP],
+            evidence=actual[KnowledgeDocumentKind.EVIDENCE],
+            unresolved=actual[KnowledgeDocumentKind.UNRESOLVED],
+            conflicts=actual[KnowledgeDocumentKind.CONFLICT],
+            architecture_summaries=actual[KnowledgeDocumentKind.ARCHITECTURE_SUMMARY],
+            total_records=len(self.records),
+        ):
+            raise KnowledgeModelError("projection counts differ from its records")
         expected = compute_projection_digest(
             c1_version=self.c1_version,
             scope=self.scope,
@@ -462,9 +569,13 @@ class SearchManifest(BaseModel):
     verifier_version: str
     seal_protocol_version: str
     sealed_at: AwareDatetime | None = None
+    # Older unfrozen fixtures can deserialize, but cannot publish without this
+    # complete binding. Publication must explicitly reject absent ownership.
+    attempt: AttemptIdentity | None = None
 
     def to_canonical_bytes(self) -> bytes:
         """Return canonical UTF-8 bytes of this manifest."""
+        SearchManifest.model_validate(self)
         data = self.model_dump(mode="json")
         return canonical_json(data).encode("utf-8")
 
