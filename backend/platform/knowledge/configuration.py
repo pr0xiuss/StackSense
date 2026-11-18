@@ -103,7 +103,11 @@ def configured_backend(raw: str) -> ElasticsearchBackend:
     try:
         module = importlib.import_module("elasticsearch")
         version = importlib.metadata.version("elasticsearch")
-    except (ImportError, AttributeError) as exc:
+    except (
+        ImportError,
+        AttributeError,
+        importlib.metadata.PackageNotFoundError,
+    ) as exc:
         raise SearchBackendUnavailableError(
             "Official search client is not installed"
         ) from exc

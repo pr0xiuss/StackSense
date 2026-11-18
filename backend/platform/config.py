@@ -170,6 +170,10 @@ class Settings(BaseSettings):
     )
     graph_query_cursor_ttl_seconds: int = Field(default=900, ge=60, le=86400)
 
+    # Controlled Retrieval and Evidence Context (Phase 5 Module 3, optional/additive)
+    retrieval_policy_json: str | None = None
+    retrieval_cursor_secret: SecretStr | None = None
+
     jwt_secret_key: SecretStr = SecretStr(
         "stacksense-insecure-dev-secret-key-change-in-production-at-least-32-bytes"
     )
@@ -256,6 +260,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "GRAPH_QUERY_CURSOR_SECRET_KEY must contain at least "
                 "32 characters in production"
+            )
+        if (
+            self.app_env.lower() in {"production", "prod"}
+            and self.retrieval_cursor_secret is not None
+            and len(self.retrieval_cursor_secret.get_secret_value()) < 32
+        ):
+            raise ValueError(
+                "RETRIEVAL_CURSOR_SECRET must contain at least 32 characters "
+                "in production"
             )
         if self.graph_query_default_depth > self.graph_query_max_depth:
             raise ValueError("graph query default depth cannot exceed max depth")
