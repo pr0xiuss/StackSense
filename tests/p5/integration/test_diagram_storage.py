@@ -33,8 +33,17 @@ def test_additive_migration_upgrade_and_safe_rollback(
     try:
         with isolated.begin() as c:
             c.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+            # Match the full Alembic chain: the legacy role enum already exists.
+            c.execute(
+                text(
+                    "CREATE TYPE project_role AS ENUM "
+                    "('OWNER', 'ADMIN', 'DEVELOPER', 'VIEWER')"
+                )
+            )
+            role_oid = c.scalar(text("SELECT 'project_role'::regtype::oid"))
             with Operations.context(MigrationContext.configure(c)):
                 migration.upgrade()
+            assert c.scalar(text("SELECT 'project_role'::regtype::oid")) == role_oid
             assert set(inspect(c).get_table_names(schema=schema)) == {
                 "diagram_resource",
                 "diagram_generation",

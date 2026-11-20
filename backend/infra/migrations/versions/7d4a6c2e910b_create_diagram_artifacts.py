@@ -5,10 +5,9 @@ Revises: 26c95d71b603
 """
 
 from alembic import op
-from sqlalchemy import text
+from sqlalchemy import MetaData, text
 
 from backend.platform.diagrams.persistence import DIAGRAM_TABLES, install_guards
-from backend.platform.projects.infra.base import Base
 
 revision = "7d4a6c2e910b"
 down_revision = "26c95d71b603"
@@ -18,7 +17,13 @@ depends_on = None
 
 def upgrade() -> None:
     connection = op.get_bind()
-    Base.metadata.create_all(connection, tables=DIAGRAM_TABLES, checkfirst=False)
+    # A table filter does not suppress metadata-level enum DDL listeners.
+    # Alembic imports the entire application metadata, including project_role,
+    # which earlier revisions already created. Own only the diagram DDL here.
+    metadata = MetaData()
+    for table in DIAGRAM_TABLES:
+        table.to_metadata(metadata)
+    metadata.create_all(connection, checkfirst=False)
     install_guards(connection, connection.scalar(text("SELECT current_schema()")))
 
 
