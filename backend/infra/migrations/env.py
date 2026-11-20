@@ -27,6 +27,7 @@ from backend.platform.analysis.infra.lifecycle_model import (
 from backend.platform.delivery.persistence import DELIVERY_TABLES
 from backend.platform.delivery.reprojection import SearchReprojectionOperation
 from backend.platform.dependency_injection import get_database_settings
+from backend.platform.diagrams.persistence import DIAGRAM_TABLES
 from backend.platform.graph.persistence import (
     GraphProjectionAttemptModel,
     GraphProjectionResourceModel,
@@ -77,6 +78,7 @@ _ = (
 target_metadata = Base.metadata
 _delivery_tables = DELIVERY_TABLES  # Additive P5 metadata registration only.
 _search_tables = SEARCH_TABLES
+_diagram_tables = DIAGRAM_TABLES
 
 
 def get_database_url() -> str:

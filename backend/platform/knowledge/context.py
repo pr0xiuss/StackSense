@@ -27,6 +27,7 @@ from backend.platform.knowledge.retrieval_contracts import (
     ResolutionState,
     ResolvedSubject,
     RetrievalCapacityExceededError,
+    RetrievalIntegrityFailedError,
     RetrievalOutcome,
     RetrievalPlan,
     RetrievalScope,
@@ -50,6 +51,9 @@ def _serialize_scope_for_digest(scope: RetrievalScope) -> dict[str, Any]:
         "architecture_version_id": str(scope.architecture_version_id),
         "sequence_number": scope.sequence_number,
         "canonical_digest": scope.canonical_digest,
+        "architecture_schema_version": scope.architecture_schema_version,
+        "ir_schema_version": scope.ir_schema_version,
+        "completeness": scope.completeness,
     }
 
 
@@ -59,12 +63,21 @@ def _serialize_used_sources_for_digest(
     """Allowlisted projection of participating sources (no advisory/timing data)."""
     used: list[dict[str, Any]] = []
     for obs in sorted(observations, key=lambda o: o.source_kind.value):
+        if obs.advisory_only:
+            continue
         used.append(
             {
                 "source_kind": obs.source_kind.value,
                 "contract_version": obs.contract_version,
                 "generation_id": str(obs.generation_id) if obs.generation_id else None,
                 "index_uuid": obs.index_uuid,
+                "graph_schema_version": obs.graph_schema_version,
+                "projector_version": obs.projector_version,
+                "search_scope": (
+                    obs.search_scope.model_dump(mode="json")
+                    if obs.search_scope
+                    else None
+                ),
             }
         )
     return used
@@ -101,6 +114,7 @@ def _serialize_evidence_for_digest(ev: EvidenceItemView) -> dict[str, Any]:
         "logical_id": ev.logical_id,
         "source_record_type": ev.source_record_type,
         "path": ev.path,
+        "artifact_id": str(ev.artifact_id) if ev.artifact_id else None,
         "range_data": ev.range_data,
         "polarity": ev.polarity,
         "strength": ev.strength,
@@ -120,6 +134,9 @@ def _serialize_unresolved_for_digest(u: UnresolvedView) -> dict[str, Any]:
         "source_logical_id": u.source_logical_id,
         "target_descriptor": u.target_descriptor,
         "details": u.details,
+        "status": u.status,
+        "evidence_references": sorted(u.evidence_references),
+        "candidate_references": sorted(u.candidate_references),
     }
 
 
@@ -274,11 +291,27 @@ class ContextBuilder:
     ) -> ContextBundle:
         """Assemble an immutable, validated ContextBundle."""
         policy_fingerprint = self._policy.compute_fingerprint()
+        if self._plan.policy_fingerprint != policy_fingerprint:
+            raise RetrievalIntegrityFailedError("Context plan policy mismatch")
         omission_list = list(omissions)
+        for collection in (facts, relationships, evidence, unresolved, conflicts):
+            record_ids: dict[str, str] = {}
+            for record in collection:
+                record_uuid = str(record.record_id)
+                if (
+                    record_uuid in record_ids
+                    and record_ids[record_uuid] != record.logical_id
+                ):
+                    raise RetrievalIntegrityFailedError(
+                        "Conflicting canonical record ID"
+                    )
+                record_ids[record_uuid] = record.logical_id
 
         # 1. Deduplicate and sort Facts
         seen_facts: dict[str, CanonicalFactView] = {}
         for f in facts:
+            if f.logical_id in seen_facts and seen_facts[f.logical_id] != f:
+                raise RetrievalIntegrityFailedError("Conflicting canonical identity")
             if f.logical_id not in seen_facts:
                 seen_facts[f.logical_id] = f
         sorted_facts = sorted(seen_facts.values(), key=lambda f: (f.kind, f.logical_id))
@@ -286,6 +319,8 @@ class ContextBuilder:
         # 2. Deduplicate and sort Relationships
         seen_rels: dict[str, RelationshipView] = {}
         for r in relationships:
+            if r.logical_id in seen_rels and seen_rels[r.logical_id] != r:
+                raise RetrievalIntegrityFailedError("Conflicting relationship identity")
             if r.logical_id not in seen_rels:
                 seen_rels[r.logical_id] = r
         sorted_rels = sorted(
@@ -301,6 +336,8 @@ class ContextBuilder:
         # 3. Deduplicate and sort Evidence
         seen_ev: dict[str, EvidenceItemView] = {}
         for ev in evidence:
+            if ev.logical_id in seen_ev and seen_ev[ev.logical_id] != ev:
+                raise RetrievalIntegrityFailedError("Conflicting evidence identity")
             if ev.logical_id not in seen_ev:
                 seen_ev[ev.logical_id] = ev
         sorted_ev = sorted(seen_ev.values(), key=evidence_sort_key)
@@ -308,6 +345,8 @@ class ContextBuilder:
         # 4. Deduplicate and sort Unresolved
         seen_unres: dict[str, UnresolvedView] = {}
         for u in unresolved:
+            if u.logical_id in seen_unres and seen_unres[u.logical_id] != u:
+                raise RetrievalIntegrityFailedError("Conflicting unresolved identity")
             if u.logical_id not in seen_unres:
                 seen_unres[u.logical_id] = u
         sorted_unres = sorted(
@@ -317,6 +356,8 @@ class ContextBuilder:
         # 5. Deduplicate and sort Conflicts
         seen_conf: dict[str, ConflictView] = {}
         for c in conflicts:
+            if c.logical_id in seen_conf and seen_conf[c.logical_id] != c:
+                raise RetrievalIntegrityFailedError("Conflicting conflict identity")
             if c.logical_id not in seen_conf:
                 seen_conf[c.logical_id] = c
         sorted_conf = sorted(
@@ -335,7 +376,13 @@ class ContextBuilder:
         )
 
         # 7. Deduplicate and sort Source Observations
-        sorted_obs = sorted(source_observations, key=lambda o: o.source_kind.value)
+        seen_obs: dict[str, SourceObservation] = {}
+        for observation in source_observations:
+            source_key = observation.source_kind.value
+            if source_key in seen_obs and seen_obs[source_key] != observation:
+                raise RetrievalIntegrityFailedError("Competing source observations")
+            seen_obs[source_key] = observation
+        sorted_obs = sorted(seen_obs.values(), key=lambda o: o.source_kind.value)
 
         # 8. Sort Resolved Subjects
         sorted_subj = sorted(
@@ -344,6 +391,22 @@ class ContextBuilder:
         )
 
         # Check bounds against policy budgets
+        required = {
+            s.selected_logical_id
+            for s in sorted_subj
+            if s.state == ResolutionState.RESOLVED
+        }
+        if len(required) > self._policy.max_selected_facts:
+            raise RetrievalCapacityExceededError("Required subjects cannot fit")
+        if len(sorted_conf) > self._policy.max_selected_conflicts:
+            raise RetrievalCapacityExceededError(
+                "Required conflict disclosure cannot fit"
+            )
+        if len(sorted_unres) > self._policy.max_selected_unresolved:
+            raise RetrievalCapacityExceededError("Unresolved disclosure cannot fit")
+        sorted_facts.sort(
+            key=lambda f: (f.logical_id not in required, f.kind, f.logical_id)
+        )
         is_truncated = False
         if len(sorted_facts) > self._policy.max_selected_facts:
             omitted = len(sorted_facts) - self._policy.max_selected_facts
@@ -388,11 +451,15 @@ class ContextBuilder:
         outcome = RetrievalOutcome.COMPLETE
         if any(s.state == ResolutionState.AMBIGUOUS for s in sorted_subj):
             outcome = RetrievalOutcome.AMBIGUOUS
-        elif not sorted_facts and not sorted_ev:
+        elif (
+            not any((sorted_facts, sorted_rels, sorted_ev, sorted_unres, sorted_conf))
+            and not omission_list
+            and not any(s.state == ResolutionState.INCOMPLETE for s in sorted_subj)
+        ):
             outcome = RetrievalOutcome.NO_EVIDENCE
         elif (
             is_truncated
-            or any(o.reason.endswith("budget_exceeded") for o in omission_list)
+            or bool(omission_list)
             or any(s.state == ResolutionState.INCOMPLETE for s in sorted_subj)
             or any(s.state == ResolutionState.NOT_FOUND for s in sorted_subj)
         ):
@@ -411,13 +478,17 @@ class ContextBuilder:
             )
         else:
             total_items = len(sorted_facts) + len(sorted_rels) + len(sorted_ev)
+            incomplete_scan = any(
+                "incomplete" in o.reason or "unavailable" in o.reason
+                for o in omission_list
+            )
             final_coverage = Coverage(
                 considered_count=total_items,
                 selected_count=total_items,
                 scanned_count=total_items,
-                count_known=True,
-                exhausted=not is_truncated,
-                truncated=is_truncated,
+                count_known=not incomplete_scan,
+                exhausted=not is_truncated and not incomplete_scan,
+                truncated=is_truncated or incomplete_scan,
                 omission_reasons=tuple(sorted({o.reason for o in omission_list})),
             )
 
@@ -480,49 +551,23 @@ class ContextBuilder:
             semantic_digest=semantic_digest,
         )
 
-        # Wire byte validation
-        wire_json = candidate_bundle.model_dump_json()
-        wire_bytes = len(wire_json.encode("utf-8"))
-
-        if wire_bytes > self._policy.max_output_bytes:
-            raise RetrievalCapacityExceededError(
-                f"ContextBundle wire size ({wire_bytes} bytes) exceeds "
-                f"configured limit ({self._policy.max_output_bytes} bytes)"
+        # Account for the final byte-count field itself, then validate that exact wire.
+        bundle = candidate_bundle
+        for _ in range(8):
+            size = len(bundle.model_dump_json().encode("utf-8"))
+            if size > self._policy.max_output_bytes:
+                raise RetrievalCapacityExceededError(
+                    "ContextBundle wire size exceeds policy"
+                )
+            if bundle.limits_and_usage.total_output_bytes == size:
+                return ContextBundle.model_validate_json(bundle.model_dump_json())
+            usage = bundle.limits_and_usage.model_copy(
+                update={"total_output_bytes": size}
             )
-
-        # Update limits_and_usage with measured total_output_bytes
-        final_limits = LimitsAndUsage(
-            max_facts=limits_and_usage.max_facts,
-            max_relationships=limits_and_usage.max_relationships,
-            max_evidence=limits_and_usage.max_evidence,
-            max_output_bytes=limits_and_usage.max_output_bytes,
-            facts_count=limits_and_usage.facts_count,
-            relationships_count=limits_and_usage.relationships_count,
-            evidence_count=limits_and_usage.evidence_count,
-            unresolved_count=limits_and_usage.unresolved_count,
-            conflicts_count=limits_and_usage.conflicts_count,
-            total_output_bytes=wire_bytes,
-        )
-
-        return ContextBundle(
-            c3_version=candidate_bundle.c3_version,
-            scope=candidate_bundle.scope,
-            plan=candidate_bundle.plan,
-            policy_fingerprint=candidate_bundle.policy_fingerprint,
-            source_observations=candidate_bundle.source_observations,
-            resolved_subjects=candidate_bundle.resolved_subjects,
-            facts=candidate_bundle.facts,
-            relationships=candidate_bundle.relationships,
-            evidence=candidate_bundle.evidence,
-            unresolved=candidate_bundle.unresolved,
-            conflicts=candidate_bundle.conflicts,
-            rationales=candidate_bundle.rationales,
-            coverage=candidate_bundle.coverage,
-            omissions=candidate_bundle.omissions,
-            limits_and_usage=final_limits,
-            outcome=candidate_bundle.outcome,
-            semantic_digest=candidate_bundle.semantic_digest,
-        )
+            bundle = ContextBundle.model_validate(
+                bundle.model_copy(update={"limits_and_usage": usage})
+            )
+        raise RetrievalIntegrityFailedError("Wire size accounting did not converge")
 
 
 __all__ = [

@@ -54,7 +54,7 @@ def _make_scope() -> RetrievalScope:
     )
 
 
-def _make_plan() -> RetrievalPlan:
+def _make_plan(policy: RetrievalPolicy | None = None) -> RetrievalPlan:
     return RetrievalPlan(
         strategy_version="1.0.0",
         request_fingerprint="b" * 64,
@@ -66,7 +66,7 @@ def _make_plan() -> RetrievalPlan:
         subjects=(SubjectSelector.from_logical_id("entity", "service_payment"),),
         required_sources=(SourceKind.CANONICAL,),
         optional_sources=(SourceKind.SEARCH, SourceKind.GRAPH),
-        policy_fingerprint="c" * 64,
+        policy_fingerprint=(policy or RetrievalPolicy()).compute_fingerprint(),
         budget_snapshot={"limit": 25},
     )
 
@@ -138,7 +138,13 @@ def test_context_builder_happy_path():
         selected_kind="service",
     )
 
-    builder = ContextBuilder(scope=scope, plan=plan, policy=policy)
+    builder = ContextBuilder(
+        scope=scope,
+        plan=plan.model_copy(
+            update={"policy_fingerprint": policy.compute_fingerprint()}
+        ),
+        policy=policy,
+    )
     bundle = builder.build_bundle(
         source_observations=[obs],
         resolved_subjects=[subj],
@@ -229,7 +235,13 @@ def test_permutation_stability():
         target_kind="database",
     )
 
-    builder = ContextBuilder(scope=scope, plan=plan, policy=policy)
+    builder = ContextBuilder(
+        scope=scope,
+        plan=plan.model_copy(
+            update={"policy_fingerprint": policy.compute_fingerprint()}
+        ),
+        policy=policy,
+    )
 
     bundle1 = builder.build_bundle(
         facts=[fact1, fact2],
@@ -290,7 +302,13 @@ def test_semantic_digest_invariance():
         observed_at=datetime.now(UTC),
     )
 
-    builder = ContextBuilder(scope=scope, plan=plan, policy=policy)
+    builder = ContextBuilder(
+        scope=scope,
+        plan=plan.model_copy(
+            update={"policy_fingerprint": policy.compute_fingerprint()}
+        ),
+        policy=policy,
+    )
     bundle_initial = builder.build_bundle(
         source_observations=[obs_initial],
         facts=[fact],
@@ -337,7 +355,13 @@ def test_semantic_digest_sensitivity():
         status="confirmed",
     )
 
-    builder = ContextBuilder(scope=scope, plan=plan, policy=policy)
+    builder = ContextBuilder(
+        scope=scope,
+        plan=plan.model_copy(
+            update={"policy_fingerprint": policy.compute_fingerprint()}
+        ),
+        policy=policy,
+    )
     bundle_base = builder.build_bundle(facts=[fact_base])
     bundle_altered = builder.build_bundle(facts=[fact_altered])
 
@@ -350,7 +374,13 @@ def test_deep_immutability_and_extra_fields_forbidden():
     plan = _make_plan()
     policy = RetrievalPolicy()
 
-    builder = ContextBuilder(scope=scope, plan=plan, policy=policy)
+    builder = ContextBuilder(
+        scope=scope,
+        plan=plan.model_copy(
+            update={"policy_fingerprint": policy.compute_fingerprint()}
+        ),
+        policy=policy,
+    )
     bundle = builder.build_bundle()
 
     # Mutation raises error
@@ -399,7 +429,13 @@ def test_wire_byte_capacity_exceeded():
         for i in range(15)
     ]
 
-    builder = ContextBuilder(scope=scope, plan=plan, policy=policy)
+    builder = ContextBuilder(
+        scope=scope,
+        plan=plan.model_copy(
+            update={"policy_fingerprint": policy.compute_fingerprint()}
+        ),
+        policy=policy,
+    )
     with pytest.raises(RetrievalCapacityExceededError, match="ContextBundle wire size"):
         builder.build_bundle(facts=large_facts)
 
@@ -410,7 +446,13 @@ def test_outcome_classification():
     plan = _make_plan()
     policy = RetrievalPolicy(max_selected_facts=1)
 
-    builder = ContextBuilder(scope=scope, plan=plan, policy=policy)
+    builder = ContextBuilder(
+        scope=scope,
+        plan=plan.model_copy(
+            update={"policy_fingerprint": policy.compute_fingerprint()}
+        ),
+        policy=policy,
+    )
 
     # 1. NO_EVIDENCE: 0 facts, 0 evidence
     b_empty = builder.build_bundle()

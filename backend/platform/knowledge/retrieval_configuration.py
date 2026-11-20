@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
+from threading import BoundedSemaphore
 from typing import Literal, Self
 
 from pydantic import (
@@ -20,6 +25,8 @@ from pydantic import (
 )
 
 from backend.platform.knowledge.retrieval_contracts import (
+    RetrievalCapacityExceededError,
+    RetrievalDeadlineExceededError,
     RetrievalUnavailableError,
 )
 
@@ -40,7 +47,7 @@ class RetrievalPolicy(BaseModel):
     canonical_page_size: int = Field(default=100, gt=0, le=100)
     canonical_max_rows_per_collection: int = Field(default=1000, gt=0)
     max_retained_candidates: int = Field(default=100, gt=0, le=500)
-    max_source_calls: int = Field(default=20, gt=0, le=50)
+    max_source_calls: int = Field(default=20, gt=0)
     max_search_pages: int = Field(default=5, gt=0, le=10)
     max_search_streams: int = Field(default=1, gt=0, le=1)
     max_final_probes: int = Field(default=1, gt=0, le=1)
@@ -66,6 +73,7 @@ class RetrievalPolicy(BaseModel):
     )
     max_chain_pages: int = Field(default=10, gt=0, le=50)
     max_chain_work_units: int = Field(default=500, gt=0)
+    max_concurrent_operations: int = Field(default=1, gt=0)
 
     @model_validator(mode="after")
     def validate_budget_relationships(self) -> Self:
@@ -87,12 +95,103 @@ class RetrievalPolicy(BaseModel):
 def parse_retrieval_policy(raw: str) -> RetrievalPolicy:
     """Parse JSON string into RetrievalPolicy or raise RetrievalUnavailableError."""
     try:
+        values = json.loads(raw)
+        required = set(RetrievalPolicy.model_fields) - {"policy_version"}
+        if not isinstance(values, dict) or not required.issubset(values):
+            raise ValueError("Every operating limit must be explicit")
         return RetrievalPolicy.model_validate_json(raw)
     except Exception as exc:
         raise RetrievalUnavailableError(
             "Invalid or missing retrieval policy configuration",
-            cause=str(exc),
         ) from exc
+
+
+class RetrievalBudget:
+    """One deadline and aggregate work account for an entire public operation."""
+
+    def __init__(self, policy: RetrievalPolicy, *, prior_work: int = 0) -> None:
+        self.policy = policy
+        self.deadline = time.monotonic() + policy.total_deadline_seconds
+        self.calls = 0
+        self.work = prior_work
+        self.rows: dict[str, int] = {}
+        self.search_pages = 0
+        self.final_calls = 0
+
+    def reserve_final_checks(self, *, search: bool, graph: bool) -> None:
+        self.final_calls = 1 + int(search) + int(graph)
+        if (
+            self.policy.max_source_calls <= self.final_calls
+            or self.policy.max_chain_work_units <= self.final_calls
+        ):
+            raise RetrievalCapacityExceededError(
+                "Final validation cannot fit operating budget"
+            )
+        if search and self.policy.max_search_pages < 2:
+            raise RetrievalCapacityExceededError(
+                "Search and final probe cannot fit page budget"
+            )
+
+    def remaining(self, *, reserve: bool = True) -> float:
+        seconds = self.deadline - time.monotonic()
+        if reserve:
+            seconds -= self.policy.finalization_reserve_seconds
+        if seconds <= 0:
+            raise RetrievalDeadlineExceededError()
+        return seconds
+
+    def charge(self, units: int = 1) -> None:
+        self.work += units
+        if self.work > self.policy.max_chain_work_units:
+            raise RetrievalCapacityExceededError("Continuation work budget exhausted")
+
+    def call(self, source: str, *, final: bool = False) -> float:
+        remaining = self.remaining(reserve=not final)
+        if final:
+            self.final_calls = max(0, self.final_calls - 1)
+        elif self.calls + 1 + self.final_calls > self.policy.max_source_calls:
+            raise RetrievalCapacityExceededError("Required final calls are reserved")
+        self.calls += 1
+        self.charge()
+        if self.calls > self.policy.max_source_calls:
+            raise RetrievalCapacityExceededError("Source call budget exhausted")
+        if source == "search":
+            self.search_pages += 1
+            if self.search_pages > self.policy.max_search_pages:
+                raise RetrievalCapacityExceededError("Search page budget exhausted")
+        return remaining
+
+    def scanned(self, collection: str, count: int) -> None:
+        self.charge(count)
+        self.rows[collection] = self.rows.get(collection, 0) + count
+        if self.rows[collection] > self.policy.canonical_max_rows_per_collection:
+            raise RetrievalCapacityExceededError("Canonical scan budget exhausted")
+        self.remaining()
+
+
+CURRENT_RETRIEVAL_BUDGET: ContextVar[RetrievalBudget | None] = ContextVar(
+    "c3_operation_budget", default=None
+)
+
+
+@contextmanager
+def operation_budget(budget: RetrievalBudget) -> Iterator[None]:
+    semaphore = _admission(
+        budget.policy.compute_fingerprint(), budget.policy.max_concurrent_operations
+    )
+    if not semaphore.acquire(blocking=False):
+        raise RetrievalCapacityExceededError("Process retrieval admission exhausted")
+    token = CURRENT_RETRIEVAL_BUDGET.set(budget)
+    try:
+        yield
+    finally:
+        CURRENT_RETRIEVAL_BUDGET.reset(token)
+        semaphore.release()
+
+
+@lru_cache(maxsize=1)
+def _admission(fingerprint: str, limit: int) -> BoundedSemaphore:
+    return BoundedSemaphore(limit)
 
 
 @lru_cache(maxsize=1)

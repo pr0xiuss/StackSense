@@ -7,7 +7,6 @@ per §7A.8, §7A.10, and §7A.11 of PROJECT_CONTEXT.md.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
@@ -27,23 +26,16 @@ from backend.platform.analysis.application.dependencies import (
     require_delegated_project,
 )
 from backend.platform.errors import StackSenseError
-from backend.platform.knowledge.context import ContextBuilder
-from backend.platform.knowledge.evidence import EvidencePlanner
 from backend.platform.knowledge.retrieval import KnowledgeQueryService
-from backend.platform.knowledge.retrieval_configuration import RetrievalPolicy
 from backend.platform.knowledge.retrieval_contracts import (
     DEFAULT_RETRIEVAL_LIMIT,
     MAX_RETRIEVAL_LIMIT,
-    CanonicalFactView,
-    CanonicalReadPort,
     ContextBundle,
     ContextRequest,
-    Coverage,
     EvidencePage,
+    EvidenceRequest,
     KnowledgeQueryRequest,
     KnowledgeQueryResponse,
-    RelationshipView,
-    ResolvedSubject,
     RetrievalCapacityExceededError,
     RetrievalCursorExpiredError,
     RetrievalCursorInvalidError,
@@ -53,21 +45,37 @@ from backend.platform.knowledge.retrieval_contracts import (
     RetrievalIntegrityFailedError,
     RetrievalInvalidRequestError,
     RetrievalNotFoundError,
-    RetrievalOperation,
-    RetrievalPlan,
     RetrievalPrincipal,
     RetrievalUnavailableError,
-    SelectionRationale,
-    SelectionRationaleCode,
 )
 from backend.platform.knowledge.retrieval_dependencies import (
-    get_canonical_read_port,
-    get_evidence_planner,
     get_knowledge_query_service,
-    get_retrieval_policy,
 )
 
 logger = logging.getLogger(__name__)
+SAFE_CAUSES = frozenset(
+    {
+        "search_unavailable",
+        "graph_unavailable",
+        "canonical_unavailable",
+        "search_cursor_expired",
+        "search_cursor_invalid",
+        "search_generation_changed",
+        "search_capacity_exceeded",
+        "search_deadline_exceeded",
+        "search_not_ready",
+        "search_backend_unavailable",
+        "search_capability_unavailable",
+        "search_integrity_error",
+        "graph_generation_changed",
+        "graph_query_timeout",
+        "graph_query_integrity_error",
+        "graph_projection_not_found",
+        "graph_projection_not_ready",
+        "graph_schema_incompatible",
+        "graph_node_not_found",
+    }
+)
 
 
 def _error_response(
@@ -84,7 +92,7 @@ def _error_response(
             "details": details or {},
         }
     }
-    if cause:
+    if cause in SAFE_CAUSES:
         content["error"]["cause"] = cause
     return JSONResponse(status_code=status_code, content=content)
 
@@ -123,8 +131,8 @@ class RetrievalRoute(APIRoute):
         async def bounded_handler(request: Request) -> Response:
             try:
                 return await handler(request)
-            except RequestValidationError as exc:
-                logger.error("RequestValidationError: %s", exc.errors())
+            except RequestValidationError:
+                logger.info("retrieval_request_validation_failed")
                 return _error_response(
                     "retrieval_invalid_request",
                     "Invalid retrieval request parameters",
@@ -142,8 +150,8 @@ class RetrievalRoute(APIRoute):
                 raise
             except HTTPException:
                 raise
-            except Exception as exc:
-                logger.exception("unhandled_retrieval_route_exception: %s", exc)
+            except Exception:
+                logger.error("unhandled_retrieval_route_exception")
                 return _error_response(
                     "retrieval_integrity_failed",
                     "Internal retrieval failure",
@@ -153,255 +161,119 @@ class RetrievalRoute(APIRoute):
         return bounded_handler
 
 
-router = APIRouter(tags=["Controlled Retrieval"], route_class=RetrievalRoute)
+def authorized_retrieval(
+    project_id: UUID,
+    context: Annotated[DelegatedRequestContext, Depends(get_delegated_context)],
+) -> DelegatedRequestContext:
+    require_delegated_project(context, project_id)
+    if context.actor_id is None:
+        raise RetrievalInvalidRequestError("A delegated actor is required")
+    return context
+
+
+router = APIRouter(
+    tags=["Controlled Retrieval"],
+    route_class=RetrievalRoute,
+    dependencies=[Depends(authorized_retrieval)],
+)
+
+
+def principal_for(
+    context: DelegatedRequestContext, project_id: UUID
+) -> RetrievalPrincipal:
+    return RetrievalPrincipal(
+        actor_id=context.actor_id,
+        project_id=project_id,
+        role=context.role,
+        correlation_id=context.correlation_id,
+    )
+
+
+def route_body(
+    body: dict[str, Any], version_id: UUID, project_id: UUID
+) -> dict[str, Any]:
+    for key, value in (
+        ("project_id", project_id),
+        ("architecture_version_id", version_id),
+    ):
+        if key in body and str(body[key]) != str(value):
+            raise RetrievalInvalidRequestError("Request scope does not match route")
+    return {**body, "project_id": project_id, "architecture_version_id": version_id}
 
 
 @router.post(
     "/architecture-versions/{version_id}/knowledge/query",
     response_model=KnowledgeQueryResponse,
-    status_code=200,
 )
 def query_architecture_knowledge(
     version_id: UUID,
     project_id: UUID,
-    request: KnowledgeQueryRequest,
-    context: Annotated[DelegatedRequestContext, Depends(get_delegated_context)],
+    request: dict[str, Any],
+    context: Annotated[DelegatedRequestContext, Depends(authorized_retrieval)],
     query_service: Annotated[
         KnowledgeQueryService, Depends(get_knowledge_query_service)
     ],
-    canonical_port: Annotated[CanonicalReadPort, Depends(get_canonical_read_port)],
-) -> KnowledgeQueryResponse:
-    """Execute a controlled retrieval operation for architecture subjects."""
-    require_delegated_project(context, project_id)
-    if context.actor_id is None:
-        raise RetrievalInvalidRequestError(
-            "Non-null actor is required for retrieval",
-            safe_details={"project_id": str(project_id)},
-        )
-
-    if (
-        request.project_id != project_id
-        or request.architecture_version_id != version_id
-    ):
-        raise RetrievalInvalidRequestError(
-            "Request scope does not match route parameters",
-            safe_details={
-                "expected_scope": f"{project_id}/{version_id}",
-                "actual_scope": (
-                    f"{request.project_id}/{request.architecture_version_id}"
-                ),
-            },
-        )
-
-    # Verify version existence and ownership
-    canonical_port.get_version(version_id, project_id)
-
-    principal = RetrievalPrincipal(
-        actor_id=context.actor_id,
-        project_id=project_id,
-        role=context.role,
-        correlation_id=context.correlation_id,
+) -> Response:
+    value = KnowledgeQueryRequest.model_validate(
+        route_body(request, version_id, project_id)
     )
-    return query_service.query(request, principal=principal)
+    query_service.query(value, principal=principal_for(context, project_id))
+    return Response(content=query_service.response_bytes, media_type="application/json")
 
 
 @router.post(
     "/architecture-versions/{version_id}/knowledge/context",
     response_model=ContextBundle,
-    status_code=200,
 )
 def assemble_retrieval_context(
     version_id: UUID,
     project_id: UUID,
-    body: ContextRequest,
-    context: Annotated[DelegatedRequestContext, Depends(get_delegated_context)],
+    body: dict[str, Any],
+    context: Annotated[DelegatedRequestContext, Depends(authorized_retrieval)],
     query_service: Annotated[
         KnowledgeQueryService, Depends(get_knowledge_query_service)
     ],
-    canonical_port: Annotated[CanonicalReadPort, Depends(get_canonical_read_port)],
-    evidence_planner: Annotated[EvidencePlanner, Depends(get_evidence_planner)],
-    policy: Annotated[RetrievalPolicy, Depends(get_retrieval_policy)],
-) -> ContextBundle:
-    """Assemble an immutable ContextBundle for specified subjects and operations."""
-    require_delegated_project(context, project_id)
-    if context.actor_id is None:
-        raise RetrievalInvalidRequestError(
-            "Non-null actor is required for context assembly",
-            safe_details={"project_id": str(project_id)},
-        )
-
-    if body.project_id != project_id or body.architecture_version_id != version_id:
-        raise RetrievalInvalidRequestError(
-            "ContextRequest scope does not match route parameters",
-            safe_details={
-                "expected_scope": f"{project_id}/{version_id}",
-                "actual_scope": f"{body.project_id}/{body.architecture_version_id}",
-            },
-        )
-
-    scope = canonical_port.get_version(version_id, project_id)
-    principal = RetrievalPrincipal(
-        actor_id=context.actor_id,
-        project_id=project_id,
-        role=context.role,
-        correlation_id=context.correlation_id,
-    )
-
-    all_resolved_subjects: list[ResolvedSubject] = []
-    all_facts: list[CanonicalFactView] = []
-    all_relationships: list[RelationshipView] = []
-    all_rationales: list[SelectionRationale] = []
-
-    # 1. Resolve each subject and query operations
-    for subj_sel in body.subjects:
-        lookup_req = KnowledgeQueryRequest(
-            project_id=project_id,
-            architecture_version_id=version_id,
-            operation=RetrievalOperation.LOOKUP,
-            subject=subj_sel,
-            limit=policy.canonical_page_size,
-        )
-        lookup_resp = query_service.query(lookup_req, principal=principal)
-        if lookup_resp.resolved_subject:
-            all_resolved_subjects.append(lookup_resp.resolved_subject)
-        all_facts.extend(lookup_resp.facts)
-        for f in lookup_resp.facts:
-            all_rationales.append(
-                SelectionRationale(
-                    code=SelectionRationaleCode.EXPLICIT_IDENTITY,
-                    target_logical_id=f.logical_id,
-                    target_kind=f.kind,
-                    originating_operation=RetrievalOperation.LOOKUP,
-                )
-            )
-
-        if (
-            RetrievalOperation.RELATIONSHIPS in body.operations
-            and lookup_resp.resolved_subject
-            and lookup_resp.resolved_subject.selected_logical_id
-        ):
-            rel_req = KnowledgeQueryRequest(
-                project_id=project_id,
-                architecture_version_id=version_id,
-                operation=RetrievalOperation.RELATIONSHIPS,
-                subject=subj_sel,
-                limit=policy.canonical_page_size,
-            )
-            rel_resp = query_service.query(rel_req, principal=principal)
-            all_relationships.extend(rel_resp.relationships)
-            for r in rel_resp.relationships:
-                all_rationales.append(
-                    SelectionRationale(
-                        code=SelectionRationaleCode.DIRECT_RELATIONSHIP,
-                        target_logical_id=r.logical_id,
-                        target_kind=r.kind,
-                        originating_operation=RetrievalOperation.RELATIONSHIPS,
-                    )
-                )
-
-    # 2. Plan and resolve evidence, conflicts, and unresolved items
-    evidence_res = evidence_planner.plan_evidence(
-        version_id=version_id,
-        project_id=project_id,
-        facts=all_facts,
-        relationships=all_relationships,
-        include_evidence=body.include_evidence,
-        include_conflicts=body.include_conflicts,
-        include_unresolved=body.include_unresolved,
-    )
-
-    for ev in evidence_res.evidence:
-        code = (
-            SelectionRationaleCode.CONFLICTING_EVIDENCE
-            if ev.polarity == "conflicting"
-            else SelectionRationaleCode.SUPPORTING_EVIDENCE
-        )
-        all_rationales.append(
-            SelectionRationale(
-                code=code,
-                target_logical_id=ev.logical_id,
-                target_kind="evidence",
-            )
-        )
-
-    # 3. Build RetrievalPlan
-    request_fingerprint = hashlib.sha256(
-        body.model_dump_json().encode("utf-8")
-    ).hexdigest()
-    plan = RetrievalPlan(
-        strategy_version="1.0.0",
-        request_fingerprint=request_fingerprint,
-        operations=body.operations,
-        subjects=body.subjects,
-        required_sources=body.required_sources,
-        optional_sources=body.optional_sources,
-        policy_fingerprint=policy.compute_fingerprint(),
-        budget_snapshot={"page_size": policy.canonical_page_size},
-    )
-
-    # 4. Assemble ContextBundle
-    builder = ContextBuilder(scope=scope, plan=plan, policy=policy)
-    return builder.build_bundle(
-        source_observations=(),
-        resolved_subjects=all_resolved_subjects,
-        facts=all_facts,
-        relationships=all_relationships,
-        evidence=evidence_res.evidence,
-        unresolved=evidence_res.unresolved,
-        conflicts=evidence_res.conflicts,
-        rationales=all_rationales,
-        omissions=evidence_res.omissions,
-    )
+) -> Response:
+    value = ContextRequest.model_validate(route_body(body, version_id, project_id))
+    query_service.build_context(value, principal=principal_for(context, project_id))
+    return Response(content=query_service.response_bytes, media_type="application/json")
 
 
 @router.get(
     "/architecture-versions/{version_id}/knowledge/evidence",
     response_model=EvidencePage,
-    status_code=200,
 )
 def get_architecture_evidence_page(
     version_id: UUID,
     project_id: UUID,
-    context: Annotated[DelegatedRequestContext, Depends(get_delegated_context)],
-    canonical_port: Annotated[CanonicalReadPort, Depends(get_canonical_read_port)],
-    entity_id: Annotated[UUID | None, Query()] = None,
+    context: Annotated[DelegatedRequestContext, Depends(authorized_retrieval)],
+    query_service: Annotated[
+        KnowledgeQueryService, Depends(get_knowledge_query_service)
+    ],
+    entity_id: Annotated[list[UUID] | None, Query()] = None,
+    relationship_id: Annotated[list[UUID] | None, Query()] = None,
+    evidence_id: Annotated[list[UUID] | None, Query()] = None,
     limit: Annotated[
         int, Query(ge=1, le=MAX_RETRIEVAL_LIMIT)
     ] = DEFAULT_RETRIEVAL_LIMIT,
-    offset: Annotated[int, Query(ge=0)] = 0,
-) -> EvidencePage:
-    """Retrieve bounded paginated evidence records for an architecture version."""
-    require_delegated_project(context, project_id)
-    if context.actor_id is None:
+    cursor: Annotated[str | None, Query(max_length=4096)] = None,
+    offset: Annotated[int | None, Query()] = None,
+) -> Response:
+    if offset is not None:
         raise RetrievalInvalidRequestError(
-            "Non-null actor is required to read evidence",
-            safe_details={"project_id": str(project_id)},
+            "Use the signed continuation cursor, not offsets"
         )
-
-    scope = canonical_port.get_version(version_id, project_id)
-    items, total = canonical_port.list_evidence(
-        version_id=version_id,
+    value = EvidenceRequest(
         project_id=project_id,
+        architecture_version_id=version_id,
+        entity_ids=tuple(entity_id or ()),
+        relationship_ids=tuple(relationship_id or ()),
+        evidence_ids=tuple(evidence_id or ()),
         limit=limit,
-        offset=offset,
-        entity_id=entity_id,
+        cursor=cursor,
     )
-    has_more = (offset + len(items)) < total
-    coverage = Coverage(
-        considered_count=total,
-        selected_count=len(items),
-        scanned_count=min(total, offset + len(items)),
-        count_known=True,
-        exhausted=not has_more,
-    )
-
-    return EvidencePage(
-        scope=scope,
-        items=items,
-        total_items=total,
-        has_more=has_more,
-        coverage=coverage,
-    )
+    query_service.read_evidence(value, principal=principal_for(context, project_id))
+    return Response(content=query_service.response_bytes, media_type="application/json")
 
 
 __all__ = ["router"]

@@ -64,6 +64,35 @@ class SearchClients:
 
 
 class ElasticsearchBackend:
+    @staticmethod
+    def _pit_missing(value: Any) -> bool:
+        """Recognize typed ES failures, never document fields or reason text."""
+        pending = [value]
+        inspected = 0
+        while pending and inspected < 256:
+            item = pending.pop()
+            inspected += 1
+            if isinstance(item, dict):
+                if item.get("type") in {
+                    "search_context_missing_exception",
+                    "point_in_time_missing_exception",
+                }:
+                    return True
+                for key in (
+                    "error",
+                    "caused_by",
+                    "root_cause",
+                    "failed_shards",
+                    "failures",
+                    "reason",
+                ):
+                    child = item.get(key)
+                    if isinstance(child, (dict, list)):
+                        pending.append(child)
+            elif isinstance(item, list):
+                pending.extend(item[:256])
+        return False
+
     def __init__(self, clients: SearchClients, budgets: SearchBudgets) -> None:
         self.clients, self.budgets = clients, budgets
         self._deadline: ContextVar[float | None] = ContextVar(
@@ -121,6 +150,12 @@ class ElasticsearchBackend:
         except SearchDeadlineExceededError, SearchIntegrityError:
             raise
         except Exception as exc:
+            if method in {
+                "search",
+                "async_search.submit",
+                "async_search.get",
+            } and self._pit_missing(getattr(exc, "body", None)):
+                raise SearchCursorExpiredError() from exc
             if isinstance(exc, TimeoutError) or type(exc).__name__.endswith("Timeout"):
                 raise SearchDeadlineExceededError() from exc
             if getattr(exc, "status_code", None) == 404 and method in {
@@ -321,6 +356,11 @@ class ElasticsearchBackend:
                     _request_budget=remaining,
                     wait_for_completion_timeout=f"{max(1,int(remaining*1000))}ms",
                 )
+            response = result.get("response", {})
+            if self._pit_missing(result.get("error")) or self._pit_missing(
+                response.get("_shards", {})
+            ):
+                raise SearchCursorExpiredError()
             if (
                 result.get("is_running")
                 or result.get("is_partial")

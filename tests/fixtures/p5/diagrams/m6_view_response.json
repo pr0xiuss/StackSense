@@ -1,0 +1,104 @@
+{
+  "base_generation_id": "00000000-0000-0000-0000-00000000000a",
+  "base_semantic_digest": "711558b062f7e6e35ac7d735f46bbe1a3bb3e7ae3dcbbe07741f0aedc8918455",
+  "request_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "spec": {
+    "diagram_schema_version": "1.0.0",
+    "scope": {
+      "project_id": "00000000-0000-0000-0000-000000000001",
+      "repository_id": "00000000-0000-0000-0000-000000000002",
+      "analysis_id": "00000000-0000-0000-0000-000000000003",
+      "snapshot_id": "00000000-0000-0000-0000-000000000004",
+      "architecture_version_id": "00000000-0000-0000-0000-000000000005",
+      "sequence_number": 1,
+      "canonical_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "architecture_schema_version": "1.0.0",
+      "ir_schema_version": "1.0.0"
+    },
+    "template": "data_flow",
+    "profile": {
+      "template_version": "1.0.0",
+      "builder_version": "1.0.0",
+      "selection_version": "1.0.0",
+      "identity_version": "1.0.0",
+      "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "diagram_id": "diagram://ab6e9affbcfba77aca8cc50e643b0288269b812abe941f69ece608e1b2bd8703",
+    "view": {
+      "root_ids": [],
+      "entity_kinds": [],
+      "statuses": [],
+      "relationship_kinds": [],
+      "include_contains": false,
+      "depth": 4,
+      "selected_entity_ids": [],
+      "template": "data_flow",
+      "semantics": "static_interactions",
+      "connectivity_overlay": false,
+      "no_flow_reason": "no_established_data_flow"
+    },
+    "nodes": [],
+    "edges": [],
+    "groups": [],
+    "annotations": [],
+    "provenance": [],
+    "membership_digest": "5410fd2274476d4e53298a8d58a0bc2306b788ae6107fe497c2f6039b5822082",
+    "coverage": {
+      "view_state": "empty_view",
+      "source_partial": false,
+      "selection_bounded": false,
+      "scan_exhausted": true,
+      "source_completeness": {
+        "total_inventory_artifacts": 0,
+        "analyzed_artifacts": 0,
+        "failed_artifacts": 0,
+        "total_syntax_documents": 0,
+        "total_syntax_facts": 0,
+        "source_entities": 0,
+        "source_relationships": 0,
+        "source_unresolved_references": 0,
+        "source_conflicts": 0,
+        "architecture_entities": 0,
+        "architecture_relationships": 0,
+        "architecture_unresolved_relationships": 0,
+        "architecture_conflicts": 0,
+        "is_partial": false
+      },
+      "counts": [],
+      "reasons": []
+    },
+    "legend": [],
+    "semantic_digest": "711558b062f7e6e35ac7d735f46bbe1a3bb3e7ae3dcbbe07741f0aedc8918455"
+  },
+  "layout": {
+    "layout_schema_version": "1.0.0",
+    "diagram_id": "diagram://ab6e9affbcfba77aca8cc50e643b0288269b812abe941f69ece608e1b2bd8703",
+    "semantic_digest": "711558b062f7e6e35ac7d735f46bbe1a3bb3e7ae3dcbbe07741f0aedc8918455",
+    "profile": {
+      "id": "architecture_compound_v1",
+      "version": "1.0.0",
+      "engine": "elkjs",
+      "engine_version": "0.12.1",
+      "runtime_version": "24.22.3",
+      "font_profile": "dejavu_paths_2_37_v1",
+      "fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "unit": "milli_css_px",
+    "nodes": [],
+    "groups": [],
+    "ports": [],
+    "labels": [],
+    "routes": [],
+    "glyphs": [],
+    "font_notice": "Fixture, not installed font proof",
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0
+    },
+    "fallback": "none",
+    "limitations": [],
+    "layout_digest": "17ab73037250001af6f5c296a89d3aa597bf1c9088cb6829858c0f0af29495d0"
+  }
+}

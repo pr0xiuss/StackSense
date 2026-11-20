@@ -1,0 +1,68 @@
+{
+  "annotations": [],
+  "coverage": {
+    "counts": [],
+    "reasons": [],
+    "scan_exhausted": true,
+    "selection_bounded": false,
+    "source_completeness": {
+      "analyzed_artifacts": 0,
+      "architecture_conflicts": 0,
+      "architecture_entities": 0,
+      "architecture_relationships": 0,
+      "architecture_unresolved_relationships": 0,
+      "failed_artifacts": 0,
+      "is_partial": false,
+      "source_conflicts": 0,
+      "source_entities": 0,
+      "source_relationships": 0,
+      "source_unresolved_references": 0,
+      "total_inventory_artifacts": 0,
+      "total_syntax_documents": 0,
+      "total_syntax_facts": 0
+    },
+    "source_partial": false,
+    "view_state": "empty_view"
+  },
+  "diagram_id": "diagram://ab6e9affbcfba77aca8cc50e643b0288269b812abe941f69ece608e1b2bd8703",
+  "diagram_schema_version": "1.0.0",
+  "edges": [],
+  "groups": [],
+  "legend": [],
+  "membership_digest": "5410fd2274476d4e53298a8d58a0bc2306b788ae6107fe497c2f6039b5822082",
+  "nodes": [],
+  "profile": {
+    "builder_version": "1.0.0",
+    "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "identity_version": "1.0.0",
+    "selection_version": "1.0.0",
+    "template_version": "1.0.0"
+  },
+  "provenance": [],
+  "scope": {
+    "analysis_id": "00000000-0000-0000-0000-000000000003",
+    "architecture_schema_version": "1.0.0",
+    "architecture_version_id": "00000000-0000-0000-0000-000000000005",
+    "canonical_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ir_schema_version": "1.0.0",
+    "project_id": "00000000-0000-0000-0000-000000000001",
+    "repository_id": "00000000-0000-0000-0000-000000000002",
+    "sequence_number": 1,
+    "snapshot_id": "00000000-0000-0000-0000-000000000004"
+  },
+  "semantic_digest": "711558b062f7e6e35ac7d735f46bbe1a3bb3e7ae3dcbbe07741f0aedc8918455",
+  "template": "data_flow",
+  "view": {
+    "connectivity_overlay": false,
+    "depth": 4,
+    "entity_kinds": [],
+    "include_contains": false,
+    "no_flow_reason": "no_established_data_flow",
+    "relationship_kinds": [],
+    "root_ids": [],
+    "selected_entity_ids": [],
+    "semantics": "static_interactions",
+    "statuses": [],
+    "template": "data_flow"
+  }
+}
