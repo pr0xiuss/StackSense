@@ -17,6 +17,7 @@ export const GRAPH_ACTION_TYPES = Object.freeze({
   SET_VERSION_VALIDATED: 'SET_VERSION_VALIDATED',
   SET_CONTEXT_ERROR: 'SET_CONTEXT_ERROR',
   UPDATE_PROJECTION_STATUS: 'UPDATE_PROJECTION_STATUS',
+  WAIT_FOR_PROJECTION: 'WAIT_FOR_PROJECTION',
   MERGE_SUBGRAPH: 'MERGE_SUBGRAPH',
   MERGE_PATHS: 'MERGE_PATHS',
   SET_NODE_DETAIL: 'SET_NODE_DETAIL',
@@ -48,6 +49,7 @@ export function createInitialGraphState(context = {}) {
 
     // Public lifecycle status & accepted generation
     status: null,
+    projectionDiscoveryPending: false, // client-only wait; never a fabricated public lifecycle state
     activeGenerationId: null,
 
     // Graph maps keyed by stable UUID
@@ -122,6 +124,9 @@ export function architectureGraphReducer(state, action) {
       };
     }
 
+    case GRAPH_ACTION_TYPES.WAIT_FOR_PROJECTION:
+      return { ...state, projectionDiscoveryPending: true, error: null };
+
     case GRAPH_ACTION_TYPES.UPDATE_PROJECTION_STATUS: {
       const nextStatus = action.payload.status;
       const nextActiveGen = nextStatus?.active_generation_id || null;
@@ -144,6 +149,8 @@ export function architectureGraphReducer(state, action) {
       return {
         ...state,
         status: nextStatus,
+        projectionDiscoveryPending: false,
+        error: null,
         activeGenerationId: isOutOfDate ? state.activeGenerationId : (nextActiveGen || state.activeGenerationId),
         isOutOfDate,
         generationChangeMessage,
@@ -151,7 +158,7 @@ export function architectureGraphReducer(state, action) {
     }
 
     case GRAPH_ACTION_TYPES.START_OPERATION: {
-      const { opKey, mode, fingerprint } = action.payload;
+      const { opKey, mode, fingerprint, request } = action.payload;
       return {
         ...state,
         operations: {
@@ -160,6 +167,7 @@ export function architectureGraphReducer(state, action) {
             ...(state.operations[opKey] || {}),
             mode,
             fingerprint,
+            request: request || state.operations[opKey]?.request,
             inFlight: true,
             error: null,
           },
@@ -176,6 +184,7 @@ export function architectureGraphReducer(state, action) {
       return {
         ...state,
         error: errorMsg,
+        projectionDiscoveryPending: opKey === 'status' ? false : state.projectionDiscoveryPending,
         operations: {
           ...state.operations,
           [opKey]: {
@@ -190,6 +199,13 @@ export function architectureGraphReducer(state, action) {
 
     case GRAPH_ACTION_TYPES.MERGE_SUBGRAPH: {
       const { subgraph, opKey } = action.payload;
+      // Every completed response releases the operation, including rejected merges.
+      if (opKey) {
+        state = {
+          ...state,
+          operations: { ...state.operations, [opKey]: { ...state.operations[opKey], inFlight: false } },
+        };
+      }
       if (!validateGraphSubgraph(subgraph)) {
         return {
           ...state,
@@ -266,13 +282,13 @@ export function architectureGraphReducer(state, action) {
           capMessage: `Canvas cap reached (${CANVAS_MAX_NODES} nodes, ${CANVAS_MAX_EDGES} edges). Additional elements were withheld to protect browser performance.`,
           operations: opKey
             ? {
-              ...state.operations,
-              [opKey]: {
-                ...(state.operations[opKey] || {}),
-                inFlight: false,
-                // Retain previous cursor so user can retry or clear
-              },
-            }
+                ...state.operations,
+                [opKey]: {
+                  ...(state.operations[opKey] || {}),
+                  inFlight: false,
+                  // Retain previous cursor so user can retry or clear
+                },
+              }
             : state.operations,
         };
       }
@@ -315,7 +331,13 @@ export function architectureGraphReducer(state, action) {
     }
 
     case GRAPH_ACTION_TYPES.MERGE_PATHS: {
-      const { pathResult } = action.payload;
+      const { pathResult, opKey } = action.payload;
+      if (opKey) {
+        state = {
+          ...state,
+          operations: { ...state.operations, [opKey]: { ...state.operations[opKey], inFlight: false } },
+        };
+      }
       if (!validateGraphPathResult(pathResult)) {
         return {
           ...state,
@@ -325,6 +347,12 @@ export function architectureGraphReducer(state, action) {
 
       const candidateNodes = { ...state.nodes };
       const candidateEdges = { ...state.edges };
+
+      if (pathResult.scope.project_id !== state.context.projectId ||
+          pathResult.scope.architecture_version_id !== state.context.versionId ||
+          (state.activeGenerationId && pathResult.scope.generation_id !== state.activeGenerationId)) {
+        return { ...state, error: 'Scope mismatch: paths belong to a different project, version or generation.' };
+      }
 
       for (const p of pathResult.paths) {
         for (const n of p.nodes) {
@@ -353,12 +381,14 @@ export function architectureGraphReducer(state, action) {
         loadedNodeCount: candidateNodeCount,
         loadedEdgeCount: candidateEdgeCount,
         pathResult,
+        operations: opKey ? { ...state.operations, [opKey]: { ...state.operations[opKey], inFlight: false } } : state.operations,
         graphRevision: state.graphRevision + 1,
         error: null,
       };
     }
 
     case GRAPH_ACTION_TYPES.SET_NODE_DETAIL: {
+      if (action.payload.detail?.architecture_entity_id !== state.selectedNodeId) return state;
       return {
         ...state,
         selectedNodeDetail: action.payload.detail,

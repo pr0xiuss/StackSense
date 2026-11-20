@@ -1,0 +1,13 @@
+{
+  "profile": "dejavu_paths_2_37_v1",
+  "family": "DejaVu Sans",
+  "release": "2.37",
+  "files": [
+    {"name": "DejaVuSans-Bold.ttf", "sha256": "e6476c1b80502924294eed40894c5b18e06c181444ca953e5334262df9c27724", "size_bytes": 705684},
+    {"name": "DejaVuSans.ttf", "sha256": "7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954", "size_bytes": 757076}
+  ],
+  "source_url": "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.tar.bz2",
+  "license_sha256": "7a083b136e64d064794c3419751e5c7dd10d2f64c108fe5ba161eae5e5958a93",
+  "tool": "fonttools",
+  "tool_version": "4.68.0"
+}

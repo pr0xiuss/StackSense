@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     delivery_manual_retry_json: str | None = None
     delivery_search_reprojection_json: str | None = None
 
+    # M4 is opt-in; configuration is not evidence of deployment conformance.
+    diagram_enabled: bool = False
+    diagram_operational_approval: bool = False
+    diagram_deployment_json: SecretStr | None = None
+
     # Repository source acquisition
     allowed_source_roots: list[str] = [
         "data/staged",

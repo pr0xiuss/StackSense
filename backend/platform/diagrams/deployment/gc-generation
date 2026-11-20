@@ -1,0 +1,4 @@
+#!/bin/sh
+# Root-installed, operator-only exact UUID entry; normal worker lacks this grant.
+test "$#" -eq 1 || exit 78
+exec /usr/bin/env -i LANG=C.UTF-8 TZ=UTC HOME=/nonexistent /opt/stacksense/diagram-artifacts/venv/bin/python -I -c 'import sys,runpy; sys.path.insert(0,"/opt/stacksense/diagram-artifacts/python"); runpy.run_module("backend.platform.diagrams.artifact_runtime.gc_generation",run_name="__main__")' "$1"

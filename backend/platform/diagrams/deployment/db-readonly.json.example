@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "database_url": "postgresql+psycopg://REPLACE_LEAST_PRIVILEGE_SEAL_ROLE@127.0.0.1/REPLACE_DATABASE",
+  "schema": "public",
+  "profiles": []
+}

@@ -1,0 +1,10 @@
+{
+  "semantic": "1.0.0",
+  "layout": "1.0.0",
+  "artifact": "1.0.0",
+  "canonical": "1.0.0",
+  "C0": "1.0.0",
+  "unknown_version": "reject",
+  "unknown_fields": "reject",
+  "future_compatibility": "requires_change_control"
+}

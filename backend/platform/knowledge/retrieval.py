@@ -12,8 +12,11 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 from uuid import UUID
+
+from pydantic import BaseModel, ValidationError
 
 from backend.platform.graph.query_contracts import (
     APPROVED_DEPENDENCY_RELATIONSHIP_KINDS,
@@ -32,37 +35,49 @@ from backend.platform.knowledge.contracts import (
 )
 from backend.platform.knowledge.model import KnowledgeDocumentKind
 from backend.platform.knowledge.retrieval_adapters import (
-    GraphReadAdapter,
     SearchReadAdapter,
 )
-from backend.platform.knowledge.retrieval_configuration import RetrievalPolicy
+from backend.platform.knowledge.retrieval_configuration import (
+    RetrievalBudget,
+    RetrievalPolicy,
+    operation_budget,
+)
 from backend.platform.knowledge.retrieval_contracts import (
-    C3_CONTRACT_VERSION,
     CanonicalFactView,
+    CanonicalPathView,
     CanonicalReadPort,
     ConflictView,
-    ContainmentDirection,
+    ContextBundle,
+    ContextRequest,
     Coverage,
     EvidenceItemView,
+    EvidencePage,
+    EvidenceRequest,
     FreshnessState,
     GraphReadPort,
     KnowledgeQueryPort,
     KnowledgeQueryRequest,
     KnowledgeQueryResponse,
+    OmissionSummary,
+    RecordKind,
     RelationshipView,
     ResolutionState,
     ResolvedSubject,
     RetrievalCapacityExceededError,
     RetrievalCursorExpiredError,
     RetrievalCursorInvalidError,
-    RetrievalDeadlineExceededError,
     RetrievalGenerationChangedError,
+    RetrievalIntegrityFailedError,
     RetrievalInvalidRequestError,
+    RetrievalNotFoundError,
     RetrievalOperation,
     RetrievalOutcome,
+    RetrievalPlan,
     RetrievalPrincipal,
     RetrievalScope,
     RetrievalUnavailableError,
+    SelectionRationale,
+    SelectionRationaleCode,
     SourceKind,
     SourceObservation,
     SubjectCandidate,
@@ -78,42 +93,12 @@ _TOKEN_VERSION = "1.0.0"
 
 
 def _compute_request_fingerprint(request: KnowledgeQueryRequest) -> str:
-    """Compute deterministic fingerprint of the query request."""
-    data: dict[str, Any] = {
-        "project_id": str(request.project_id),
-        "architecture_version_id": str(request.architecture_version_id),
-        "operation": request.operation.value,
-        "direction": request.direction.value,
-        "containment_direction": request.containment_direction.value,
-        "q": request.q,
-        "relationship_kinds": list(request.relationship_kinds),
-        "document_kinds": list(request.document_kinds),
-        "graph_depth": request.graph_depth,
-        "limit": request.limit,
-    }
-    if request.subject:
-        data["subject"] = {
-            "type": request.subject.selector_type,
-            "kind": request.subject.record_kind,
-            "id": str(request.subject.record_id) if request.subject.record_id else None,
-            "logical_id": request.subject.logical_id,
-            "name": request.subject.name,
-            "namespace": (
-                list(request.subject.namespace) if request.subject.namespace else None
-            ),
-        }
-    if request.target:
-        data["target"] = {
-            "type": request.target.selector_type,
-            "kind": request.target.record_kind,
-            "id": str(request.target.record_id) if request.target.record_id else None,
-            "logical_id": request.target.logical_id,
-            "name": request.target.name,
-            "namespace": (
-                list(request.target.namespace) if request.target.namespace else None
-            ),
-        }
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    """Bind every original selector, expected scope and operation parameter."""
+    canonical = json.dumps(
+        request.model_dump(mode="json", exclude={"cursor"}),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -132,6 +117,8 @@ def encode_c3_cursor(
     graph_generation_id: UUID | None = None,
     upstream_cursor: str | None = None,
     ttl_seconds: float,
+    issued_at: float | None = None,
+    expires_at: float | None = None,
 ) -> str:
     """Encode stateless HMAC-signed C3 continuation cursor (§7A.6)."""
     now = time.time()
@@ -148,8 +135,8 @@ def encode_c3_cursor(
         "pos": scan_position,
         "cp": chain_page,
         "cwu": chain_work_units,
-        "iat": now,
-        "exp": now + ttl_seconds,
+        "iat": issued_at if issued_at is not None else now,
+        "exp": expires_at if expires_at is not None else now + ttl_seconds,
         "s_gen": str(search_generation_id) if search_generation_id else None,
         "s_idx": search_index_uuid,
         "g_gen": str(graph_generation_id) if graph_generation_id else None,
@@ -178,7 +165,7 @@ def decode_c3_cursor(
     *,
     secret_key: str,
     principal: RetrievalPrincipal,
-    scope: RetrievalScope,
+    scope: RetrievalScope | None,
     request: KnowledgeQueryRequest,
     policy: RetrievalPolicy,
 ) -> dict[str, Any]:
@@ -189,13 +176,26 @@ def decode_c3_cursor(
         )
 
     try:
-        raw_env = base64.urlsafe_b64decode(cursor.encode("ascii"))
-        envelope = json.loads(raw_env)
+
+        def closed_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Duplicate cursor field")
+                result[key] = value
+            return result
+
+        raw_env = base64.b64decode(
+            cursor.encode("ascii"), altchars=b"-_", validate=True
+        )
+        envelope = json.loads(raw_env, object_pairs_hook=closed_object)
+        if not isinstance(envelope, dict) or set(envelope) != {"d", "s"}:
+            raise ValueError("Invalid envelope")
         data_bytes = base64.urlsafe_b64decode(envelope["d"].encode("ascii"))
         provided_sig = base64.urlsafe_b64decode(envelope["s"].encode("ascii"))
     except Exception as exc:
         raise RetrievalCursorInvalidError(
-            "Malformed cursor encoding or envelope", cause=str(exc)
+            "Malformed cursor encoding or envelope"
         ) from exc
 
     expected_sig = hmac.new(
@@ -205,24 +205,71 @@ def decode_c3_cursor(
         raise RetrievalCursorInvalidError("Cursor HMAC signature verification failed")
 
     try:
-        payload = json.loads(data_bytes)
+        payload = json.loads(data_bytes, object_pairs_hook=closed_object)
+        fields = {
+            "v",
+            "kid",
+            "act",
+            "prj",
+            "ver",
+            "dig",
+            "op",
+            "rfp",
+            "pfp",
+            "pos",
+            "cp",
+            "cwu",
+            "iat",
+            "exp",
+            "s_gen",
+            "s_idx",
+            "g_gen",
+            "upc",
+        }
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != fields
+            or payload["kid"] != "c3-k1"
+        ):
+            raise ValueError("Invalid cursor shape")
+        for key in ("pos", "cp", "cwu"):
+            if type(payload[key]) is not int or payload[key] < 0:
+                raise ValueError("Invalid counter")
+        import math
+
+        for key in ("iat", "exp"):
+            if type(payload[key]) not in (int, float) or not math.isfinite(
+                payload[key]
+            ):
+                raise ValueError("Invalid timestamp")
+        if (
+            payload["exp"] <= payload["iat"]
+            or payload["exp"] - payload["iat"] > policy.cursor_ttl_seconds
+        ):
+            raise ValueError("Invalid lifetime")
+        if bool(payload["s_gen"]) != bool(payload["s_idx"]):
+            raise ValueError("Incomplete source binding")
+        for key in ("s_gen", "g_gen"):
+            if payload[key] is not None:
+                UUID(payload[key])
+        for key in ("s_idx", "upc"):
+            if payload[key] is not None and not isinstance(payload[key], str):
+                raise ValueError("Invalid opaque binding")
     except Exception as exc:
-        raise RetrievalCursorInvalidError(
-            "Malformed cursor JSON payload", cause=str(exc)
-        ) from exc
+        raise RetrievalCursorInvalidError("Malformed cursor JSON payload") from exc
 
     # Enforce exact version and parameter binding
     if payload.get("v") != _TOKEN_VERSION:
         raise RetrievalCursorInvalidError("Unsupported cursor token version")
     if payload.get("act") != str(principal.actor_id):
         raise RetrievalCursorInvalidError("Cursor actor binding mismatch")
-    if payload.get("prj") != str(scope.project_id):
+    if payload.get("prj") != str(request.project_id):
         raise RetrievalCursorInvalidError("Cursor project binding mismatch")
-    if payload.get("ver") != str(scope.architecture_version_id):
+    if payload.get("ver") != str(request.architecture_version_id):
         raise RetrievalCursorInvalidError(
             "Cursor architecture version binding mismatch"
         )
-    if payload.get("dig") != scope.canonical_digest:
+    if scope is not None and payload.get("dig") != scope.canonical_digest:
         raise RetrievalCursorInvalidError("Cursor canonical digest binding mismatch")
     if payload.get("op") != request.operation.value:
         raise RetrievalCursorInvalidError("Cursor operation mismatch")
@@ -264,6 +311,8 @@ def resolve_subject(
     project_id: UUID,
     *,
     max_scan_rows: int,
+    max_candidates: int = 100,
+    page_size: int = 100,
 ) -> ResolvedSubject:
     """Deterministically resolve a SubjectSelector to a canonical entity or item.
 
@@ -301,9 +350,10 @@ def resolve_subject(
         # For non-entity record kinds, scan the collection by record_id
         items: list[Any] = []
         offset = 0
-        limit = min(100, max_scan_rows)
+        limit = min(page_size, 100, max_scan_rows)
         scanned = 0
         while scanned < max_scan_rows:
+            limit = min(limit, max_scan_rows - scanned)
             batch, total = _list_collection_by_kind(
                 canonical_port,
                 selector.record_kind,
@@ -348,10 +398,11 @@ def resolve_subject(
     elif selector.selector_type == "logical_id":
         assert selector.logical_id is not None
         offset = 0
-        limit = min(100, max_scan_rows)
+        limit = min(page_size, 100, max_scan_rows)
         scanned = 0
         matched: list[SubjectCandidate] = []
         while scanned < max_scan_rows:
+            limit = min(limit, max_scan_rows - scanned)
             batch, total = _list_collection_by_kind(
                 canonical_port,
                 selector.record_kind,
@@ -362,6 +413,10 @@ def resolve_subject(
             )
             for item in batch:
                 if item.logical_id == selector.logical_id:
+                    if len(matched) >= max_candidates:
+                        raise RetrievalCapacityExceededError(
+                            "Candidate budget exceeded"
+                        )
                     matched.append(
                         SubjectCandidate(
                             record_id=item.record_id,
@@ -419,11 +474,12 @@ def resolve_subject(
     elif selector.selector_type == "entity_name":
         assert selector.name is not None
         offset = 0
-        limit = min(100, max_scan_rows)
+        limit = min(page_size, 100, max_scan_rows)
         scanned = 0
         matched_named: list[SubjectCandidate] = []
         total = 0
         while scanned < max_scan_rows:
+            limit = min(limit, max_scan_rows - scanned)
             batch, total = canonical_port.list_entities(
                 version_id, project_id, limit=limit, offset=offset
             )
@@ -434,6 +490,10 @@ def resolve_subject(
                         selector.namespace is None
                         or item.namespace == selector.namespace
                     ):
+                        if len(matched_named) >= max_candidates:
+                            raise RetrievalCapacityExceededError(
+                                "Candidate budget exceeded"
+                            )
                         matched_named.append(
                             SubjectCandidate(
                                 record_id=item.record_id,
@@ -527,8 +587,52 @@ def _list_collection_by_kind(
 # --- KnowledgeQueryService Implementation (§7A.3, §7A.4) ---
 
 
+class _CanonicalCalls:
+    """Bounded validation around public canonical methods; no persistence access."""
+
+    def __init__(self, port: CanonicalReadPort, budget: RetrievalBudget) -> None:
+        self.port, self.budget = port, budget
+        self.final = False
+
+    @staticmethod
+    def _validated(model: type[BaseModel], value: Any) -> BaseModel:
+        try:
+            return model.model_validate(value)
+        except ValidationError:
+            raise RetrievalIntegrityFailedError("Invalid canonical response") from None
+
+    def __getattr__(self, name: str) -> Any:
+        function = getattr(self.port, name)
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            self.budget.call("canonical", final=self.final)
+            result = function(*args, **kwargs)
+            if name.startswith("list_"):
+                items, total = result
+                if total < len(items) or len(items) > kwargs["limit"]:
+                    raise RetrievalIntegrityFailedError("Invalid canonical page")
+                kind = name.removeprefix("list_")
+                self.budget.scanned(kind, len(items))
+                models: dict[str, type[BaseModel]] = {
+                    "entities": CanonicalFactView,
+                    "relationships": RelationshipView,
+                    "evidence": EvidenceItemView,
+                    "unresolved": UnresolvedView,
+                    "conflicts": ConflictView,
+                }
+                result = tuple(self._validated(models[kind], x) for x in items), total
+            elif name == "get_version":
+                result = self._validated(RetrievalScope, result)
+            elif result is not None:
+                result = self._validated(CanonicalFactView, result)
+            self.budget.remaining(reserve=not self.final)
+            return result
+
+        return call
+
+
 class KnowledgeQueryService(KnowledgeQueryPort):
-    """Application service orchestrating controlled C3 retrieval operations."""
+    """Read-only C3 composition. Every public method owns one bounded operation."""
 
     def __init__(
         self,
@@ -538,685 +642,1052 @@ class KnowledgeQueryService(KnowledgeQueryPort):
         graph_port: GraphReadPort | None = None,
         policy: RetrievalPolicy,
         cursor_secret_key: str,
+        search_factory: Callable[[], SearchReadPort | None] | None = None,
+        graph_factory: Callable[[], GraphReadPort | None] | None = None,
     ) -> None:
-        self._canonical_port = canonical_port
-        self._search_port = search_port
-        self._graph_port = graph_port
-        self._policy = policy
+        self._canonical_port, self._policy = canonical_port, policy
+        self._search_port, self._graph_port = search_port, graph_port
+        self._search_factory, self._graph_factory = search_factory, graph_factory
+        if len(cursor_secret_key.encode()) < 32:
+            raise RetrievalUnavailableError("Dedicated retrieval cursor key required")
         self._cursor_secret_key = cursor_secret_key
+
+    def _validate_request(self, request: KnowledgeQueryRequest) -> None:
+        p = self._policy
+        if request.q is not None and (
+            not request.q.strip() or len(request.q.encode()) > p.max_query_bytes
+        ):
+            raise RetrievalInvalidRequestError("Invalid literal query")
+        if request.limit > p.canonical_page_size:
+            raise RetrievalCapacityExceededError(
+                "Requested page exceeds operating policy"
+            )
+        if (
+            len(request.document_kinds) + len(request.relationship_kinds)
+            > p.max_filters
+        ):
+            raise RetrievalCapacityExceededError("Filter budget exceeded")
+        if request.graph_depth is not None and request.graph_depth > p.max_graph_depth:
+            raise RetrievalCapacityExceededError("Graph depth exceeds operating policy")
+        if set(request.document_kinds) - {x.value for x in KnowledgeDocumentKind}:
+            raise RetrievalInvalidRequestError("Unsupported document kind")
+        if set(request.relationship_kinds) - {x.value for x in GraphRelationshipKind}:
+            raise RetrievalInvalidRequestError("Unsupported relationship kind")
+        if request.relationship_kinds and request.operation not in (
+            RetrievalOperation.RELATIONSHIPS,
+            RetrievalOperation.DEPENDENCIES,
+            RetrievalOperation.DEPENDENTS,
+            RetrievalOperation.PATHS,
+        ):
+            raise RetrievalInvalidRequestError(
+                "Relationship filter is unsupported for this operation"
+            )
+        if request.document_kinds and (
+            request.operation != RetrievalOperation.LOOKUP or not request.q
+        ):
+            raise RetrievalInvalidRequestError(
+                "Document kinds require a lexical lookup"
+            )
+        if request.operation == RetrievalOperation.PATHS and request.cursor:
+            raise RetrievalInvalidRequestError("Paths are non-paginated")
+        for selector in (request.subject, request.target):
+            if selector:
+                for value in (
+                    selector.logical_id,
+                    selector.name,
+                    *(selector.namespace or ()),
+                ):
+                    if value and len(value.encode()) > p.max_identifier_bytes:
+                        raise RetrievalCapacityExceededError(
+                            "Identifier budget exceeded"
+                        )
+
+    def _begin(
+        self,
+        version: UUID,
+        project: UUID,
+        principal: RetrievalPrincipal,
+        budget: RetrievalBudget,
+    ) -> tuple[_CanonicalCalls, RetrievalScope]:
+        if principal.project_id != project:
+            raise RetrievalInvalidRequestError("Principal project mismatch")
+        calls = _CanonicalCalls(self._canonical_port, budget)
+        scope = calls.get_version(version, project)
+        if scope.project_id != project or scope.architecture_version_id != version:
+            raise RetrievalIntegrityFailedError("Canonical header scope mismatch")
+        if (
+            scope.architecture_schema_version != "1.0.0"
+            or scope.ir_schema_version != "1.0.0"
+        ):
+            raise RetrievalUnavailableError("Canonical schema is not supported")
+        return calls, scope
+
+    @staticmethod
+    def _source_scope(actual: Any, scope: RetrievalScope) -> None:
+        for key in (
+            "project_id",
+            "architecture_version_id",
+            "repository_id",
+            "analysis_id",
+            "snapshot_id",
+            "canonical_digest",
+            "sequence_number",
+            "architecture_schema_version",
+            "ir_schema_version",
+        ):
+            if hasattr(actual, key) and getattr(actual, key) != getattr(scope, key):
+                raise RetrievalIntegrityFailedError("Source scope mismatch")
+
+    def _execute(
+        self,
+        request: KnowledgeQueryRequest,
+        principal: RetrievalPrincipal,
+        calls: _CanonicalCalls,
+        scope: RetrievalScope,
+        budget: RetrievalBudget,
+        search: SearchReadAdapter | None,
+        graph: GraphReadPort | None,
+        state: dict[str, Any],
+    ) -> KnowledgeQueryResponse:
+        self._validate_request(request)
+        canonical = cast(CanonicalReadPort, calls)
+        p = self._policy
+        position = state.get("pos", 0)
+        subjects = [
+            (
+                resolve_subject(
+                    s,
+                    canonical,
+                    scope.architecture_version_id,
+                    scope.project_id,
+                    max_scan_rows=p.canonical_max_rows_per_collection,
+                    max_candidates=p.max_retained_candidates,
+                    page_size=p.canonical_page_size,
+                )
+                if s
+                else None
+            )
+            for s in (request.subject, request.target)
+        ]
+        subject, target = subjects
+        if any(s and len(s.candidates) > p.max_retained_candidates for s in subjects):
+            raise RetrievalCapacityExceededError("Candidate budget exceeded")
+        facts: list[CanonicalFactView] = []
+        relationships: list[RelationshipView] = []
+        evidence: list[EvidenceItemView] = []
+        unresolved: list[UnresolvedView] = []
+        conflicts: list[ConflictView] = []
+        paths: list[CanonicalPathView] = []
+        observations: list[SourceObservation] = [
+            SourceObservation(
+                source_kind=SourceKind.CANONICAL,
+                contract_version=scope.architecture_schema_version,
+                scope=scope,
+                freshness=FreshnessState.UNKNOWN,
+                freshness_reason="not_observed_in_bounded_retrieval",
+            )
+        ]
+        more, next_position, upstream = False, position, state.get("upc")
+        outcome = RetrievalOutcome.COMPLETE
+
+        def append_record(kind: str, item: Any) -> None:
+            collections: dict[str, list[Any]] = {
+                "entity": facts,
+                "relationship": relationships,
+                "evidence": evidence,
+                "unresolved": unresolved,
+                "conflict": conflicts,
+            }
+            collections[kind].append(item)
+
+        def resolve_record(selector: SubjectSelector) -> Any | None:
+            if (
+                selector.selector_type == "record_id"
+                and selector.record_kind == "entity"
+            ):
+                assert selector.record_id is not None
+                return canonical.get_entity(
+                    scope.architecture_version_id, selector.record_id, scope.project_id
+                )
+            offset = 0
+            while offset < p.canonical_max_rows_per_collection:
+                batch, total = _list_collection_by_kind(
+                    canonical,
+                    selector.record_kind,
+                    scope.architecture_version_id,
+                    scope.project_id,
+                    limit=min(
+                        p.canonical_page_size,
+                        p.canonical_max_rows_per_collection - offset,
+                    ),
+                    offset=offset,
+                )
+                for item in batch:
+                    if (
+                        selector.record_id and item.record_id == selector.record_id
+                    ) or (
+                        selector.logical_id and item.logical_id == selector.logical_id
+                    ):
+                        return item
+                offset += len(batch)
+                if not batch or offset >= total:
+                    return None
+            raise RetrievalCapacityExceededError(
+                "Required canonical record is beyond scan policy"
+            )
+
+        if any(
+            s and s.state in (ResolutionState.AMBIGUOUS, ResolutionState.INCOMPLETE)
+            for s in subjects
+        ):
+            outcome = (
+                RetrievalOutcome.AMBIGUOUS
+                if any(s and s.state == ResolutionState.AMBIGUOUS for s in subjects)
+                else RetrievalOutcome.PARTIAL
+            )
+        elif request.operation == RetrievalOperation.LOOKUP:
+            if subject and subject.state == ResolutionState.RESOLVED:
+                assert request.subject is not None and subject.selected_id is not None
+                item = resolve_record(
+                    SubjectSelector.from_record_id(
+                        request.subject.record_kind, subject.selected_id
+                    )
+                )
+                if item is None:
+                    raise RetrievalIntegrityFailedError(
+                        "Resolved canonical record disappeared"
+                    )
+                append_record(request.subject.record_kind, item)
+            elif request.q is not None:
+                if search is None:
+                    raise RetrievalUnavailableError(
+                        "Lexical search is unavailable", cause="search_unavailable"
+                    )
+                req = SearchRequest(
+                    project_id=scope.project_id,
+                    architecture_version_id=scope.architecture_version_id,
+                    q=request.q,
+                    document_kinds=tuple(
+                        KnowledgeDocumentKind(k) for k in request.document_kinds
+                    )
+                    or None,
+                    limit=request.limit,
+                    cursor=upstream,
+                    timeout_seconds=min(5.0, budget.call("search")),
+                )
+                page = search.search(req, actor_id=principal.actor_id)
+                self._source_scope(page.scope, scope)
+                budget.scanned("search_hits", len(page.items))
+                state["search_request"] = req
+                state["search_binding"] = (page.generation_id, page.index_uuid)
+                more, upstream = page.has_more, page.next_cursor
+                # One public paged pass per participating collection. Retain only
+                # requested records, never a second full-model cache/index.
+                wanted: dict[RecordKind, set[str]] = {}
+                for hit in page.items:
+                    self._source_scope(hit.scope, scope)
+                    if hit.document_kind != KnowledgeDocumentKind.ARCHITECTURE_SUMMARY:
+                        wanted.setdefault(
+                            cast(RecordKind, hit.document_kind.value), set()
+                        ).add(hit.canonical_reference)
+                if sum(map(len, wanted.values())) > p.max_retained_candidates:
+                    raise RetrievalCapacityExceededError(
+                        "Retained candidate budget exceeded"
+                    )
+                matched: dict[tuple[str, str], Any] = {}
+                for record_kind, keys in wanted.items():
+                    offset = 0
+                    exhausted = False
+                    while offset < p.canonical_max_rows_per_collection:
+                        batch, total = _list_collection_by_kind(
+                            canonical,
+                            record_kind,
+                            scope.architecture_version_id,
+                            scope.project_id,
+                            limit=min(
+                                p.canonical_page_size,
+                                p.canonical_max_rows_per_collection - offset,
+                            ),
+                            offset=offset,
+                        )
+                        for item in batch:
+                            if item.logical_id in keys:
+                                identity = (record_kind, item.logical_id)
+                                if identity in matched and matched[identity] != item:
+                                    raise RetrievalIntegrityFailedError(
+                                        "Conflicting canonical identity"
+                                    )
+                                matched[identity] = item
+                        offset += len(batch)
+                        if offset >= total or not batch:
+                            exhausted = offset >= total
+                            break
+                    if not exhausted:
+                        raise RetrievalCapacityExceededError(
+                            "Required canonical search resolution exceeds scan policy"
+                        )
+                    if any((record_kind, key) not in matched for key in keys):
+                        raise RetrievalIntegrityFailedError(
+                            "Search reference missing canonically"
+                        )
+                for hit in page.items:
+                    if hit.document_kind != KnowledgeDocumentKind.ARCHITECTURE_SUMMARY:
+                        append_record(
+                            hit.document_kind.value,
+                            matched[(hit.document_kind.value, hit.canonical_reference)],
+                        )
+                observations.append(
+                    SourceObservation(
+                        source_kind=SourceKind.SEARCH,
+                        contract_version=page.c1_version,
+                        scope=scope,
+                        search_scope=page.scope,
+                        generation_id=page.generation_id,
+                        index_uuid=page.index_uuid,
+                        capabilities=tuple(
+                            k
+                            for k in ("lexical", "semantic", "hybrid")
+                            if getattr(page.capabilities, k).value == "available"
+                        ),
+                        freshness=FreshnessState.UNKNOWN,
+                        freshness_reason="not_observed_in_bounded_retrieval",
+                    )
+                )
+            elif subject is None:
+                raise RetrievalInvalidRequestError(
+                    "Lookup requires a subject or literal query"
+                )
+        elif request.operation == RetrievalOperation.RELATIONSHIPS:
+            if not subject or subject.state != ResolutionState.RESOLVED:
+                raise RetrievalNotFoundError("Subject not found")
+            batch, total = canonical.list_relationships(
+                scope.architecture_version_id,
+                scope.project_id,
+                limit=request.limit,
+                offset=position,
+            )
+            for rel in batch:
+                outgoing = rel.source_logical_id == subject.selected_logical_id
+                incoming = rel.target_logical_id == subject.selected_logical_id
+                if (
+                    (request.direction == TraversalDirection.OUTGOING and outgoing)
+                    or (request.direction == TraversalDirection.INCOMING and incoming)
+                    or (
+                        request.direction == TraversalDirection.BOTH
+                        and (outgoing or incoming)
+                    )
+                ):
+                    if (
+                        not request.relationship_kinds
+                        or rel.kind in request.relationship_kinds
+                    ):
+                        relationships.append(rel)
+            next_position = position + len(batch)
+            more = next_position < total
+        elif request.operation == RetrievalOperation.EVIDENCE:
+            refs: set[str] | None = None
+            selectors = (
+                request.evidence_entity_ids,
+                request.evidence_relationship_ids,
+                request.evidence_ids,
+            )
+            if sum(bool(x) for x in selectors) > 1:
+                raise RetrievalInvalidRequestError("Mixed evidence selector families")
+            if sum(len(x) for x in selectors) > p.max_subjects:
+                raise RetrievalCapacityExceededError(
+                    "Evidence selector budget exceeded"
+                )
+            if request.evidence_entity_ids or request.evidence_relationship_ids:
+                refs = set()
+                evidence_record_kind: RecordKind = (
+                    "entity" if request.evidence_entity_ids else "relationship"
+                )
+                for identifier in (
+                    request.evidence_entity_ids or request.evidence_relationship_ids
+                ):
+                    item = resolve_record(
+                        SubjectSelector.from_record_id(evidence_record_kind, identifier)
+                    )
+                    if item is None:
+                        raise RetrievalNotFoundError()
+                    refs.update(item.evidence_references)
+            elif subject:
+                if subject.state != ResolutionState.RESOLVED:
+                    raise RetrievalNotFoundError()
+                assert request.subject is not None and subject.selected_id is not None
+                item = resolve_record(
+                    SubjectSelector.from_record_id(
+                        request.subject.record_kind, subject.selected_id
+                    )
+                )
+                if item is None:
+                    raise RetrievalIntegrityFailedError("Evidence subject disappeared")
+                refs = (
+                    set(item.evidence_references)
+                    if hasattr(item, "evidence_references")
+                    else {item.logical_id}
+                )
+            evidence_batch, total = canonical.list_evidence(
+                scope.architecture_version_id,
+                scope.project_id,
+                limit=request.limit,
+                offset=position,
+            )
+            evidence.extend(
+                ev
+                for ev in evidence_batch
+                if (refs is None or ev.logical_id in refs)
+                and (not request.evidence_ids or ev.record_id in request.evidence_ids)
+            )
+            next_position = position + len(evidence_batch)
+            more = next_position < total
+        else:
+            if not subject or subject.state != ResolutionState.RESOLVED:
+                raise RetrievalNotFoundError("Subject not found")
+            if request.subject and request.subject.record_kind != "entity":
+                raise RetrievalInvalidRequestError(
+                    "Graph operations require entity subjects"
+                )
+            if graph is None:
+                raise RetrievalUnavailableError(
+                    "Graph retrieval is unavailable", cause="graph_unavailable"
+                )
+            common = dict(
+                project_id=scope.project_id,
+                architecture_version_id=scope.architecture_version_id,
+                timeout_seconds=min(5.0, budget.call("graph")),
+            )
+            if request.operation in (
+                RetrievalOperation.DEPENDENCIES,
+                RetrievalOperation.DEPENDENTS,
+            ):
+                kinds = (
+                    tuple(GraphRelationshipKind(k) for k in request.relationship_kinds)
+                    or APPROVED_DEPENDENCY_RELATIONSHIP_KINDS
+                )
+                if GraphRelationshipKind.CONTAINS in kinds:
+                    raise RetrievalInvalidRequestError(
+                        "Containment is separate from dependency traversal"
+                    )
+                cls = (
+                    DependenciesRequest
+                    if request.operation == RetrievalOperation.DEPENDENCIES
+                    else DependentsRequest
+                )
+                req_graph = cls(
+                    **common,
+                    entity_id=subject.selected_id,
+                    depth=request.graph_depth or 1,
+                    node_limit=min(request.limit, p.max_graph_nodes),
+                    edge_limit=min(p.max_graph_edges, p.max_selected_relationships),
+                    relationship_kinds=kinds,
+                    cursor=upstream,
+                )
+                result = (
+                    graph.get_dependencies(req_graph)
+                    if request.operation == RetrievalOperation.DEPENDENCIES
+                    else graph.get_dependents(req_graph)
+                )
+            elif request.operation == RetrievalOperation.CONTAINMENT:
+                result = graph.get_containment(
+                    ContainmentRequest(
+                        **common,
+                        entity_id=subject.selected_id,
+                        direction=P4ContainmentDirection(
+                            request.containment_direction.value
+                        ),
+                        depth=request.graph_depth or 1,
+                        node_limit=min(request.limit, p.max_graph_nodes),
+                        edge_limit=min(p.max_graph_edges, p.max_selected_relationships),
+                        cursor=upstream,
+                    )
+                )
+            else:
+                if not target or target.state != ResolutionState.RESOLVED:
+                    raise RetrievalNotFoundError("Path target not found")
+                result = graph.get_bounded_paths(
+                    BoundedPathsRequest(
+                        **common,
+                        source_entity_id=subject.selected_id,
+                        target_entity_id=target.selected_id,
+                        max_depth=request.graph_depth or min(3, p.max_graph_depth),
+                        path_limit=p.max_graph_paths,
+                        relationship_kinds=tuple(
+                            GraphRelationshipKind(k) for k in request.relationship_kinds
+                        )
+                        or None,
+                    )
+                )
+            self._source_scope(result.scope, scope)
+            if state.get("g_gen") and str(result.scope.generation_id) != str(
+                state["g_gen"]
+            ):
+                raise RetrievalGenerationChangedError()
+            state["g_gen"] = str(result.scope.generation_id)
+            state["graph_binding"] = result.scope.generation_id
+            if request.operation == RetrievalOperation.PATHS:
+                nodes = [n for path in result.paths for n in path.nodes]
+                edges = [e for path in result.paths for e in path.edges]
+                more = False
+                if result.truncated:
+                    outcome = RetrievalOutcome.PARTIAL
+            else:
+                nodes, edges = result.nodes, result.edges
+                upstream = result.next_cursor
+                more = upstream is not None
+                if result.truncated:
+                    outcome = RetrievalOutcome.PARTIAL
+            by_uuid = {}
+            for node in nodes:
+                fact = canonical.get_entity(
+                    scope.architecture_version_id,
+                    node.architecture_entity_id,
+                    scope.project_id,
+                )
+                if fact is None or fact.logical_id != node.logical_id:
+                    raise RetrievalIntegrityFailedError(
+                        "Projected entity identity mismatch"
+                    )
+                by_uuid[fact.record_id] = fact
+            facts.extend(by_uuid.values())
+            for edge in edges:
+                graph_rel = resolve_record(
+                    SubjectSelector.from_record_id(
+                        "relationship", edge.architecture_relationship_id
+                    )
+                )
+                if (
+                    graph_rel is None
+                    or graph_rel.logical_id != edge.logical_id
+                    or edge.source_entity_id not in by_uuid
+                    or edge.target_entity_id not in by_uuid
+                    or graph_rel.source_logical_id
+                    != by_uuid[edge.source_entity_id].logical_id
+                    or graph_rel.target_logical_id
+                    != by_uuid[edge.target_entity_id].logical_id
+                ):
+                    raise RetrievalIntegrityFailedError(
+                        "Projected relationship identity mismatch"
+                    )
+                relationships.append(graph_rel)
+            if request.operation == RetrievalOperation.PATHS:
+                paths = [
+                    CanonicalPathView(
+                        node_logical_ids=tuple(n.logical_id for n in path.nodes),
+                        relationship_logical_ids=tuple(
+                            e.logical_id for e in path.edges
+                        ),
+                        hop_count=path.hop_count,
+                    )
+                    for path in result.paths
+                ]
+            observations.append(
+                SourceObservation(
+                    source_kind=SourceKind.GRAPH,
+                    contract_version="P4-Q1",
+                    scope=scope,
+                    generation_id=result.scope.generation_id,
+                    graph_schema_version=result.scope.graph_schema_version,
+                    projector_version=result.scope.projector_version,
+                    freshness=FreshnessState.UNKNOWN,
+                    freshness_reason="not_observed_in_bounded_retrieval",
+                )
+            )
+        if more and not (facts or relationships or evidence or unresolved or conflicts):
+            outcome = RetrievalOutcome.PARTIAL
+        if outcome == RetrievalOutcome.COMPLETE and not (
+            facts or relationships or evidence or unresolved or conflicts
+        ):
+            outcome = RetrievalOutcome.NO_EVIDENCE
+        facts = list({f.logical_id: f for f in facts}.values())
+        relationships = list({r.logical_id: r for r in relationships}.values())
+        for count, maximum in (
+            (len(facts), p.max_selected_facts),
+            (len(relationships), p.max_selected_relationships),
+            (len(evidence), p.max_selected_evidence),
+            (len(unresolved), p.max_selected_unresolved),
+            (len(conflicts), p.max_selected_conflicts),
+        ):
+            if count > maximum:
+                raise RetrievalCapacityExceededError("Selected result budget exceeded")
+        state.update(pos=next_position, upc=upstream, has_more=more)
+        return KnowledgeQueryResponse(
+            scope=scope,
+            operation=request.operation,
+            outcome=outcome,
+            resolved_subject=subject,
+            resolved_target=target,
+            facts=tuple(facts),
+            relationships=tuple(relationships),
+            evidence=tuple(evidence),
+            unresolved=tuple(unresolved),
+            conflicts=tuple(conflicts),
+            source_observations=tuple(observations),
+            paths=tuple(paths),
+            coverage=Coverage(
+                considered_count=(
+                    len(facts)
+                    + len(relationships)
+                    + len(evidence)
+                    + len(unresolved)
+                    + len(conflicts)
+                ),
+                selected_count=(
+                    len(facts)
+                    + len(relationships)
+                    + len(evidence)
+                    + len(unresolved)
+                    + len(conflicts)
+                ),
+                scanned_count=sum(budget.rows.values()),
+                count_known=not more,
+                exhausted=not more and outcome != RetrievalOutcome.PARTIAL,
+                truncated=more or outcome == RetrievalOutcome.PARTIAL,
+            ),
+        )
+
+    def _finish(
+        self,
+        calls: _CanonicalCalls,
+        scope: RetrievalScope,
+        budget: RetrievalBudget,
+        principal: RetrievalPrincipal,
+        search: SearchReadAdapter | None,
+        graph: GraphReadPort | None,
+        state: dict[str, Any],
+    ) -> None:
+        calls.final = True
+        if calls.get_version(scope.architecture_version_id, scope.project_id) != scope:
+            raise RetrievalIntegrityFailedError(
+                "Canonical header changed during retrieval"
+            )
+        if state.get("search_request"):
+            if search is None:
+                raise RetrievalUnavailableError()
+            search.final_probe(
+                state["search_request"],
+                actor_id=principal.actor_id,
+                remaining_budget=min(5.0, budget.call("search", final=True)),
+            )
+        if state.get("graph_binding"):
+            if graph is None:
+                raise RetrievalUnavailableError()
+            if not graph.verify_generation_still_active(
+                scope.project_id,
+                scope.architecture_version_id,
+                state["graph_binding"],
+                timeout_seconds=min(5.0, budget.call("graph", final=True)),
+            ):
+                raise RetrievalGenerationChangedError()
+        budget.remaining(reserve=False)
+
+    def _ports(
+        self,
+        request: KnowledgeQueryRequest,
+        budget: RetrievalBudget,
+        state: dict[str, Any],
+    ) -> tuple[SearchReadAdapter | None, GraphReadPort | None]:
+        search = None
+        graph = None
+        if request.q is not None:
+            port = self._search_port
+            if port is None and self._search_factory:
+                budget.call("search_setup")
+                port = self._search_factory()
+            if port is not None:
+                search = SearchReadAdapter(
+                    port,
+                    bound_generation_id=(
+                        UUID(state["s_gen"]) if state.get("s_gen") else None
+                    ),
+                    bound_index_uuid=state.get("s_idx"),
+                )
+        if request.operation in (
+            RetrievalOperation.DEPENDENCIES,
+            RetrievalOperation.DEPENDENTS,
+            RetrievalOperation.CONTAINMENT,
+            RetrievalOperation.PATHS,
+        ):
+            graph = self._graph_port
+            if graph is None and self._graph_factory:
+                budget.call("graph_setup")
+                graph = self._graph_factory()
+        return search, graph
 
     def query(
         self,
         request: KnowledgeQueryRequest,
         *,
         principal: RetrievalPrincipal,
+        _budget: RetrievalBudget | None = None,
     ) -> KnowledgeQueryResponse:
-        start_time = time.monotonic()
-        deadline = start_time + self._policy.total_deadline_seconds
-
-        # 1. Authorization check
+        request = KnowledgeQueryRequest.model_validate(request)
+        self._validate_request(request)
         if principal.project_id != request.project_id:
-            raise RetrievalInvalidRequestError(
-                f"Principal project_id ({principal.project_id}) does not match "
-                f"request ({request.project_id})"
-            )
-
-        # 2. Scope verification
-        scope = self._canonical_port.get_version(
-            request.architecture_version_id, request.project_id
+            raise RetrievalInvalidRequestError("Principal project mismatch")
+        budget = _budget or RetrievalBudget(self._policy)
+        budget.reserve_final_checks(
+            search=request.q is not None,
+            graph=request.operation
+            in (
+                RetrievalOperation.DEPENDENCIES,
+                RetrievalOperation.DEPENDENTS,
+                RetrievalOperation.CONTAINMENT,
+                RetrievalOperation.PATHS,
+            ),
         )
-        if (
-            request.expected_repository_id
-            and scope.repository_id != request.expected_repository_id
-        ):
-            raise RetrievalInvalidRequestError(
-                "Repository ID mismatch against canonical published header"
-            )
-        if (
-            request.expected_analysis_id
-            and scope.analysis_id != request.expected_analysis_id
-        ):
-            raise RetrievalInvalidRequestError(
-                "Analysis ID mismatch against canonical published header"
-            )
-        if (
-            request.expected_snapshot_id
-            and scope.snapshot_id != request.expected_snapshot_id
-        ):
-            raise RetrievalInvalidRequestError(
-                "Snapshot ID mismatch against canonical published header"
-            )
-
-        # 3. Cursor handling & initial position
-        scan_position = 0
-        chain_page = 1
-        chain_work_units = 0
-        bound_search_gen: UUID | None = None
-        bound_search_idx: str | None = None
-        bound_graph_gen: UUID | None = None
-        upstream_cursor: str | None = None
-
+        state: dict[str, Any] = {}
         if request.cursor:
-            cursor_data = decode_c3_cursor(
+            state = decode_c3_cursor(
                 request.cursor,
                 secret_key=self._cursor_secret_key,
                 principal=principal,
-                scope=scope,
+                scope=None,
                 request=request,
                 policy=self._policy,
             )
-            scan_position = int(cursor_data.get("pos", 0))
-            chain_page = int(cursor_data.get("cp", 1)) + 1
-            chain_work_units = int(cursor_data.get("cwu", 0))
-            if cursor_data.get("s_gen"):
-                bound_search_gen = UUID(cursor_data["s_gen"])
-            bound_search_idx = cursor_data.get("s_idx")
-            if cursor_data.get("g_gen"):
-                bound_graph_gen = UUID(cursor_data["g_gen"])
-            upstream_cursor = cursor_data.get("upc")
-
-        # Create source adapters with bound generation states
-        search_adapter: SearchReadAdapter | None = None
-        if self._search_port is not None:
-            search_adapter = SearchReadAdapter(
-                self._search_port,
-                bound_generation_id=bound_search_gen,
-                bound_index_uuid=bound_search_idx,
+            if state["cp"] >= self._policy.max_chain_pages:
+                raise RetrievalCapacityExceededError("Continuation chain exhausted")
+            budget.work = state["cwu"]
+        with operation_budget(budget):
+            calls, scope = self._begin(
+                request.architecture_version_id, request.project_id, principal, budget
             )
+            for field in ("repository_id", "analysis_id", "snapshot_id"):
+                expected = getattr(request, "expected_" + field)
+                if expected and expected != getattr(scope, field):
+                    raise RetrievalInvalidRequestError("Expected scope mismatch")
+            if state and state["dig"] != scope.canonical_digest:
+                raise RetrievalCursorInvalidError("Cursor canonical digest mismatch")
+            search, graph = self._ports(request, budget, state)
+            response = self._execute(
+                request, principal, calls, scope, budget, search, graph, state
+            )
+            self._finish(calls, scope, budget, principal, search, graph, state)
+            page = state.get("cp", 0) + 1
+            next_cursor = None
+            if (
+                state.get("has_more")
+                and page < self._policy.max_chain_pages
+                and budget.work < self._policy.max_chain_work_units
+            ):
+                binding = state.get("search_binding")
+                next_cursor = encode_c3_cursor(
+                    secret_key=self._cursor_secret_key,
+                    principal=principal,
+                    scope=scope,
+                    request=request,
+                    policy=self._policy,
+                    scan_position=state["pos"],
+                    chain_page=page,
+                    chain_work_units=budget.work,
+                    search_generation_id=binding[0] if binding else None,
+                    search_index_uuid=binding[1] if binding else None,
+                    graph_generation_id=state.get("graph_binding"),
+                    upstream_cursor=state.get("upc"),
+                    ttl_seconds=self._policy.cursor_ttl_seconds,
+                    issued_at=state.get("iat"),
+                    expires_at=state.get("exp"),
+                )
+            response = KnowledgeQueryResponse.model_validate(
+                response.model_copy(update={"next_cursor": next_cursor})
+            )
+            self._wire(response, budget)
+            return response
 
-        graph_adapter: GraphReadAdapter | None = None
-        if self._graph_port is not None:
-            if isinstance(self._graph_port, GraphReadAdapter):
-                graph_adapter = self._graph_port
-                if bound_graph_gen and graph_adapter._generation_id is None:
-                    graph_adapter._generation_id = bound_graph_gen
-
-        source_observations: list[SourceObservation] = []
-        canonical_obs = SourceObservation(
-            source_kind=SourceKind.CANONICAL,
-            contract_version=C3_CONTRACT_VERSION,
-            scope=scope,
-            capabilities=("read_entity", "list_relationships", "list_evidence"),
-            freshness=FreshnessState.UNKNOWN,
-            freshness_reason="not_observed_in_bounded_retrieval",
-            advisory_only=True,
+    def read_evidence(
+        self, request: EvidenceRequest, *, principal: RetrievalPrincipal
+    ) -> EvidencePage:
+        query = KnowledgeQueryRequest(
+            project_id=request.project_id,
+            architecture_version_id=request.architecture_version_id,
+            operation=RetrievalOperation.EVIDENCE,
+            evidence_entity_ids=request.entity_ids,
+            evidence_relationship_ids=request.relationship_ids,
+            evidence_ids=request.evidence_ids,
+            limit=request.limit,
+            cursor=request.cursor,
         )
-        source_observations.append(canonical_obs)
+        budget = RetrievalBudget(self._policy)
+        result = self.query(query, principal=principal, _budget=budget)
+        page = EvidencePage(
+            scope=result.scope,
+            items=result.evidence,
+            total_items=(
+                len(result.evidence)
+                if result.coverage.exhausted and not request.cursor
+                else None
+            ),
+            has_more=result.next_cursor is not None,
+            next_cursor=result.next_cursor,
+            coverage=result.coverage,
+        )
+        self._wire(page, budget)
+        return page
 
-        # 4. Resolve Subject (and Target if applicable)
-        resolved_subject: ResolvedSubject | None = None
-        resolved_target: ResolvedSubject | None = None
+    def _wire(self, model: BaseModel, budget: RetrievalBudget) -> None:
+        payload = model.model_dump_json().encode()
+        if len(payload) > self._policy.max_output_bytes:
+            raise RetrievalCapacityExceededError("Response byte budget exceeded")
+        budget.remaining(reserve=False)
+        self.response_bytes = payload
 
-        if request.subject:
-            resolved_subject = resolve_subject(
-                request.subject,
-                self._canonical_port,
-                request.architecture_version_id,
-                request.project_id,
-                max_scan_rows=self._policy.canonical_max_rows_per_collection,
+    def build_context(
+        self, request: ContextRequest, *, principal: RetrievalPrincipal
+    ) -> ContextBundle:
+        from backend.platform.knowledge.context import ContextBuilder
+        from backend.platform.knowledge.evidence import EvidencePlanner
+
+        request = ContextRequest.model_validate(request)
+        if (
+            len(request.subjects) > self._policy.max_subjects
+            or len(request.operations) > self._policy.max_operations
+        ):
+            raise RetrievalCapacityExceededError(
+                "Context plan exceeds operating policy"
             )
-
-        if request.target:
-            resolved_target = resolve_subject(
-                request.target,
-                self._canonical_port,
-                request.architecture_version_id,
-                request.project_id,
-                max_scan_rows=self._policy.canonical_max_rows_per_collection,
-            )
-
-        # If subject was ambiguous or not found and required, return early outcome
-        if resolved_subject and resolved_subject.state == ResolutionState.AMBIGUOUS:
-            return KnowledgeQueryResponse(
-                scope=scope,
-                operation=request.operation,
-                outcome=RetrievalOutcome.AMBIGUOUS,
-                resolved_subject=resolved_subject,
-                resolved_target=resolved_target,
-                coverage=Coverage(
-                    considered_count=len(resolved_subject.candidates),
-                    selected_count=0,
-                    scanned_count=len(resolved_subject.candidates),
-                    count_known=True,
-                    exhausted=resolved_subject.scan_complete,
+        budget = RetrievalBudget(self._policy)
+        with operation_budget(budget):
+            budget.reserve_final_checks(
+                search=request.q is not None,
+                graph=any(
+                    op
+                    in (
+                        RetrievalOperation.DEPENDENCIES,
+                        RetrievalOperation.DEPENDENTS,
+                        RetrievalOperation.CONTAINMENT,
+                        RetrievalOperation.PATHS,
+                    )
+                    for op in request.operations
                 ),
-                source_observations=tuple(source_observations),
             )
-
-        # 5. Dispatch Operation
-        facts: list[CanonicalFactView] = []
-        relationships: list[RelationshipView] = []
-        evidence: list[EvidenceItemView] = []
-        unresolved: list[UnresolvedView] = []
-        conflicts: list[ConflictView] = []
-        has_more = False
-        next_pos = scan_position
-        used_search = False
-        used_graph = False
-
-        if request.operation == RetrievalOperation.LOOKUP:
-            if resolved_subject and resolved_subject.state == ResolutionState.RESOLVED:
-                assert resolved_subject.selected_id is not None
-                if resolved_subject.selector.record_kind == "entity":
-                    fact = self._canonical_port.get_entity(
-                        request.architecture_version_id,
-                        resolved_subject.selected_id,
-                        request.project_id,
+            calls, scope = self._begin(
+                request.architecture_version_id, request.project_id, principal, budget
+            )
+            results = []
+            omissions = []
+            state: dict[str, Any] = {}
+            search = None
+            graph = None
+            selectors = list(request.subjects)
+            if request.q is not None:
+                lexical = KnowledgeQueryRequest(
+                    project_id=scope.project_id,
+                    architecture_version_id=scope.architecture_version_id,
+                    operation=RetrievalOperation.LOOKUP,
+                    q=request.q,
+                    limit=self._policy.canonical_page_size,
+                )
+                search, _ = self._ports(lexical, budget, state)
+                try:
+                    found = self._execute(
+                        lexical, principal, calls, scope, budget, search, None, state
                     )
-                    if fact:
-                        facts.append(fact)
-            elif request.q:
-                # Search-assisted candidate discovery if search port is available
-                if search_adapter is not None:
-                    used_search = True
-                    search_req = SearchRequest(
-                        project_id=request.project_id,
-                        architecture_version_id=request.architecture_version_id,
-                        q=request.q,
-                        document_kinds=(KnowledgeDocumentKind.ENTITY,),
-                        limit=request.limit,
-                        cursor=upstream_cursor,
-                    )
-                    spage = search_adapter.search(
-                        search_req, actor_id=principal.actor_id
-                    )
-                    upstream_cursor = spage.next_cursor
-                    has_more = bool(spage.has_more)
-
-                    # Rehydrate hits canonically via logical_id
-                    for hit in spage.items:
-                        res = resolve_subject(
-                            SubjectSelector.from_logical_id(
-                                "entity", hit.canonical_reference
-                            ),
-                            self._canonical_port,
-                            request.architecture_version_id,
-                            request.project_id,
-                            max_scan_rows=self._policy.canonical_max_rows_per_collection,
-                        )
-                        if res.state == ResolutionState.RESOLVED and res.selected_id:
-                            f = self._canonical_port.get_entity(
-                                request.architecture_version_id,
-                                res.selected_id,
-                                request.project_id,
-                            )
-                            if f:
-                                facts.append(f)
-
-                    source_observations.append(
-                        SourceObservation(
-                            source_kind=SourceKind.SEARCH,
-                            contract_version=spage.c1_version,
-                            scope=scope,
-                            generation_id=spage.generation_id,
-                            index_uuid=spage.index_uuid,
-                            capabilities=tuple(
-                                cap
-                                for cap in ("lexical", "semantic", "hybrid")
-                                if getattr(spage.capabilities, cap).value == "AVAILABLE"
-                            ),
-                            freshness=FreshnessState.UNKNOWN,
-                            freshness_reason="not_observed_in_bounded_retrieval",
+                except RetrievalUnavailableError:
+                    if (
+                        SourceKind.SEARCH not in request.optional_sources
+                        or SourceKind.SEARCH in request.required_sources
+                    ):
+                        raise
+                    state.clear()
+                    omissions.append(
+                        OmissionSummary(
+                            source=SourceKind.SEARCH,
+                            reason="optional_source_unavailable",
+                            omitted_count=0,
                         )
                     )
                 else:
-                    # Fallback to bounded canonical scan
-                    paged_facts, total = self._canonical_port.list_entities(
-                        request.architecture_version_id,
-                        request.project_id,
-                        limit=request.limit,
-                        offset=scan_position,
+                    results.append(found)
+                    selectors.extend(
+                        SubjectSelector.from_record_id("entity", f.record_id)
+                        for f in found.facts
                     )
-                    facts.extend(paged_facts)
-                    next_pos = scan_position + len(paged_facts)
-                    has_more = next_pos < total
-
-        elif request.operation == RetrievalOperation.RELATIONSHIPS:
-            if (
-                not resolved_subject
-                or resolved_subject.state != ResolutionState.RESOLVED
-            ):
-                raise RetrievalInvalidRequestError(
-                    "Resolved entity subject required for relationships operation"
-                )
-
-            paged_rels, total = self._canonical_port.list_relationships(
-                request.architecture_version_id,
-                request.project_id,
-                limit=request.limit,
-                offset=scan_position,
-            )
-            subj_lid = resolved_subject.selected_logical_id
-
-            # Filter incident relationships for subject in original direction
-            for rel in paged_rels:
-                is_outgoing = rel.source_logical_id == subj_lid
-                is_incoming = rel.target_logical_id == subj_lid
-
-                match_dir = (
-                    (request.direction == TraversalDirection.OUTGOING and is_outgoing)
-                    or (
-                        request.direction == TraversalDirection.INCOMING and is_incoming
-                    )
-                    or (
-                        request.direction == TraversalDirection.BOTH
-                        and (is_outgoing or is_incoming)
-                    )
-                )
-                if not match_dir:
-                    continue
-
-                if (
-                    request.relationship_kinds
-                    and rel.kind not in request.relationship_kinds
+                    if state.get("has_more"):
+                        omissions.append(
+                            OmissionSummary(
+                                source=SourceKind.SEARCH,
+                                reason="scan_incomplete",
+                                omitted_count=0,
+                            )
+                        )
+                    state.pop("upc", None)
+                    state.pop("pos", None)
+                    state.pop("has_more", None)
+            if len(selectors) > self._policy.max_subjects:
+                raise RetrievalCapacityExceededError("Selected subject budget exceeded")
+            for selector in selectors:
+                for op in dict.fromkeys(
+                    (RetrievalOperation.LOOKUP, *request.operations)
                 ):
-                    continue
-
-                relationships.append(rel)
-
-            next_pos = scan_position + len(paged_rels)
-            has_more = next_pos < total
-
-        elif request.operation in (
-            RetrievalOperation.DEPENDENCIES,
-            RetrievalOperation.DEPENDENTS,
-        ):
-            if (
-                not resolved_subject
-                or resolved_subject.state != ResolutionState.RESOLVED
-            ):
-                raise RetrievalInvalidRequestError(
-                    f"Resolved entity subject required for {request.operation.value}"
-                )
-            if self._graph_port is None:
+                    if op == RetrievalOperation.EVIDENCE:
+                        continue
+                    req = KnowledgeQueryRequest(
+                        project_id=scope.project_id,
+                        architecture_version_id=scope.architecture_version_id,
+                        operation=op,
+                        subject=selector,
+                        target=request.target,
+                        limit=self._policy.canonical_page_size,
+                    )
+                    candidate_search, candidate_graph = self._ports(req, budget, {})
+                    search = search or candidate_search
+                    graph = graph or candidate_graph
+                    try:
+                        result = self._execute(
+                            req, principal, calls, scope, budget, search, graph, state
+                        )
+                    except RetrievalUnavailableError:
+                        source = (
+                            SourceKind.GRAPH
+                            if op
+                            in (
+                                RetrievalOperation.DEPENDENCIES,
+                                RetrievalOperation.DEPENDENTS,
+                                RetrievalOperation.CONTAINMENT,
+                                RetrievalOperation.PATHS,
+                            )
+                            else SourceKind.SEARCH
+                        )
+                        if (
+                            source not in request.optional_sources
+                            or source in request.required_sources
+                        ):
+                            raise
+                        omissions.append(
+                            OmissionSummary(
+                                source=source,
+                                reason="optional_source_unavailable",
+                                omitted_count=0,
+                            )
+                        )
+                        continue
+                    results.append(result)
+                    if (
+                        op == RetrievalOperation.LOOKUP
+                        and result.resolved_subject
+                        and result.resolved_subject.state != ResolutionState.RESOLVED
+                    ):
+                        break
+                    if state.get("has_more"):
+                        omissions.append(
+                            OmissionSummary(
+                                source=SourceKind.CANONICAL,
+                                reason="scan_incomplete",
+                                omitted_count=0,
+                            )
+                        )
+                    state.pop("pos", None)
+                    state.pop("upc", None)
+                    state.pop("has_more", None)
+            participating = {SourceKind.CANONICAL} | {
+                o.source_kind for r in results for o in r.source_observations
+            }
+            if set(request.required_sources) - participating:
                 raise RetrievalUnavailableError(
-                    "Graph query port is unavailable for graph dependency queries"
+                    "Required context source did not participate"
                 )
-
-            used_graph = True
-            rem_timeout = max(
-                0.1,
-                deadline - time.monotonic() - self._policy.finalization_reserve_seconds,
+            facts = [f for r in results for f in r.facts]
+            rels = [r for result in results for r in result.relationships]
+            planned = EvidencePlanner(
+                cast(CanonicalReadPort, calls), self._policy
+            ).plan_evidence(
+                version_id=scope.architecture_version_id,
+                project_id=scope.project_id,
+                facts=facts,
+                relationships=rels,
+                include_evidence=request.include_evidence,
+                include_conflicts=request.include_conflicts,
+                include_unresolved=request.include_unresolved,
             )
-            assert resolved_subject.selected_id is not None
-
-            if request.operation == RetrievalOperation.DEPENDENCIES:
-                req_dep = DependenciesRequest(
-                    project_id=request.project_id,
-                    architecture_version_id=request.architecture_version_id,
-                    entity_id=resolved_subject.selected_id,
-                    depth=request.graph_depth or 1,
-                    node_limit=min(request.limit, self._policy.max_graph_nodes),
-                    edge_limit=self._policy.max_graph_edges,
-                    relationship_kinds=(
-                        tuple(
-                            GraphRelationshipKind(k) for k in request.relationship_kinds
-                        )
-                        if request.relationship_kinds
-                        else APPROVED_DEPENDENCY_RELATIONSHIP_KINDS
-                    ),
-                    timeout_seconds=rem_timeout,
-                    cursor=upstream_cursor,
-                )
-                subgraph = self._graph_port.get_dependencies(req_dep)
-            else:
-                req_dependents = DependentsRequest(
-                    project_id=request.project_id,
-                    architecture_version_id=request.architecture_version_id,
-                    entity_id=resolved_subject.selected_id,
-                    depth=request.graph_depth or 1,
-                    node_limit=min(request.limit, self._policy.max_graph_nodes),
-                    edge_limit=self._policy.max_graph_edges,
-                    relationship_kinds=(
-                        tuple(
-                            GraphRelationshipKind(k) for k in request.relationship_kinds
-                        )
-                        if request.relationship_kinds
-                        else APPROVED_DEPENDENCY_RELATIONSHIP_KINDS
-                    ),
-                    timeout_seconds=rem_timeout,
-                    cursor=upstream_cursor,
-                )
-                subgraph = self._graph_port.get_dependents(req_dependents)
-
-            upstream_cursor = subgraph.next_cursor
-            has_more = bool(subgraph.truncated)
-
-            # Rehydrate nodes and edges canonically
-            for gnode in subgraph.nodes:
-                facts.append(
-                    CanonicalFactView(
-                        record_id=gnode.architecture_entity_id,
-                        logical_id=gnode.logical_id,
-                        kind=gnode.canonical_kind,
-                        name=gnode.name,
-                        namespace=(gnode.namespace,) if gnode.namespace else None,
-                        status=gnode.fact_status,
-                        metadata=dict(gnode.metadata),
-                        evidence_count=len(gnode.evidence_logical_ids),
-                        evidence_references=tuple(gnode.evidence_logical_ids),
+            omissions.extend(planned.omissions)
+            if planned.conflict_coverage_incomplete:
+                omissions.append(
+                    OmissionSummary(
+                        source=SourceKind.CANONICAL,
+                        reason="conflict_scan_incomplete",
+                        omitted_count=0,
                     )
                 )
-
-            for gedge in subgraph.edges:
-                relationships.append(
-                    RelationshipView(
-                        record_id=gedge.architecture_relationship_id,
-                        logical_id=gedge.logical_id,
-                        kind=gedge.canonical_kind,
-                        status=gedge.status,
-                        source_id=gedge.source_entity_id,
-                        target_id=gedge.target_entity_id,
-                        source_logical_id=str(gedge.source_entity_id),
-                        target_logical_id=str(gedge.target_entity_id),
-                        evidence_references=tuple(gedge.evidence_logical_ids),
-                    )
-                )
-
-            source_observations.append(
-                SourceObservation(
-                    source_kind=SourceKind.GRAPH,
-                    contract_version=C3_CONTRACT_VERSION,
-                    scope=scope,
-                    generation_id=subgraph.scope.generation_id,
-                    graph_schema_version=subgraph.scope.graph_schema_version,
-                    projector_version=subgraph.scope.projector_version,
-                    capabilities=("dependencies", "dependents"),
-                    freshness=FreshnessState.UNKNOWN,
-                    freshness_reason="not_observed_in_bounded_retrieval",
-                )
+            plan = RetrievalPlan(
+                request_fingerprint=hashlib.sha256(
+                    request.model_dump_json().encode()
+                ).hexdigest(),
+                operations=request.operations,
+                subjects=request.subjects,
+                target=request.target,
+                required_sources=request.required_sources,
+                optional_sources=request.optional_sources,
+                policy_fingerprint=self._policy.compute_fingerprint(),
             )
-
-        elif request.operation == RetrievalOperation.CONTAINMENT:
-            if (
-                not resolved_subject
-                or resolved_subject.state != ResolutionState.RESOLVED
-            ):
-                raise RetrievalInvalidRequestError(
-                    "Resolved entity subject required for containment operation"
-                )
-            if self._graph_port is None:
-                raise RetrievalUnavailableError(
-                    "Graph query port is unavailable for containment queries"
-                )
-
-            used_graph = True
-            rem_timeout = max(
-                0.1,
-                deadline - time.monotonic() - self._policy.finalization_reserve_seconds,
-            )
-            assert resolved_subject.selected_id is not None
-
-            p4_dir = (
-                P4ContainmentDirection.PARENTS
-                if request.containment_direction == ContainmentDirection.PARENTS
-                else (
-                    P4ContainmentDirection.CHILDREN
-                    if request.containment_direction == ContainmentDirection.CHILDREN
-                    else P4ContainmentDirection.BOTH
-                )
-            )
-
-            req_cont = ContainmentRequest(
-                project_id=request.project_id,
-                architecture_version_id=request.architecture_version_id,
-                entity_id=resolved_subject.selected_id,
-                direction=p4_dir,
-                depth=request.graph_depth or 1,
-                node_limit=min(request.limit, self._policy.max_graph_nodes),
-                edge_limit=self._policy.max_graph_edges,
-                timeout_seconds=rem_timeout,
-                cursor=upstream_cursor,
-            )
-            subgraph = self._graph_port.get_containment(req_cont)
-            upstream_cursor = subgraph.next_cursor
-            has_more = bool(subgraph.truncated)
-
-            for gnode in subgraph.nodes:
-                facts.append(
-                    CanonicalFactView(
-                        record_id=gnode.architecture_entity_id,
-                        logical_id=gnode.logical_id,
-                        kind=gnode.canonical_kind,
-                        name=gnode.name,
-                        namespace=(gnode.namespace,) if gnode.namespace else None,
-                        status=gnode.fact_status,
-                        metadata=dict(gnode.metadata),
-                        evidence_count=len(gnode.evidence_logical_ids),
-                        evidence_references=tuple(gnode.evidence_logical_ids),
-                    )
-                )
-            for gedge in subgraph.edges:
-                relationships.append(
-                    RelationshipView(
-                        record_id=gedge.architecture_relationship_id,
-                        logical_id=gedge.logical_id,
-                        kind=gedge.canonical_kind,
-                        status=gedge.status,
-                        source_id=gedge.source_entity_id,
-                        target_id=gedge.target_entity_id,
-                        source_logical_id=str(gedge.source_entity_id),
-                        target_logical_id=str(gedge.target_entity_id),
-                        evidence_references=tuple(gedge.evidence_logical_ids),
-                    )
-                )
-
-            source_observations.append(
-                SourceObservation(
-                    source_kind=SourceKind.GRAPH,
-                    contract_version=C3_CONTRACT_VERSION,
-                    scope=scope,
-                    generation_id=subgraph.scope.generation_id,
-                    graph_schema_version=subgraph.scope.graph_schema_version,
-                    projector_version=subgraph.scope.projector_version,
-                    capabilities=("containment",),
-                    freshness=FreshnessState.UNKNOWN,
-                    freshness_reason="not_observed_in_bounded_retrieval",
-                )
-            )
-
-        elif request.operation == RetrievalOperation.PATHS:
-            if (
-                not resolved_subject
-                or resolved_subject.state != ResolutionState.RESOLVED
-            ):
-                raise RetrievalInvalidRequestError(
-                    "Resolved entity subject required for paths operation"
-                )
-            if not resolved_target or resolved_target.state != ResolutionState.RESOLVED:
-                raise RetrievalInvalidRequestError(
-                    "Resolved entity target required for paths operation"
-                )
-            if self._graph_port is None:
-                raise RetrievalUnavailableError(
-                    "Graph query port is unavailable for paths query"
-                )
-
-            used_graph = True
-            rem_timeout = max(
-                0.1,
-                deadline - time.monotonic() - self._policy.finalization_reserve_seconds,
-            )
-            assert resolved_subject.selected_id is not None
-            assert resolved_target.selected_id is not None
-
-            req_paths = BoundedPathsRequest(
-                project_id=request.project_id,
-                architecture_version_id=request.architecture_version_id,
-                source_entity_id=resolved_subject.selected_id,
-                target_entity_id=resolved_target.selected_id,
-                max_depth=request.graph_depth or 3,
-                path_limit=min(self._policy.max_graph_paths, 25),
-                timeout_seconds=rem_timeout,
-            )
-            path_res = self._graph_port.get_bounded_paths(req_paths)
-            has_more = False  # Paths operations are non-paginated per §7A.6
-
-            for path in path_res.paths:
-                for node in path.nodes:
-                    facts.append(
-                        CanonicalFactView(
-                            record_id=node.architecture_entity_id,
-                            logical_id=node.logical_id,
-                            kind=node.canonical_kind,
-                            name=node.name,
-                            namespace=(node.namespace,) if node.namespace else None,
-                            status=node.fact_status,
-                            metadata=dict(node.metadata),
-                            evidence_count=len(node.evidence_logical_ids),
-                            evidence_references=tuple(node.evidence_logical_ids),
-                        )
-                    )
-                for edge in path.edges:
-                    relationships.append(
-                        RelationshipView(
-                            record_id=edge.architecture_relationship_id,
-                            logical_id=edge.logical_id,
-                            kind=edge.canonical_kind,
-                            status=edge.status,
-                            source_id=edge.source_entity_id,
-                            target_id=edge.target_entity_id,
-                            source_logical_id=str(edge.source_entity_id),
-                            target_logical_id=str(edge.target_entity_id),
-                            evidence_references=tuple(edge.evidence_logical_ids),
-                        )
-                    )
-
-            source_observations.append(
-                SourceObservation(
-                    source_kind=SourceKind.GRAPH,
-                    contract_version=C3_CONTRACT_VERSION,
-                    scope=scope,
-                    generation_id=path_res.scope.generation_id,
-                    graph_schema_version=path_res.scope.graph_schema_version,
-                    projector_version=path_res.scope.projector_version,
-                    capabilities=("paths",),
-                    freshness=FreshnessState.UNKNOWN,
-                    freshness_reason="not_observed_in_bounded_retrieval",
-                )
-            )
-
-        elif request.operation == RetrievalOperation.EVIDENCE:
-            entity_id = resolved_subject.selected_id if resolved_subject else None
-            paged_ev, total = self._canonical_port.list_evidence(
-                request.architecture_version_id,
-                request.project_id,
-                limit=request.limit,
-                offset=scan_position,
-                entity_id=entity_id,
-            )
-            evidence.extend(paged_ev)
-            next_pos = scan_position + len(paged_ev)
-            has_more = next_pos < total
-
-        # 6. Conditional Final Checks (§7A.6)
-        rem_budget = deadline - time.monotonic()
-        if rem_budget <= 0:
-            raise RetrievalDeadlineExceededError(
-                "Retrieval operation exceeded total deadline before final checks"
-            )
-
-        if used_search and search_adapter is not None:
-            # Perform single final search validation probe (§7A.6)
-            search_adapter.final_probe(
-                SearchRequest(
-                    project_id=request.project_id,
-                    architecture_version_id=request.architecture_version_id,
-                    q=request.q or "*",
-                    document_kinds=(KnowledgeDocumentKind.ENTITY,),
-                    limit=1,
+            bundle = ContextBuilder(
+                scope=scope, plan=plan, policy=self._policy
+            ).build_bundle(
+                source_observations=tuple(
+                    o for r in results for o in r.source_observations
                 ),
-                actor_id=principal.actor_id,
-                remaining_budget=rem_budget,
-            )
-
-        if (
-            used_graph
-            and graph_adapter is not None
-            and graph_adapter.bound_generation_id is not None
-        ):
-            active = graph_adapter.verify_generation_still_active(
-                request.project_id,
-                request.architecture_version_id,
-                graph_adapter.bound_generation_id,
-                timeout_seconds=rem_budget,
-            )
-            if not active:
-                raise RetrievalGenerationChangedError(
-                    "Graph generation is no longer active at final check"
+                resolved_subjects=tuple(
+                    r.resolved_subject for r in results if r.resolved_subject
+                ),
+                facts=facts,
+                relationships=rels,
+                evidence=planned.evidence,
+                conflicts=planned.conflicts,
+                unresolved=planned.unresolved,
+                omissions=omissions,
+                rationales=tuple(
+                    SelectionRationale(
+                        code=(
+                            SelectionRationaleCode.LEXICAL_CANDIDATE
+                            if any(
+                                o.source_kind == SourceKind.SEARCH
+                                for o in r.source_observations
+                            )
+                            else (
+                                SelectionRationaleCode.GRAPH_CONTEXT
+                                if r.operation
+                                not in (
+                                    RetrievalOperation.LOOKUP,
+                                    RetrievalOperation.RELATIONSHIPS,
+                                )
+                                else (
+                                    SelectionRationaleCode.EXACT_NAME
+                                    if r.resolved_subject
+                                    and r.resolved_subject.selector.selector_type
+                                    == "entity_name"
+                                    else SelectionRationaleCode.EXPLICIT_IDENTITY
+                                )
+                            )
+                        ),
+                        target_logical_id=f.logical_id,
+                        target_kind=f.kind,
+                        originating_operation=r.operation,
+                    )
+                    for r in results
+                    for f in r.facts
                 )
-
-        # 7. Next cursor generation if continuation exists
-        next_cursor: str | None = None
-        if has_more and chain_page < self._policy.max_chain_pages:
-            s_gen = search_adapter.bound_generation_id if search_adapter else None
-            s_idx = search_adapter.bound_index_uuid if search_adapter else None
-            g_gen = graph_adapter.bound_generation_id if graph_adapter else None
-            next_cursor = encode_c3_cursor(
-                secret_key=self._cursor_secret_key,
-                principal=principal,
-                scope=scope,
-                request=request,
-                policy=self._policy,
-                scan_position=next_pos,
-                chain_page=chain_page,
-                chain_work_units=chain_work_units
-                + len(facts)
-                + len(relationships)
-                + len(evidence),
-                search_generation_id=s_gen,
-                search_index_uuid=s_idx,
-                graph_generation_id=g_gen,
-                upstream_cursor=upstream_cursor,
-                ttl_seconds=self._policy.cursor_ttl_seconds,
+                + tuple(
+                    SelectionRationale(
+                        code=SelectionRationaleCode.DIRECT_RELATIONSHIP,
+                        target_logical_id=r.logical_id,
+                        target_kind=r.kind,
+                        originating_operation=RetrievalOperation.RELATIONSHIPS,
+                    )
+                    for r in rels
+                )
+                + tuple(
+                    SelectionRationale(
+                        code=(
+                            SelectionRationaleCode.CONFLICTING_EVIDENCE
+                            if ev.polarity == "conflicting"
+                            else SelectionRationaleCode.SUPPORTING_EVIDENCE
+                        ),
+                        target_logical_id=ev.logical_id,
+                        target_kind="evidence",
+                    )
+                    for ev in planned.evidence
+                ),
             )
-
-        outcome = RetrievalOutcome.COMPLETE
-        if (
-            not facts
-            and not relationships
-            and not evidence
-            and not unresolved
-            and not conflicts
-        ):
-            outcome = RetrievalOutcome.NO_EVIDENCE
-
-        total_selected = (
-            len(facts)
-            + len(relationships)
-            + len(evidence)
-            + len(unresolved)
-            + len(conflicts)
-        )
-        coverage = Coverage(
-            considered_count=total_selected,
-            selected_count=total_selected,
-            scanned_count=total_selected,
-            count_known=True,
-            exhausted=not has_more,
-            truncated=has_more,
-        )
-
-        return KnowledgeQueryResponse(
-            scope=scope,
-            operation=request.operation,
-            outcome=outcome,
-            resolved_subject=resolved_subject,
-            resolved_target=resolved_target,
-            facts=tuple(facts),
-            relationships=tuple(relationships),
-            evidence=tuple(evidence),
-            unresolved=tuple(unresolved),
-            conflicts=tuple(conflicts),
-            source_observations=tuple(source_observations),
-            coverage=coverage,
-            next_cursor=next_cursor,
-        )
-
-
-__all__ = [
-    "KnowledgeQueryService",
-    "decode_c3_cursor",
-    "encode_c3_cursor",
-    "resolve_subject",
-]
+            self._finish(calls, scope, budget, principal, search, graph, state)
+            self._wire(bundle, budget)
+            return bundle

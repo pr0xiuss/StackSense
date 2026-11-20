@@ -393,7 +393,7 @@ def test_evidence_endpoint_success(retrieval_fixture):
     client, _, _, scope, _, _, _ = retrieval_fixture
     url = (
         f"/api/v1/architecture-versions/{scope.architecture_version_id}/knowledge/evidence"
-        f"?project_id={scope.project_id}&limit=10&offset=0"
+        f"?project_id={scope.project_id}&limit=10"
     )
 
     resp = client.get(url)
@@ -410,7 +410,7 @@ def test_evidence_endpoint_pagination(retrieval_fixture):
     client, _, _, scope, _, _, _ = retrieval_fixture
     url_p1 = (
         f"/api/v1/architecture-versions/{scope.architecture_version_id}/knowledge/evidence"
-        f"?project_id={scope.project_id}&limit=1&offset=0"
+        f"?project_id={scope.project_id}&limit=1"
     )
     resp1 = client.get(url_p1)
     assert resp1.status_code == 200
@@ -421,7 +421,7 @@ def test_evidence_endpoint_pagination(retrieval_fixture):
 
     url_p2 = (
         f"/api/v1/architecture-versions/{scope.architecture_version_id}/knowledge/evidence"
-        f"?project_id={scope.project_id}&limit=1&offset=1"
+        f"?project_id={scope.project_id}&limit=1&cursor={data1["next_cursor"]}"
     )
     resp2 = client.get(url_p2)
     assert resp2.status_code == 200

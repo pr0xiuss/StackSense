@@ -1,0 +1,7 @@
+# Administrator: validate with visudo -cf before installing mode 0440.
+Cmnd_Alias STACKSENSE_SEAL = /opt/stacksense/diagram-artifacts/seal-generation ""
+Cmnd_Alias STACKSENSE_ORPHAN_GC = /opt/stacksense/diagram-artifacts/gc-generation ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+Defaults!STACKSENSE_SEAL env_reset, !setenv, secure_path=/usr/sbin:/usr/bin:/sbin:/bin
+Defaults!STACKSENSE_ORPHAN_GC env_reset, !setenv, secure_path=/usr/sbin:/usr/bin:/sbin:/bin
+%stacksense-worker ALL=(stacksense-artifacts) NOPASSWD: STACKSENSE_SEAL
+%stacksense-artifact-gc ALL=(stacksense-artifacts) NOPASSWD: STACKSENSE_ORPHAN_GC

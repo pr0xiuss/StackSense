@@ -1,4 +1,4 @@
-"""Pipeline integration tests for P5-C3 Controlled Retrieval.
+"""Mocked consumer-composition tests, not physical-service acceptance.
 
 Verifies end-to-end integration across canonical, search, and graph source adapters,
 query service, evidence planner, context builder, and FastAPI endpoints.
@@ -74,6 +74,10 @@ class MockArchitectureQueryService:
     def __init__(self, version_id: UUID, project_id: UUID) -> None:
         self.version_id = version_id
         self.project_id = project_id
+        self.analysis_id = uuid4()
+        self.repository_id = uuid4()
+        self.snapshot_id = uuid4()
+        self.published_at = datetime.now(UTC)
         self.entities: list[ArchitectureEntityResponse] = []
         self.relationships: list[ArchitectureRelationshipResponse] = []
         self.evidence: list[ArchitectureEvidenceResponse] = []
@@ -89,10 +93,10 @@ class MockArchitectureQueryService:
             )
         return ArchitectureVersionResponse(
             id=version_id,
-            analysis_id=uuid4(),
+            analysis_id=self.analysis_id,
             project_id=project_id,
-            repository_id=uuid4(),
-            snapshot_id=uuid4(),
+            repository_id=self.repository_id,
+            snapshot_id=self.snapshot_id,
             sequence_number=1,
             architecture_schema_version="1.0.0",
             ir_schema_version="1.0.0",
@@ -103,7 +107,7 @@ class MockArchitectureQueryService:
             unresolved_relationship_count=len(self.unresolved),
             conflict_count=len(self.conflicts),
             completeness={},
-            published_at=datetime.now(UTC),
+            published_at=self.published_at,
         )
 
     def get_entity(
@@ -584,8 +588,8 @@ def test_graceful_degradation_when_search_and_graph_unconfigured(pipeline_fixtur
     assert len(bundle["semantic_digest"]) == 64
 
 
-def test_generation_drift_fails_closed(pipeline_fixture):
-    """If search reader generation drifts unexpectedly, retrieval fails closed."""
+def test_canonical_only_ignores_unrelated_search_generation_change(pipeline_fixture):
+    """Unrelated search state must not affect a canonical-only request."""
     (
         client,
         app,
@@ -618,14 +622,12 @@ def test_generation_drift_fails_closed(pipeline_fixture):
             },
         },
     )
-    # The adapter detects generation mismatch on search probe and fails closed
-    assert resp.status_code in (200, 409)
+    # Canonical-only retrieval does not depend on or probe search.
+    assert resp.status_code == 200
 
 
-def test_transaction_isolation_read_only_guarantee(pipeline_fixture):
-    """Verify that retrieval services perform strictly read-only execution
-    without commit.
-    """
+def test_canonical_only_never_calls_optional_ports(pipeline_fixture):
+    """Consumer fakes prove optional ports are unused, not physical isolation."""
     (
         _,
         _,
@@ -639,8 +641,11 @@ def test_transaction_isolation_read_only_guarantee(pipeline_fixture):
         version_id,
     ) = pipeline_fixture
 
-    # Spy session mock to ensure no database transaction is committed
-    spy_session = MagicMock()
+    # These are consumer fakes, not transaction proofs (see real-services tests).
+    search = pipeline_fixture[5]
+    graph = pipeline_fixture[6]
+    search.search = MagicMock(side_effect=AssertionError("Unexpected search"))
+    graph.get_dependencies = MagicMock(side_effect=AssertionError("Unexpected graph"))
 
     principal = RetrievalPrincipal(
         actor_id=uuid4(),
@@ -661,6 +666,6 @@ def test_transaction_isolation_read_only_guarantee(pipeline_fixture):
     resp = query_svc.query(req, principal=principal)
     assert resp.outcome.value == "complete"
 
-    # Assert no transaction commit or mutating flush occurred
-    assert spy_session.commit.call_count == 0
-    assert spy_session.flush.call_count == 0
+    # Actual PG read-only enforcement is covered by the real-service tests.
+    search.search.assert_not_called()
+    graph.get_dependencies.assert_not_called()

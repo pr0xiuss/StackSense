@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0",
+  "node": "24.22.3",
+  "bubblewrap": "0.12.0",
+  "elkjs": "0.12.1",
+  "files": [
+    {"path": "runtime/root/bin/node", "sha256": "a7ec1b37e6ff9d187e4198c5b6df9a4eb1c74dd31804fb3bac55cc4ceca1ac01"},
+    {"path": "runtime/root/app/elk_layout.mjs", "sha256": "76b7d885a774d1d218316fec9ed9a1d2be521f8d2c02e19a8e214766e75f5391"},
+    {"path": "runtime/root/app/node_modules/elkjs/lib/elk.bundled.js", "sha256": "b1032b7cfd2a57c54c6f0e8369d7665e19a579954f7cd20a6dae28f1912ea0d7"},
+    {"path": "layout_runtime/launch_elk.py", "sha256": "888450f2a6700f296d1a2784f3a4b6f391ec64a288a3a1e9474b1fa99846afc9"},
+    {"path": "layout_runtime/seccomp_policy.json", "sha256": "1c5f254a73e71625f9848891f146e04df805c4ff47a208cd235b80364422b857"}
+  ]
+}

@@ -167,7 +167,7 @@ def test_representative_retrieval_resolution_benchmark():
         )
 
     principal = RetrievalPrincipal(actor_id=uuid4(), project_id=prj, role="member")
-    policy = RetrievalPolicy()
+    policy = RetrievalPolicy(max_chain_work_units=10000)
     secret_key = "test-retrieval-cursor-secret-key-32b"
     svc = KnowledgeQueryService(canonical, policy=policy, cursor_secret_key=secret_key)
 
@@ -281,7 +281,7 @@ def test_context_and_evidence_assembly_benchmark():
         ir_schema_version="1.0.0",
         published_at=datetime.now(UTC),
     )
-    policy = RetrievalPolicy()
+    policy = RetrievalPolicy(max_chain_work_units=10000)
     canonical = InMemoryBenchmarkCanonicalPort(scope)
 
     # 50 facts, 100 relationships, 150 evidence items, 10 conflicts, 10 unresolved
@@ -397,7 +397,7 @@ def test_context_and_evidence_assembly_benchmark():
         ),
         required_sources=(SourceKind.CANONICAL,),
         optional_sources=(),
-        policy_fingerprint="d" * 64,
+        policy_fingerprint=policy.compute_fingerprint(),
         budget_snapshot={"limit": 25},
     )
 

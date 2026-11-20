@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "architectures": ["x86_64", "aarch64"],
+  "deny": ["socket", "socketpair", "connect", "bind", "listen", "accept", "accept4", "sendto", "sendmsg", "recvmsg", "ptrace", "process_vm_readv", "process_vm_writev", "mount", "umount2", "unshare", "setns", "pivot_root", "chroot", "open_by_handle_at", "fsopen", "fsconfig", "fsmount", "fspick", "open_tree", "move_mount", "mount_setattr", "keyctl", "add_key", "request_key", "bpf", "perf_event_open", "pidfd_getfd", "kexec_load", "kexec_file_load", "reboot", "swapon", "swapoff", "init_module", "finit_module", "delete_module", "io_uring_setup", "io_uring_enter", "io_uring_register", "mknod", "mknodat", "setuid", "setgid", "setresuid", "setresgid", "setreuid", "setregid", "capset"],
+  "clone_namespace_flags": [128, 131072, 33554432, 67108864, 134217728, 268435456, 536870912, 1073741824],
+  "clone3_errno": 38
+}

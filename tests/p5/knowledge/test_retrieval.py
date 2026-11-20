@@ -481,7 +481,9 @@ def test_c3_stateless_cursor_expiration():
         scan_position=10,
         chain_page=1,
         chain_work_units=10,
-        ttl_seconds=-1.0,
+        ttl_seconds=300.0,
+        issued_at=1000.0,
+        expires_at=1300.0,
     )
     with pytest.raises(RetrievalCursorExpiredError):
         decode_c3_cursor(

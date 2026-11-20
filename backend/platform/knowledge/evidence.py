@@ -27,6 +27,7 @@ from backend.platform.knowledge.retrieval_contracts import (
     OmissionSummary,
     RelationshipView,
     RetrievalCapacityExceededError,
+    RetrievalIntegrityFailedError,
     SourceKind,
     UnresolvedView,
 )
@@ -156,6 +157,20 @@ class EvidencePlanner:
                     break
 
             # Filter evidence items relevant to selected facts/relationships
+            if offset < total_ev:
+                omissions.append(
+                    OmissionSummary(
+                        source=SourceKind.CANONICAL,
+                        reason="evidence_scan_incomplete",
+                        omitted_count=0,
+                    )
+                )
+            elif all_referenced_evidence_keys - {
+                ev.logical_id for ev in scanned_evidence
+            }:
+                raise RetrievalIntegrityFailedError(
+                    "Canonical evidence reference missing"
+                )
             seen_evidence_ids: set[str] = set()
             for ev in scanned_evidence:
                 considered_count += 1
@@ -169,12 +184,27 @@ class EvidencePlanner:
                     if dedupe_key not in seen_evidence_ids:
                         seen_evidence_ids.add(dedupe_key)
                         selected_evidence.append(ev)
+                    elif (
+                        next(x for x in selected_evidence if x.logical_id == dedupe_key)
+                        != ev
+                    ):
+                        raise RetrievalIntegrityFailedError(
+                            "Conflicting evidence identity"
+                        )
 
             # Deterministic sorting
             selected_evidence.sort(key=evidence_sort_key)
 
             # Enforce evidence budget
             if len(selected_evidence) > budget_limit:
+                opposing = [
+                    ev for ev in selected_evidence if ev.polarity == "conflicting"
+                ]
+                if len(opposing) > budget_limit:
+                    raise RetrievalCapacityExceededError("Opposing evidence cannot fit")
+                selected_evidence.sort(
+                    key=lambda ev: (ev.polarity != "conflicting", evidence_sort_key(ev))
+                )
                 omitted_count = len(selected_evidence) - budget_limit
                 omissions.append(
                     OmissionSummary(
@@ -216,6 +246,8 @@ class EvidencePlanner:
                     conflict_coverage_incomplete = True
                 if not conf_items or offset >= total_conf:
                     break
+            if offset < total_conf:
+                conflict_coverage_incomplete = True
 
             seen_conflicts: set[str] = set()
             for conf in scanned_conflicts:
@@ -244,7 +276,7 @@ class EvidencePlanner:
                                 omitted_count=sum(omitted_fields.values()),
                                 details={
                                     "conflict_id": conf.logical_id,
-                                    "omitted_keys": list(omitted_fields.keys()),
+                                    "omitted_field_count": sum(omitted_fields.values()),
                                 },
                             )
                         )
@@ -290,6 +322,14 @@ class EvidencePlanner:
                 offset += len(unres_items)
                 if not unres_items or offset >= total_unres:
                     break
+            if offset < total_unres:
+                omissions.append(
+                    OmissionSummary(
+                        source=SourceKind.CANONICAL,
+                        reason="unresolved_scan_incomplete",
+                        omitted_count=0,
+                    )
+                )
 
             seen_unresolved: set[str] = set()
             for unres in scanned_unresolved:
@@ -311,7 +351,9 @@ class EvidencePlanner:
                                     omitted_count=sum(omitted_fields.values()),
                                     details={
                                         "unresolved_id": unres.logical_id,
-                                        "omitted_keys": list(omitted_fields.keys()),
+                                        "omitted_field_count": sum(
+                                            omitted_fields.values()
+                                        ),
                                     },
                                 )
                             )
@@ -322,12 +364,19 @@ class EvidencePlanner:
                             unresolved_type=unres.unresolved_type,
                             source_logical_id=unres.source_logical_id,
                             target_descriptor=unres.target_descriptor,
+                            status=unres.status,
+                            evidence_references=unres.evidence_references,
+                            candidate_references=unres.candidate_references,
                             details=safe_details,
                         )
                         selected_unresolved.append(sanitized_unres)
 
             # Sort unresolved deterministically
             selected_unresolved.sort(key=lambda u: u.logical_id)
+            if len(selected_unresolved) > self._policy.max_selected_unresolved:
+                raise RetrievalCapacityExceededError(
+                    "Unresolved disclosure exceeds policy"
+                )
 
         selected_count = (
             len(selected_evidence) + len(selected_conflicts) + len(selected_unresolved)

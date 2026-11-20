@@ -1,0 +1,83 @@
+{
+  "diagram_schema_version": "1.0.0",
+  "scope": {
+    "project_id": "00000000-0000-0000-0000-000000000001",
+    "repository_id": "00000000-0000-0000-0000-000000000002",
+    "analysis_id": "00000000-0000-0000-0000-000000000003",
+    "snapshot_id": "00000000-0000-0000-0000-000000000004",
+    "architecture_version_id": "00000000-0000-0000-0000-000000000005",
+    "sequence_number": 1,
+    "canonical_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "architecture_schema_version": "1.0.0",
+    "ir_schema_version": "1.0.0"
+  },
+  "template": "data_flow",
+  "profile": {
+    "template_version": "1.0.0",
+    "builder_version": "1.0.0",
+    "selection_version": "1.0.0",
+    "identity_version": "1.0.0",
+    "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "diagram_id": "diagram://ab6e9affbcfba77aca8cc50e643b0288269b812abe941f69ece608e1b2bd8703",
+  "view": {
+    "root_ids": [],
+    "entity_kinds": [],
+    "statuses": [],
+    "relationship_kinds": [],
+    "include_contains": false,
+    "depth": 4,
+    "selected_entity_ids": [],
+    "template": "data_flow",
+    "semantics": "static_interactions",
+    "connectivity_overlay": false,
+    "no_flow_reason": "insufficient_evidence"
+  },
+  "nodes": [],
+  "edges": [],
+  "groups": [],
+  "annotations": [
+    {
+      "kind": "conflict",
+      "subject_ids": [],
+      "records": [
+        {
+          "record_type": "conflict",
+          "id": "00000000-0000-0000-0000-00000000004d",
+          "logical_id": "fixture:canonical-conflict"
+        }
+      ],
+      "evidence": [],
+      "reason": "unreconciled canonical conflict",
+      "count": 1
+    }
+  ],
+  "provenance": [],
+  "membership_digest": "5410fd2274476d4e53298a8d58a0bc2306b788ae6107fe497c2f6039b5822082",
+  "coverage": {
+    "view_state": "partial_view",
+    "source_partial": true,
+    "selection_bounded": false,
+    "scan_exhausted": true,
+    "source_completeness": {
+      "total_inventory_artifacts": 0,
+      "analyzed_artifacts": 0,
+      "failed_artifacts": 0,
+      "total_syntax_documents": 0,
+      "total_syntax_facts": 0,
+      "source_entities": 0,
+      "source_relationships": 0,
+      "source_unresolved_references": 0,
+      "source_conflicts": 1,
+      "architecture_entities": 0,
+      "architecture_relationships": 0,
+      "architecture_unresolved_relationships": 0,
+      "architecture_conflicts": 1,
+      "is_partial": true
+    },
+    "counts": [],
+    "reasons": []
+  },
+  "legend": [],
+  "semantic_digest": "423ce50b416e602335ad267d30e643d4a966efe2e3fd8df52ff1be1e91bbac05"
+}

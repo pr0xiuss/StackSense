@@ -1,0 +1,67 @@
+{
+  "annotations": [],
+  "coverage": {
+    "counts": [],
+    "reasons": [],
+    "scan_exhausted": true,
+    "selection_bounded": false,
+    "source_completeness": {
+      "analyzed_artifacts": 0,
+      "architecture_conflicts": 0,
+      "architecture_entities": 0,
+      "architecture_relationships": 0,
+      "architecture_unresolved_relationships": 0,
+      "failed_artifacts": 0,
+      "is_partial": false,
+      "source_conflicts": 0,
+      "source_entities": 0,
+      "source_relationships": 0,
+      "source_unresolved_references": 0,
+      "total_inventory_artifacts": 0,
+      "total_syntax_documents": 0,
+      "total_syntax_facts": 0
+    },
+    "source_partial": false,
+    "view_state": "empty_view"
+  },
+  "diagram_id": "diagram://7daa378a9ff8ad94aebca93bed9dea369aac65e25a6c87016e9b729dbc89d8de",
+  "diagram_schema_version": "1.0.0",
+  "edges": [],
+  "groups": [],
+  "legend": [],
+  "membership_digest": "a22c17a7a284fc201cc8ac5d6ae279733889518ab9348b70066ba16d2035d329",
+  "nodes": [],
+  "profile": {
+    "builder_version": "1.0.0",
+    "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "identity_version": "1.0.0",
+    "selection_version": "1.0.0",
+    "template_version": "1.0.0"
+  },
+  "provenance": [],
+  "scope": {
+    "analysis_id": "00000000-0000-0000-0000-000000000003",
+    "architecture_schema_version": "1.0.0",
+    "architecture_version_id": "00000000-0000-0000-0000-000000000005",
+    "canonical_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ir_schema_version": "1.0.0",
+    "project_id": "00000000-0000-0000-0000-000000000001",
+    "repository_id": "00000000-0000-0000-0000-000000000002",
+    "sequence_number": 1,
+    "snapshot_id": "00000000-0000-0000-0000-000000000004"
+  },
+  "semantic_digest": "879c519f2402ae70081b0827d46973b43292da3fe1264289d434913170f716c3",
+  "template": "system_overview",
+  "view": {
+    "boundary_ids": [],
+    "depth": 4,
+    "entity_kinds": [],
+    "include_contains": false,
+    "layers": [],
+    "relationship_kinds": [],
+    "root_ids": [],
+    "selected_entity_ids": [],
+    "statuses": [],
+    "template": "system_overview"
+  }
+}
