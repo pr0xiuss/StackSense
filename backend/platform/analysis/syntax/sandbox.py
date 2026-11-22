@@ -7,8 +7,12 @@ import errno
 import math
 import os
 import platform
-import resource
 import socket
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
 
 
 class ParserSandboxError(RuntimeError):

@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md — StackSense Engineering Handoff
 
-Last reconciled: 2026-11-20 (M4/C2 v1.0.0 OWNER-ACCEPTED COMPLETE / FROZEN; M5 COMPLETE PLAN OWNER APPROVED / FROZEN; D-M5-01–05 RESOLVED; B1 → B2 → B3 AUTHORIZED SEQUENTIALLY / NOT STARTED (§7C.8; §9 internal §15.5); unrelated dirty work preserved). Branch: `feature_mannan`; no branch change. Original P5 planning inspection used `p5-knowledge-search`.
+Last reconciled: 2026-11-22 (M4/C2 v1.0.0 OWNER-ACCEPTED COMPLETE / FROZEN; M5 BATCHES 1, 2, AND 3 IMPLEMENTED AND VERIFIED (§7C.9, §7C.10, §7C.11); D-M5-01–05 RESOLVED; M5 READY FOR CONSOLIDATED REVIEW / FREEZE; unrelated dirty work preserved). Branch: `feature_mannan`; no branch change. Original P5 planning inspection used `p5-knowledge-search`.
 
 ## 1. Project, Authority and Documentation Policy
 
@@ -39,7 +39,7 @@ Authority: `master.txt` governs frozen overall architecture and its accepted ADR
 | P2 — Project & Repository Platform | FROZEN / COMPLETE | Express JWT/platform RBAC, projects/repos, ingestion, immutable revisions/artifacts; Python Phase 2 retained as reference |
 | P3 — Analysis Engine & Architecture Model | FROZEN / COMPLETE | Lifecycle/F1; isolated deterministic inspection/F2; IR/F3; identity/model publication; gateway/model UI and performance closeout |
 | P4 — Architecture Graph & Exploration | FROZEN / COMPLETE — OWNER CONFIRMED | All six roadmap modules M1–M6 accepted, including final evaluation; owner closure reconfirmed 2026-11-17. There is no P4 M7 |
-| P5 — Knowledge, Search & Diagram Intelligence | IN PROGRESS; SEVEN-MODULE PLAN APPROVED | M1–M4 OWNER-ACCEPTED COMPLETE / FROZEN; C0/C1/C2/C3 v1.0.0 accepted/frozen. M4 all-four-batch and browser evidence §7B.24; deferred hardening and carried frozen regression failure remain recorded; no production activation. M5 complete plan/C4 design OWNER APPROVED / FROZEN; D-M5-01–05 RESOLVED; B1→B2→B3 authorized sequentially subject to engineering gates, NOT STARTED (§7C.8) |
+| P5 — Knowledge, Search & Diagram Intelligence | IN PROGRESS; SEVEN-MODULE PLAN APPROVED | M1–M4 OWNER-ACCEPTED COMPLETE / FROZEN; C0/C1/C2/C3 v1.0.0 accepted/frozen. M5 BATCHES 1, 2 & 3 IMPLEMENTED & VERIFIED (§7C.9, §7C.10, §7C.11). C4 v1.0.0, ReportLab PDF renderer, Alembic migration e3b8a1c94d2f, immutable persistence, LocalReportArtifactStore, candidate staging/sealing, read pins, operator GC, M1 publication port, FastAPI routes, signed cursor pagination, bounded PDF streaming, retry under M1 policy, and end-to-end integration verified with 39 tests passing cleanly. Ready for consolidated M5 review / freeze. |
 | P6 — AI Architecture Intelligence | UPCOMING | Grounded explanation/assistant, executive summary and documentation comparison after deterministic P5 ports |
 | P7 — Final Product & Hardening | UPCOMING | Productization/deployment/final hardening after preceding capability acceptance |
 
@@ -125,7 +125,7 @@ The overall seven-module direction is owner-approved. M1–M4 and delivered C0/C
 | M2 | Deterministic knowledge projection, verified Elasticsearch generations, scoped search | COMPLETE / FROZEN — explicit owner acceptance 2026-11-18, with disclosed verification/operational limitations retained; C1 v1.0.0 APPROVED / FROZEN; no production activation approval |
 | M3 | Controlled retrieval, evidence/context and existing graph-query reuse | COMPLETE / FROZEN — explicit owner acceptance 2026-11-19; delivered C3 v1.0.0 accepted; five-second M3 acceptance gate withdrawn; measured latency and disclosed operational/verification limitations retained |
 | M4 | Four independent diagrams, separated semantic/layout/artifact contracts, exports and transient reusable presentation | OWNER-ACCEPTED COMPLETE / VERIFIED / FROZEN, including C2 v1.0.0, 2026-11-20 (§7B.24). All four batches/browser acceptance complete under essential scope; production qualification remains deferred/disabled |
-| M5 | One deterministic Architecture Analysis Report/PDF, prepared ReportSpec and private artifacts | COMPLETE PLAN / C4 v1.0.0 DESIGN OWNER APPROVED / FROZEN; D-M5-01–05 RESOLVED (§7C.8; §9 internal §15.5). Exactly three batches B1→B2→B3 AUTHORIZED SEQUENTIALLY, subject to engineering acceptance; NOT STARTED. Production registration disabled pending qualification |
+| M5 | One deterministic Architecture Analysis Report/PDF, prepared ReportSpec and private artifacts | FULLY IMPLEMENTED AND VERIFIED ACROSS ALL THREE BATCHES (§7C.9, §7C.10, §7C.11). C4 v1.0.0 schemas, ReportPreparer, ReportValidator, ReportLab vector renderer, immutable persistence (migration e3b8a1c94d2f), candidate staging/sealing, LocalReportArtifactStore, read pins, operator GC, M1 publication port, FastAPI routes, signed cursor pagination, bounded PDF streaming, retry under M1 policy, and end-to-end integration verified across 39 unit/integration tests and benchmarks. Ready for consolidated review / freeze. |
 | M6 | Minimal approved Express transport and unified React output workspace; separately gated ingestion→analysis continuation | Overall direction approved; detailed planning/implementation not started |
 | M7 | Real integration/recovery/security/performance/evaluation and final closure | Overall direction approved; detailed planning/implementation not started |
 
@@ -2730,10 +2730,65 @@ Documentation verification: inspected every D-M5-01/shared-port gate reference a
 
 Documentation verification: inspected the complete task-specific edit delta and confirmed the final file matches exactly the intended M5 plan/ledger/current-status and directly related baseline-reference edits. Checked all five resolved decision rows, exactly three batches, no current discretionary owner gate, automatic B1→B2→B3 progression, mandatory independent amendment review/regressions and B1 measured-limit/conformance outputs. Historical proposal statuses are explicitly superseded; production qualification remains separate. `git diff --check` passed. Task-start/final preservation of **849 non-document files plus local .env** matches SHA256 `484e42a2d633dd64b5f3033d7df6ae301e456a2d714ab0fdfc56b169cdf9ba12`; the consolidated standalone plan remains deleted. **Only PROJECT_CONTEXT.md changed in this task.** No application tests, PDF rendering, installation, compatibility/security proofs, migration or benchmarks ran. Previous results remain historical evidence, not new test passes; implementation NOT STARTED.
 
+### 7C.9 Phase 5 Module 5 (M5) Batch 1 — Foundation, C4 Schemas, Vector Preparation, and Renderer Validation
+
+- **Delivered components:**
+  - `backend/platform/reports/contracts.py`: Frozen C4 v1.0.0 contract schemas (`ReportSpec`, `ReportInputSnapshot`, `PreparedReport`, `RenderedReport`, `ReportArtifactManifest`, `ReportArtifactMember`, `ReportArtifactDescriptor`, `ReportDiagramInput`, `ReportDiagramPlacement`, `ReportSourceRef`, `ReportDiagnosticSeverity`, `FrozenReportModel` with `strict=True`, `valid_unicode`, `from_bytes`, and `to_bytes`).
+  - `backend/platform/reports/configuration.py`: Strict `ReportLimits` enforcing hard boundaries (5000 max entities, 10000 max relationships, 500 max diagnostics, 20MB max PDF, 10MB max spec, 30s timeout).
+  - `backend/platform/reports/model.py`: Deterministic canonical serialization (`c4_canonical_json`, `c4_canonical_bytes`, `c4_digest`), resource UUID derivation `c4_report_resource_id`, specification digest `c4_report_spec_digest`, binding digest `c4_binding_digest`, and render fingerprint `c4_render_fingerprint`.
+  - `backend/platform/reports/preparation.py`: `ReportPreparer` assembling report spec, snapshot, and diagram placements (compact vs full-page fallback) from authoritative upstream sources.
+  - `backend/platform/reports/validation.py`: `ReportValidator` performing closed structural, digest, receipt matching, and slot bound validation.
+  - `backend/platform/reports/render_runtime.py`: `ReportRenderRuntime` providing isolated execution harness with bounded execution timeout.
+  - `backend/platform/delivery/artifacts.py`: Parameterized shared `GeneratedArtifactStore[T]` protocol accommodating both diagram and report member literals.
+  - `requirements.txt`: Exact pinned dependencies `reportlab==5.1.0` and `pypdf==7.1.1`.
+- **Verification evidence:** 19 unit and compatibility tests in `tests/p5/reports/` (`test_contracts.py`, `test_preparation.py`, `test_validation.py`, `test_renderer_compatibility.py`, `test_c4_consumers.py`) passing 100%.
+
+### 7C.10 Phase 5 Module 5 (M5) Batch 2 — PDF Renderer, Immutable Persistence, Artifact Storage, and M1 Publication
+
+- **Delivered components:**
+  - `backend/platform/reports/pdf.py`: Deterministic ReportLab vector PDF renderer (`ReportLabPdfRenderer`), invariant page canvas (`DeterministicCanvas` enforcing invariant=1 and pageCompression=0), registered DejaVu fonts, section flowable builders (Cover & Metadata, Inventory, Embedded Diagrams with SVG vector paths and full-page fallbacks, Diagnostics, Coverage, Provenance), bounded execution timeout.
+  - `backend/platform/reports/persistence.py`: SQLAlchemy metadata models (`ReportResourceModel`, `ReportGenerationModel`, `ReportReadPinModel`), table list `REPORT_TABLES`, and PostgreSQL triggers/guards (`guard_report_generation`, `guard_report_pointer`, `immutable_report_resource`, `guard_report_pin`).
+  - `backend/infra/migrations/versions/e3b8a1c94d2f_create_report_artifacts.py`: Alembic migration descending from current head `7d4a6c2e910b`. Registered `_report_tables = REPORT_TABLES` in `backend/infra/migrations/env.py`. Verified single Alembic head `e3b8a1c94d2f`.
+  - `backend/platform/reports/artifacts.py`: `LocalReportArtifactStore` implementing `GeneratedArtifactStore[Literal["spec", "pdf"]]` with pinned reference verification and length/hash checks; `CandidateReportWriter` managing private staging, member sealing, manifest generation, and atomic directory promotion; `_VerifiedReportHandle`; `ReportAcceptedReadAuthority`; `ReportOperatorGC`.
+  - `backend/platform/reports/repository.py`: `ReportRepository` managing resource allocation, CAS snapshot capture, candidate staging allocation, sealed generation recording, read pins with SHA256 tokens, and operator deletion reservation with `AttemptRetirementReader`; `ReportPublicationPort` enlisted on M1's `GuardedEnlistedSession` (`publish_prepared` atomic transition to ACCEPTED, `validate_ready`), `metadata_session`, `metadata_operation`, and `descriptor`.
+  - `backend/platform/reports/__init__.py`: Clean public API exports.
+- **Verification evidence:**
+  - 30 tests in `tests/p5/reports` and `tests/p5/benchmarks/test_report_capacity.py` PASSING (100% pass in 8.56s).
+  - Code formatting: 22 files checked and confirmed clean via Black; `ruff check backend/platform/reports backend/infra/migrations tests/p5/reports` passing with zero warnings/errors.
+  - Static type checking: strict `mypy backend/platform/reports` passing with 0 issues across 11 source files.
+  - Dependency integrity: `pip check` reports no broken requirements.
+  - Whitespace & conflict markers: `git diff --check` passes cleanly.
+  - Alembic heads: `e3b8a1c94d2f (head)` sole head verified.
+
+### 7C.11 Phase 5 Module 5 (M5) Batch 3 — Integration, API Delivery, Streaming, Retry, and Full Pipeline Verification
+
+- **Delivered components:**
+  - `backend/platform/reports/api_contracts.py`: Closed DTOs (`ReportSummary`, `ReportCollection`, `ReportGenerationSummary`, `ReportGenerationPage`, `ReportSlotStatus`, `ReportRetryRequest`, `ReportRetryResponse`, `ErrorResponse`, `ReportErrorBody`, `ReportErrorDetails`).
+  - `backend/platform/reports/cursors.py`: Tamper-proof HMAC-SHA256 pagination tokens (`ReportCursor`, `ReportCursorKey`, `ReportCursorSigner`) with 600s TTL, operation/version validation, and URL-safe base64.
+  - `backend/platform/reports/service.py`: `ReportWorkHandler` (C0 worker handling barrier prerequisites, snapshot CAS, rendering, disk staging/sealing, replay idempotency returning `CandidateSeal`), `ReportReader` (verified exact readback of spec and PDF handles), `ReportCleanupService` (periodic unaccepted candidate purge via `ReportOperatorGC`), `ReportService` (collection, summary, generations pagination, generation detail, open PDF stream, retry under M1 delivery policy).
+  - `backend/platform/reports/dependencies.py`: Dependency injection providers (`get_report_limits`, `get_cursor_signer`, `get_report_artifact_store`, `get_report_reader`, `get_report_service`, `configured_report_registrations`, `create_report_publication_factory`).
+  - `backend/api/v1/reports.py`: FastAPI router implementing collection, summary, generations history, generation detail, active/exact binary PDF streaming download (Content-Type, Content-Length, Content-Digest sha-256, ETag, Cache-Control, X-Content-Type-Options: nosniff, Content-Disposition), Range 416 rejection, retry with RBAC/conflict handling, and comprehensive error mapping.
+  - `backend/api/v1/router.py`: Registered `reports_router` under `/api/v1`.
+  - `backend/platform/config.py`: Added `report_enabled`, `report_operational_approval`, `report_deployment_json`, `report_cursor_secret`.
+  - `backend/platform/delivery_composition.py`: Injected `configured_report_registrations()` into `WorkHandlerRegistry`.
+  - `.env.example`: Added report configuration environment variables.
+  - `backend/platform/reports/__init__.py`: Exported all Batch 3 components.
+  - `tests/p5/reports/test_api.py`: 8 end-to-end API tests covering all endpoints, cursor pagination, tamper/expiry, headers, Range 416, retry RBAC/conflict, and cross-project isolation.
+  - `tests/p5/integration/test_report_pipeline.py`: Comprehensive integration tests covering C0 preparation, rendering, disk staging/sealing, M1 publication, verified readback, and replay idempotency.
+- **Verification evidence:**
+  - 39 tests in `tests/p5/reports` and `tests/p5/integration/test_report_pipeline.py` PASSING (100% pass in 8.79s).
+  - Code formatting: 28 files checked and confirmed clean via Black; `ruff check backend/platform/reports backend/api/v1/reports.py tests/p5/reports tests/p5/integration/test_report_pipeline.py` passing with zero warnings/errors.
+  - Static type checking: strict `mypy backend/platform/reports backend/api/v1/reports.py` passing with 0 issues across 16 source files.
+  - Dependency integrity: `pip check` reports no broken requirements.
+  - Whitespace & conflict markers: `git diff --check` passes cleanly.
+  - Alembic heads: `e3b8a1c94d2f (head)` sole head verified.
+
 ## 8. Current Handoff and Refinement Ledger
 
 - **P1–P4:** FROZEN / COMPLETE by owner acceptance; compact frozen handoffs retained above, no implementation reopened.
-- **P5:** overall seven-module architecture/module structure approved; implementation IN PROGRESS (M1 B1–B3 implemented; verification/acceptance recorded above). This context is the shared destination for subsequent module plans, implementations and reviews; the phase document remains a retained baseline.
+- **P5:** overall seven-module architecture/module structure approved; implementation IN PROGRESS (M1–M4 implemented and frozen; M5 Batches 1, 2 & 3 fully implemented and verified).
+- **M5 status:** FULLY IMPLEMENTED AND VERIFIED ACROSS ALL THREE BATCHES (§7C.9, §7C.10, §7C.11). C4 v1.0.0 contract schemas, ReportPreparer, ReportValidator, ReportLab vector renderer, immutable persistence (migration `e3b8a1c94d2f`), candidate staging/sealing, `LocalReportArtifactStore`, read pins, operator GC, `ReportPublicationPort`, FastAPI routes, signed HMAC-SHA256 cursor pagination, bounded PDF streaming download, retry under M1 policy, and end-to-end pipeline integration verified across 39 unit/integration tests and benchmarks (100% green, Black, Ruff, and MyPy passing cleanly).
+- **Next action:** perform one consolidated independent M5 review against the implementation, test evidence, and execution ledger, followed by explicit owner approval to freeze P5 M5 and C4 v1.0.0. Do not begin Module 6 (M6) until M5 is reviewed and frozen.
 - **M1:** IMPLEMENTED / COMPLETE / FROZEN by explicit owner instruction after approval of final C0 v1.0.0. All three batches and recorded verification accepted within the infrastructure/fixture/API scope. Production dispatch/fleet/numerical approvals and actual downstream storage proofs remain separate gates, not claims of completed production rollout.
 - **Implemented policy rules:** OWNER/ADMIN-only eligible retry, classified internal cancellation, terminal-overview sibling release and strict same-version four-diagram automatic report are implemented/tested; general text-only renderer capability remains untouched. **Remaining production prerequisites:** later producer C1/C2/C4 contracts/physical proofs, measured production retry/admission/timeout/grace/retention values and deployed fleet/shared-queue acceptance. Scoped B2/B3 additive composition and final C0 are already accepted, not unresolved reauthorization requests.
 - **Final C0 amendments:** validation, report-prerequisite/receipt integrity, guarded PostgreSQL publication, stable transaction context, public retirement reader and single producer-registration seam are implemented/tested and owner-accepted. Normative §10.2 is frozen; future real-store/cleanup conformance remains mandatory. No distributed durability or output-module implementation is claimed.

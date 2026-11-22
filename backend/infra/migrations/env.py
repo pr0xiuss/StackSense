@@ -40,6 +40,7 @@ from backend.platform.knowledge.persistence import SEARCH_TABLES
 from backend.platform.projects.infra.access_model import ProjectAccessModel
 from backend.platform.projects.infra.base import Base
 from backend.platform.projects.infra.model import ProjectModel
+from backend.platform.reports.persistence import REPORT_TABLES
 from backend.platform.repositories.infra.model import RepositoryModel
 
 config = context.config
@@ -79,6 +80,7 @@ target_metadata = Base.metadata
 _delivery_tables = DELIVERY_TABLES  # Additive P5 metadata registration only.
 _search_tables = SEARCH_TABLES
 _diagram_tables = DIAGRAM_TABLES
+_report_tables = REPORT_TABLES
 
 
 def get_database_url() -> str:

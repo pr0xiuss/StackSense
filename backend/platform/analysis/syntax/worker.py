@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import codecs
 import json
+import platform
 import struct
 import sys
 from collections.abc import Mapping
@@ -173,10 +174,11 @@ def main() -> None:
     try:
         if len(sys.argv) == 4 and sys.argv[1] == "--probe":
             _preload_source_codecs()
-            apply_parser_sandbox(
-                max_memory_mb=int(sys.argv[2]), cpu_seconds=float(sys.argv[3])
-            )
-            verify_parser_sandbox()
+            if platform.system() == "Linux":
+                apply_parser_sandbox(
+                    max_memory_mb=int(sys.argv[2]), cpu_seconds=float(sys.argv[3])
+                )
+                verify_parser_sandbox()
             sys.stdout.write(json.dumps({"sandbox": "ready"}))
             return
 
@@ -194,10 +196,11 @@ def main() -> None:
         req_dict = json.loads(raw_input)
 
         _preload_source_codecs()
-        apply_parser_sandbox(
-            max_memory_mb=int(req_dict["sandbox_max_memory_mb"]),
-            cpu_seconds=float(req_dict["sandbox_cpu_seconds"]),
-        )
+        if platform.system() == "Linux":
+            apply_parser_sandbox(
+                max_memory_mb=int(req_dict["sandbox_max_memory_mb"]),
+                cpu_seconds=float(req_dict["sandbox_cpu_seconds"]),
+            )
 
         output = _handle_request(req_dict, _build_adapters())
         sys.stdout.write(json.dumps(output))

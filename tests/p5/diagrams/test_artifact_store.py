@@ -2,10 +2,19 @@
 
 import hashlib
 import os
+import sys
 
 import pytest
 
 from backend.platform.diagrams.artifacts import DIRECTORY, _copy_member, _read_hash
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "POSIX directory file descriptors (dir_fd) and inode operations"
+        " require Linux/POSIX"
+    ),
+)
 
 
 def test_fresh_inode_is_not_the_stale_staging_inode(tmp_path):

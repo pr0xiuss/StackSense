@@ -371,6 +371,28 @@ class ParserExecutor:
         """Verify that the child process isolation boundary is functional."""
         if self._isolation_available is not None:
             return self._isolation_available
+        if sys.platform == "win32":
+            import ctypes
+            import shutil
+
+            if not (
+                shutil.which(self._python_executable)
+                or os.path.exists(self._python_executable)
+            ):
+                self._isolation_available = False
+                return False
+
+            try:
+                job = self._create_windows_job_object()
+                if job:
+                    ctypes.windll.kernel32.CloseHandle(job)
+                    self._isolation_available = True
+                else:
+                    self._isolation_available = False
+            except Exception:
+                self._isolation_available = False
+            return self._isolation_available
+
         try:
             cmd = [
                 self._python_executable,

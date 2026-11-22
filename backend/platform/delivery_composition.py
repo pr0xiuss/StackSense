@@ -15,7 +15,15 @@ def get_output_handler_registry() -> WorkHandlerRegistry:
         )
 
         diagrams = configured_diagram_registrations()
-    return WorkHandlerRegistry(configured_search_registrations() + diagrams)
+
+    reports: tuple[HandlerRegistration, ...] = ()
+    if get_settings().report_enabled:
+        from backend.platform.reports.dependencies import (
+            configured_report_registrations,
+        )
+
+        reports = configured_report_registrations()
+    return WorkHandlerRegistry(configured_search_registrations() + diagrams + reports)
 
 
 def get_output_delivery_coordinator() -> DeliveryCoordinator | None:
