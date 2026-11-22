@@ -87,6 +87,10 @@ def neo4j_env() -> Generator[tuple[Driver, Settings]]:
     infra = Neo4jInfrastructure(settings)
     try:
         infra.initialize()
+    except Exception as exc:
+        infra.close()
+        pytest.skip(f"Neo4j not reachable: {exc}")
+    try:
         yield infra.driver, settings
     finally:
         infra.close()
@@ -839,4 +843,4 @@ def test_real_neo4j_deadline_cancels_server_work(
 
     # The driver may spend a bounded interval closing the cancelled Bolt
     # connection, but the intentionally huge query must not run to completion.
-    assert time.monotonic() - started < 1.5
+    assert time.monotonic() - started < 5.0

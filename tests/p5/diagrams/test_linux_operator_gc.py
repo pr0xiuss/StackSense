@@ -5,13 +5,18 @@ Run AFTER worker experiments, as the administrator-approved trusted operator
 latest/current discovery. This test must not be granted to the ordinary worker.
 """
 
-import grp
 import hashlib
 import json
 import os
-import pwd
 import re
 import subprocess
+
+try:
+    import grp
+    import pwd
+except ImportError:
+    grp = None  # type: ignore[assignment]
+    pwd = None  # type: ignore[assignment]
 from uuid import UUID
 
 import pytest

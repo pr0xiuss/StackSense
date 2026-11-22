@@ -1,0 +1,12 @@
+{
+  "summary_sample": {
+    "report_type": "architecture_analysis",
+    "availability": "ready",
+    "readability": "readable",
+    "page_count": 6
+  },
+  "collection_sample": {
+    "status": "ready",
+    "count": 1
+  }
+}

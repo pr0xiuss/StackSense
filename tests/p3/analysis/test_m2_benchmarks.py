@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
-import resource
 import subprocess
 import sys
 import time
 import tracemalloc
 from pathlib import Path
 from uuid import UUID, uuid4
+
+try:
+    import resource
+except ImportError:
+    resource = None  # type: ignore[assignment]
 
 from backend.platform.analysis.inspection.model import _serialize_json_value
 from backend.platform.analysis.syntax.base import ParserRequest, ParserResult

@@ -1,6 +1,7 @@
 """Unit-only preflight/policy tests; never runtime or physical proof claims."""
 
 import os
+import sys
 
 import pytest
 
@@ -19,6 +20,10 @@ def test_cgroup_policy_keeps_zero_swap_and_one_cpu():
 
 
 def test_installation_rejects_worker_owned_or_symlinked_runtime(tmp_path):
+    if sys.platform != "linux" or not hasattr(os, "geteuid"):
+        pytest.skip(
+            "Linux rootless deployment preflight checks require Linux and geteuid"
+        )
     regular = tmp_path / "entry"
     regular.write_bytes(b"not a root-installed executable")
     if os.geteuid() != 0:

@@ -1,0 +1,8 @@
+{
+  "c4_version": "1.0.0",
+  "renderer_profile": "reportlab_dejavu_v1",
+  "reportlab_version": "5.1.0",
+  "pypdf_version": "7.1.1",
+  "font_profile": "dejavu_paths_2_37_v1",
+  "deterministic_mode": "pinned_canonical_v1"
+}

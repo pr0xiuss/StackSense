@@ -1,0 +1,24 @@
+{
+  "c4_version": "1.0.0",
+  "report_type": "architecture_analysis",
+  "sections": [
+    "metadata",
+    "inventory",
+    "diagrams",
+    "diagnostics",
+    "coverage",
+    "provenance"
+  ],
+  "required_diagram_templates": [
+    "system_overview",
+    "component_architecture",
+    "dependency_map",
+    "data_flow"
+  ],
+  "allowed_diagnostic_severities": [
+    "info",
+    "warning",
+    "error",
+    "critical"
+  ]
+}

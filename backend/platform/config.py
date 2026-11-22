@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     diagram_operational_approval: bool = False
     diagram_deployment_json: SecretStr | None = None
 
+    # M5 is opt-in; configuration is not evidence of deployment conformance.
+    report_enabled: bool = False
+    report_operational_approval: bool = False
+    report_deployment_json: SecretStr | None = None
+    report_cursor_secret: SecretStr | None = None
+
     # Repository source acquisition
     allowed_source_roots: list[str] = [
         "data/staged",

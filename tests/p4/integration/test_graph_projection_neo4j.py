@@ -81,6 +81,10 @@ def neo4j_env() -> (
     infra = Neo4jInfrastructure(settings)
     try:
         infra.initialize()
+    except Exception as exc:
+        infra.close()
+        pytest.skip(f"Neo4j not reachable: {exc}")
+    try:
         store = Neo4jProjectionStore(driver=infra.driver, settings=settings)
         verifier = GraphVerifier(store=store)
         yield infra, store, verifier
