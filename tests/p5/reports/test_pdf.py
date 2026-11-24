@@ -13,6 +13,7 @@ from backend.platform.reports.contracts import (
     InventorySection,
     RenderedReport,
 )
+from backend.platform.reports.model import c4_report_spec_digest
 from backend.platform.reports.pdf import ReportLabPdfRenderer
 from backend.platform.reports.preparation import ReportPreparer
 from tests.p5.reports.conftest import (
@@ -67,6 +68,7 @@ def test_pdf_renderer_full_page_fallback() -> None:
                 placements=tuple(placements),
             )
     spec = spec.model_copy(update={"sections": tuple(sections)})
+    spec = spec.model_copy(update={"report_spec_digest": c4_report_spec_digest(spec)})
     prepared_full = prepared.model_copy(
         update={
             "spec": spec,
@@ -102,6 +104,7 @@ def test_pdf_renderer_unicode_and_escaping() -> None:
             sections[i] = s.model_copy(update={"selected_entities": tuple(items)})
 
     spec = spec.model_copy(update={"sections": tuple(sections)})
+    spec = spec.model_copy(update={"report_spec_digest": c4_report_spec_digest(spec)})
     prepared_uni = prepared.model_copy(update={"spec": spec})
 
     renderer = ReportLabPdfRenderer()

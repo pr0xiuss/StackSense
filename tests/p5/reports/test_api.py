@@ -172,7 +172,7 @@ def api_fixture():
                 pdf_size_bytes=len(pdf_bytes),
                 pdf_sha256=pdf_sha,
                 page_count=3,
-                spec_digest="0" * 64,
+                spec_digest="2" * 64,
                 created_at=datetime.now(UTC),
                 accepted_at=datetime.now(UTC),
                 observed_at=datetime.now(UTC),
@@ -193,6 +193,7 @@ def api_fixture():
             record: ArchitectureVersionResponse,
             runtime: Any,
             role: str,
+            report_id: UUID,
             generation_id: UUID | None = None,
         ) -> ReportSummary:
             return ReportSummary(
@@ -207,7 +208,7 @@ def api_fixture():
                 pdf_size_bytes=len(pdf_bytes),
                 pdf_sha256=pdf_sha,
                 page_count=3,
-                spec_digest="0" * 64,
+                spec_digest="2" * 64,
                 created_at=datetime.now(UTC),
                 accepted_at=datetime.now(UTC),
                 observed_at=datetime.now(UTC),
@@ -401,7 +402,7 @@ def test_report_generations_history_and_cursor(api_fixture):
     )
     assert res_page2.status_code == 200
 
-    # Tampered cursor -> 422 report_cursor_invalid
+    # Tampered cursor -> approved 400 report_cursor_invalid
     res_tampered = client.get(
         url,
         params={
@@ -409,7 +410,7 @@ def test_report_generations_history_and_cursor(api_fixture):
             "cursor": data["next_cursor"] + "corrupt",
         },
     )
-    assert res_tampered.status_code == 422
+    assert res_tampered.status_code == 400
     assert res_tampered.json()["error"]["code"] == "report_cursor_invalid"
 
     # Expired cursor -> 410 report_cursor_expired
@@ -461,13 +462,7 @@ def test_report_download_active_and_exact(api_fixture):
         f"/api/v1/architecture-versions/{record.id}/reports/{report_id}/download"
     )
     res_active = client.get(active_url, params={"project_id": str(record.project_id)})
-    assert res_active.status_code == 200
-    assert res_active.content == pdf_bytes
-    assert res_active.headers["content-type"] == "application/pdf"
-    assert res_active.headers["content-length"] == str(len(pdf_bytes))
-    assert res_active.headers["cache-control"] == "private, no-store"
-    assert res_active.headers["x-content-type-options"] == "nosniff"
-    assert "report-architecture-v1" in res_active.headers["content-disposition"]
+    assert res_active.status_code == 404  # No mutable download alias.
 
     # Exact generation download
     prefix = f"/api/v1/architecture-versions/{record.id}/reports/{report_id}"
@@ -475,12 +470,18 @@ def test_report_download_active_and_exact(api_fixture):
     res_exact = client.get(exact_url, params={"project_id": str(record.project_id)})
     assert res_exact.status_code == 200
     assert res_exact.content == pdf_bytes
-    assert "immutable" in res_exact.headers["cache-control"]
+    assert res_exact.headers["cache-control"] == "private, no-store"
+    assert res_exact.headers["content-type"] == "application/pdf"
+    assert res_exact.headers["content-length"] == str(len(pdf_bytes))
+    assert res_exact.headers["x-content-type-options"] == "nosniff"
 
 
 def test_report_download_rejects_range_header(api_fixture):
-    client, record, report_id, _, _, _, _, _ = api_fixture
-    url = f"/api/v1/architecture-versions/{record.id}/reports/{report_id}/download"
+    client, record, report_id, gen_id, _, _, _, _ = api_fixture
+    url = (
+        f"/api/v1/architecture-versions/{record.id}/reports/{report_id}"
+        f"/generations/{gen_id}/download"
+    )
     res = client.get(
         url,
         params={"project_id": str(record.project_id)},
@@ -490,39 +491,15 @@ def test_report_download_rejects_range_header(api_fixture):
     assert res.json()["error"]["code"] == "report_range_unsupported"
 
 
-def test_report_retry_endpoint(api_fixture):
-    client, record, report_id, _, context, service, _, _ = api_fixture
-    url = f"/api/v1/architecture-versions/{record.id}/reports/{report_id}/retry"
-
-    # 1. OWNER retry succeeds when FAILED
-    res = client.post(
-        url,
+def test_report_retry_endpoint_is_not_a_parallel_lifecycle(api_fixture):
+    client, record, report_id, *_ = api_fixture
+    response = client.post(
+        f"/api/v1/architecture-versions/{record.id}/reports/{report_id}/retry",
         params={"project_id": str(record.project_id)},
         json={"idempotency_key": "retry-1"},
     )
-    assert res.status_code == 202
-    assert res.json()["state"] == "PENDING"
-    assert res.json()["report_id"] == str(report_id)
-
-    # 2. Retry conflict when not FAILED
-    service.retry_state = "COMPLETED"
-    res_conflict = client.post(
-        url,
-        params={"project_id": str(record.project_id)},
-        json={"idempotency_key": "retry-2"},
-    )
-    assert res_conflict.status_code == 409
-    assert res_conflict.json()["error"]["code"] == "report_conflict"
-
-    # 3. VIEWER forbidden to retry
-    object.__setattr__(context, "role", "VIEWER")
-    res_forbidden = client.post(
-        url,
-        params={"project_id": str(record.project_id)},
-        json={"idempotency_key": "retry-3"},
-    )
-    assert res_forbidden.status_code == 403
-    assert res_forbidden.json()["error"]["code"] == "report_forbidden"
+    assert response.status_code == 404
+    # Actual retries remain owned by the existing delivery/retry route and its tests.
 
 
 def test_report_authentication_and_cross_project(api_fixture):

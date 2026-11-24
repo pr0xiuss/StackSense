@@ -62,6 +62,7 @@ def test_candidate_writer_and_store_roundtrip(tmp_path: Path) -> None:
         candidate_id=candidate_id,
         artifact_id=artifact_id,
         root=tmp_path,
+        require_staging=lambda attempt: None,
     )
 
     manifest, seal, prepared_output = writer.stage_artifacts(
@@ -69,7 +70,7 @@ def test_candidate_writer_and_store_roundtrip(tmp_path: Path) -> None:
         pdf_bytes=rendered.pdf_bytes,
         pdf_sha256=rendered.sha256,
         page_count=rendered.page_count,
-        source_snapshot_digest="0" * 64,
+        source_snapshot_digest=spec.metadata.source_snapshot_digest,
         renderer_profile_digest="1" * 64,
         limits_digest="2" * 64,
         page_placement_digest="3" * 64,
@@ -134,13 +135,14 @@ def test_store_rejects_corrupted_manifest(tmp_path: Path) -> None:
         candidate_id=candidate_id,
         artifact_id=artifact_id,
         root=tmp_path,
+        require_staging=lambda attempt: None,
     )
     manifest, seal, _ = writer.stage_artifacts(
         spec=spec,
         pdf_bytes=rendered.pdf_bytes,
         pdf_sha256=rendered.sha256,
         page_count=rendered.page_count,
-        source_snapshot_digest="0" * 64,
+        source_snapshot_digest=spec.metadata.source_snapshot_digest,
         renderer_profile_digest="1" * 64,
         limits_digest="2" * 64,
         page_placement_digest="3" * 64,
@@ -180,6 +182,6 @@ def test_operator_gc_removes_unaccepted(tmp_path: Path) -> None:
     staging_dir.mkdir(parents=True, exist_ok=True)
     (staging_dir / "temp.txt").write_bytes(b"temp")
 
-    gc = ReportOperatorGC(root=tmp_path)
+    gc = ReportOperatorGC(root=tmp_path, require_deleting=lambda candidate: None)
     gc.cleanup_unaccepted(candidate_id, grace_seconds=0.0)
     assert not staging_dir.exists()

@@ -8,22 +8,14 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import fcntl
 import hashlib
 import os
+import pwd
 import selectors
 import signal
 import stat
 import subprocess
-
-try:
-    import fcntl
-except ImportError:
-    fcntl = None  # type: ignore[assignment]
-
-try:
-    import pwd
-except ImportError:
-    pwd = None  # type: ignore[assignment]
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from datetime import UTC, datetime
@@ -50,11 +42,8 @@ from backend.platform.diagrams.contracts import (
 from backend.platform.diagrams.model import canonical_bytes, load_json
 
 STORE_ROOT = Path("/var/lib/stacksense/diagrams")
-_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
-READONLY = os.O_RDONLY | _O_CLOEXEC | _O_NOFOLLOW
-DIRECTORY = READONLY | _O_DIRECTORY
+READONLY = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+DIRECTORY = READONLY | os.O_DIRECTORY
 
 
 def _proof_checkpoint(checkpoint: str, generation: UUID) -> None:
@@ -253,7 +242,11 @@ class CandidateArtifactWriter:
                 try:
                     fd = os.open(
                         name,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_CLOEXEC | _O_NOFOLLOW,
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | os.O_EXCL
+                        | os.O_CLOEXEC
+                        | os.O_NOFOLLOW,
                         0o640,
                         dir_fd=directory,
                     )
@@ -526,7 +519,7 @@ def _copy_member(source: int, target: int, name: str, size: int, expected: str) 
             raise ValueError("diagram_integrity_error")
         outgoing = os.open(
             name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_CLOEXEC | _O_NOFOLLOW,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
             0o600,
             dir_fd=target,
         )
@@ -580,8 +573,6 @@ def _rename_noreplace(parent: int, source: str, target: str) -> None:
 
 class PrincipalSealer:
     def __init__(self, metadata: SealerMetadata, limits: DiagramLimits) -> None:
-        if pwd is None:
-            raise ValueError("diagram_store_unavailable")
         artifact_uid = pwd.getpwnam("stacksense-artifacts").pw_uid
         worker_uid = pwd.getpwnam("stacksense-worker").pw_uid
         if os.geteuid() != artifact_uid or artifact_uid in (0, worker_uid):
@@ -609,14 +600,12 @@ class PrincipalSealer:
         root = os.open(STORE_ROOT / "locks", DIRECTORY)
         lock = os.open(
             str(generation_id),
-            os.O_RDWR | os.O_CREAT | _O_CLOEXEC | _O_NOFOLLOW,
+            os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW,
             0o600,
             dir_fd=root,
         )
         try:
             if _regular(lock).st_uid != os.geteuid():
-                raise ValueError("diagram_store_unavailable")
-            if fcntl is None:
                 raise ValueError("diagram_store_unavailable")
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             yield

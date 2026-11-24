@@ -15,13 +15,12 @@ from time import monotonic, time
 from typing import Literal
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import literal, select, text, tuple_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.platform.analysis.architecture.dto import ArchitectureVersionResponse
-from backend.platform.delivery.api_contracts import RetryRequest
 from backend.platform.delivery.artifacts import VerifiedArtifactHandle
 from backend.platform.delivery.contracts import (
     ArtifactReference,
@@ -33,19 +32,16 @@ from backend.platform.delivery.contracts import (
     ExecutionStopped,
     HandlerProfile,
     PreparedOutput,
-    ProducerProfile,
     RetryClass,
     VersionScope,
     WorkExecutionContext,
     WorkKind,
-    WorkSlot,
 )
 from backend.platform.delivery.service import DeliveryCoordinator
 from backend.platform.reports.api_contracts import (
     ReportCollection,
     ReportGenerationPage,
     ReportGenerationSummary,
-    ReportRetryResponse,
     ReportSlotStatus,
     ReportSummary,
 )
@@ -53,11 +49,15 @@ from backend.platform.reports.artifacts import (
     CandidateReportWriter,
     LocalReportArtifactStore,
     ReportOperatorGC,
+    generation_lock,
 )
 from backend.platform.reports.configuration import ReportLimits
 from backend.platform.reports.contracts import (
+    DiagramsSection,
+    PreparedReport,
     ReportArtifactManifest,
     ReportArtifactMember,
+    ReportInputSnapshot,
     ReportReadPort,
     ReportSpec,
 )
@@ -75,27 +75,12 @@ from backend.platform.reports.persistence import (
     ReportResourceModel as Resource,
 )
 from backend.platform.reports.preparation import ReportPreparer
+from backend.platform.reports.render_runtime import IsolatedReportRenderRuntime
 from backend.platform.reports.repository import (
     ReportRepository,
     descriptor,
     metadata_session,
 )
-
-
-def _canonical_scope(record: ArchitectureVersionResponse) -> VersionScope:
-    values = record.model_dump()
-    values.update(
-        architecture_version_id=record.id,
-        canonical_digest=record.content_digest,
-        source_contract_version="1.0.0",
-        analyzer_version=getattr(record, "analyzer_version", "1.0.0"),
-        configuration_fingerprint=getattr(
-            record, "configuration_fingerprint", "source-config-fingerprint"
-        ),
-    )
-    return VersionScope.model_validate(
-        {k: values[k] for k in VersionScope.model_fields if k in values}
-    )
 
 
 class ReportWorkHandler:
@@ -107,7 +92,7 @@ class ReportWorkHandler:
         binding: HandlerProfile,
         engine_or_session: Engine | Session | Callable[[], Session],
         preparer: ReportPreparer,
-        renderer: ReportLabPdfRenderer,
+        renderer: ReportLabPdfRenderer | IsolatedReportRenderRuntime,
         limits: ReportLimits | None = None,
         writer_factory: (
             Callable[[AttemptIdentity, UUID, UUID, ReportLimits], CandidateReportWriter]
@@ -220,8 +205,37 @@ class ReportWorkHandler:
         input_fp = work.input_fingerprint
         candidate_id = context.attempt.candidate_id
 
-        # 1. Prepare report spec, snapshot, and prepared diagram placements
-        spec, snapshot, prepared_report = self.preparer.prepare(context)
+        # Capture once. Retries never query upstream after a snapshot has committed.
+        import json
+
+        with self._get_session() as session:
+            repo = ReportRepository(session)
+            resource = repo.get_or_create_resource(scope, binding, input_fp)
+            resource_id = resource.id
+            captured = resource.captured_snapshot
+            session.commit()
+        if captured is None:
+            _, proposed, _ = self.preparer.prepare(context)
+            with self._get_session() as session:
+                repo = ReportRepository(session)
+                winner = repo.capture_snapshot(resource_id, proposed)
+                captured = winner.captured_snapshot
+                session.commit()
+        snapshot = ReportInputSnapshot.model_validate_json(json.dumps(captured))
+        spec = snapshot.report_spec
+        diagram_section = spec.sections[2]
+        if not isinstance(diagram_section, DiagramsSection):
+            raise ValueError("report_integrity_error")
+        prepared_report = PreparedReport(
+            spec=spec,
+            font_assets=snapshot.font_assets,
+            page_placements=diagram_section.placements,
+            renderer_profile_digest=self.preparer.profile.profile_digest(),
+            limits_digest=self.limits.limits_digest(),
+        )
+        from backend.platform.reports.validation import ReportValidator
+
+        ReportValidator(self.limits).validate(spec)
         if monotonic() >= deadline:
             raise TimeoutError("report_timeout")
 
@@ -229,9 +243,6 @@ class ReportWorkHandler:
         with self._get_session() as session:
             repo = ReportRepository(session)
             resource = repo.get_or_create_resource(scope, binding, input_fp)
-            repo.capture_snapshot(resource.id, snapshot)
-            session.commit()
-
             prior_gen = repo.get_generation(resource.id, candidate_id)
             if prior_gen is not None and prior_gen.state in (
                 "SEALED_VERIFIED",
@@ -250,14 +261,29 @@ class ReportWorkHandler:
                     candidate=candidate_seal,
                 )
 
-            artifact_id = uuid4()
-            repo.allocate_candidate(context.attempt, candidate_id, artifact_id)
+            allocated = repo.allocate_candidate(context.attempt, candidate_id, uuid4())
+            artifact_id = allocated.artifact_id
             session.commit()
 
         # 3. Render PDF deterministically
-        rendered = self.renderer.render(
-            prepared_report, deadline=deadline, control=context.control
-        )
+        # Output admission only; M1 retains all scheduling/attempt ownership.
+        with self._get_session() as admission:
+            if admission.get_bind().dialect.name == "postgresql":
+                key = int.from_bytes(
+                    hashlib.sha256(
+                        b"ss.report.render\0" + scope.project_id.bytes
+                    ).digest()[:8],
+                    "big",
+                    signed=True,
+                )
+                admission.execute(text("SET LOCAL statement_timeout=1000"))
+                if not admission.scalar(
+                    text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": key}
+                ):
+                    raise ValueError("report_limit_exceeded")
+            rendered = self.renderer.render(
+                prepared_report, deadline=deadline, control=context.control
+            )
         if monotonic() >= deadline:
             raise TimeoutError("report_timeout")
 
@@ -265,6 +291,20 @@ class ReportWorkHandler:
         writer = self.writer_factory(
             context.attempt, candidate_id, artifact_id, self.limits
         )
+
+        def require_staging(attempt: AttemptIdentity) -> None:
+            context.control.checkpoint()
+            with self._get_session() as session:
+                row = session.get(Generation, candidate_id)
+                if (
+                    row is None
+                    or row.state != "STAGING"
+                    or row.attempt_snapshot != attempt.model_dump(mode="json")
+                    or row.artifact_id != artifact_id
+                ):
+                    raise ValueError("report_integrity_error")
+
+        writer.require_staging = require_staging
         page_placement_digest = hashlib.sha256(
             c4_canonical_bytes(
                 [p.model_dump(mode="python") for p in prepared_report.page_placements]
@@ -275,10 +315,13 @@ class ReportWorkHandler:
             pdf_bytes=rendered.pdf_bytes,
             pdf_sha256=rendered.sha256,
             page_count=rendered.page_count,
-            source_snapshot_digest=snapshot.snapshot_digest,
+            source_snapshot_digest=spec.metadata.source_snapshot_digest,
             renderer_profile_digest=rendered.renderer_profile_digest,
             limits_digest=self.limits.limits_digest(),
             page_placement_digest=page_placement_digest,
+            asset_hashes=tuple(
+                (name, digest) for name, digest, _ in snapshot.font_assets
+            ),
         )
         if monotonic() >= deadline:
             raise TimeoutError("report_timeout")
@@ -324,6 +367,23 @@ class ReportReader(ReportReadPort):
             raw = handle.read(self.limits.max_spec_bytes)
             spec = ReportSpec.from_bytes(raw, max_bytes=self.limits.max_spec_bytes)
             desc = self.store.authority.descriptor(scope, reference)
+            if (
+                desc.reference != reference
+                or spec.metadata.scope != scope
+                or spec.metadata.profile != reference.binding
+                or spec.metadata.report_id != reference.resource_id
+                or spec.report_spec_digest != desc.manifest.report_spec_digest
+                or spec.metadata.source_snapshot_digest
+                != desc.manifest.source_snapshot_digest
+                or tuple(d.receipt.receipt_id for d in spec.diagram_inputs)
+                != desc.manifest.diagram_receipt_ids
+                or tuple(
+                    d.receipt.accepted.reference.digests.content
+                    for d in spec.diagram_inputs
+                )
+                != desc.manifest.diagram_member_digests
+            ):
+                raise ValueError("report_integrity_error")
             return spec, desc.manifest
         finally:
             handle.close()
@@ -348,24 +408,55 @@ class ReportCleanupService:
     ) -> None:
         self.engine = engine
         self.limits = limits or ReportLimits()
-        self.gc = ReportOperatorGC(root=store_root)
+
+        def require_deleting(candidate_id: UUID) -> None:
+            with metadata_session(self.engine) as session:
+                row = session.get(Generation, candidate_id)
+                if (
+                    row is None
+                    or row.state != "DELETING"
+                    or row.accepted_reference is not None
+                ):
+                    raise PermissionError("report deletion not reserved")
+
+        self.gc = ReportOperatorGC(root=store_root, require_deleting=require_deleting)
 
     def cleanup_unaccepted(
         self,
         candidate_id: UUID,
         actor_id: UUID,
         retirement_reader: AttemptRetirementReader,
-        grace_seconds: float = 300.0,
+        grace_seconds: float | None = None,
     ) -> bool:
-        with metadata_session(self.engine) as session, session.begin():
-            repo = ReportRepository(session)
-            reserved = repo.reserve_for_deletion(
-                candidate_id, actor_id, retirement_reader
+        grace = (
+            grace_seconds
+            if grace_seconds is not None
+            else self.limits.orphan_grace_seconds
+        )
+        if (
+            grace is None
+            or grace
+            < self.limits.pin_ttl_seconds + self.limits.watchdog_kill_grace_seconds
+        ):
+            raise ValueError(
+                "report cleanup grace requires measured safe configuration"
             )
-            if not reserved:
-                return False
-
-        return self.gc.cleanup_unaccepted(candidate_id, grace_seconds=grace_seconds)
+        with generation_lock(self.gc.root, candidate_id):
+            with metadata_session(self.engine) as session, session.begin():
+                repo = ReportRepository(session)
+                reserved = repo.reserve_for_deletion(
+                    candidate_id, actor_id, retirement_reader
+                )
+                if not reserved:
+                    return False
+            done = self.gc.cleanup_unaccepted(candidate_id, grace_seconds=grace)
+            if done:
+                with metadata_session(self.engine) as session, session.begin():
+                    row = session.get(Generation, candidate_id, with_for_update=True)
+                    if row is None or row.state != "DELETING":
+                        raise ValueError("report_integrity_error")
+                    row.state, row.deleted_at = "DELETED", datetime.now(UTC)
+            return done
 
 
 class ReportService:
@@ -385,116 +476,88 @@ class ReportService:
         self.signer = cursor_signer
         self.actor_id = actor_id
 
+    def _scope(
+        self,
+        record: ArchitectureVersionResponse,
+        runtime: DeliveryCoordinator | None = None,
+    ) -> VersionScope:
+        import json
+
+        with metadata_session(self.engine) as session:
+            row = session.scalar(
+                select(Resource)
+                .where(
+                    Resource.architecture_version_id == record.id,
+                    Resource.project_id == record.project_id,
+                )
+                .order_by(Resource.id)
+                .limit(1)
+            )
+            scope = (
+                VersionScope.model_validate_json(json.dumps(row.scope)) if row else None
+            )
+        if scope is None and runtime is not None:
+            scope = runtime.scope_for_record(record)
+        if scope is None:
+            raise ValueError("report_source_unavailable")
+        if (
+            scope.project_id,
+            scope.architecture_version_id,
+            scope.canonical_digest,
+        ) != (record.project_id, record.id, record.content_digest):
+            raise ValueError("report_integrity_error")
+        return scope
+
     def summary(
         self,
         record: ArchitectureVersionResponse,
         runtime: DeliveryCoordinator | None,
         role: str,
+        report_id: UUID,
         generation_id: UUID | None = None,
     ) -> ReportSummary:
-        scope = _canonical_scope(record)
-        now = datetime.now(UTC)
-
-        default_profile = HandlerProfile(
-            slot=WorkSlot(kind=WorkKind.REPORT, template="architecture_analysis"),
-            profile=ProducerProfile(
-                producer_id="stacksense.reports",
-                producer_version="1.0.0",
-                generator_version="1.0.0",
-                output_schema_version="1.0.0",
-                configuration_fingerprint="0" * 64,
-            ),
-        )
+        import json
 
         with metadata_session(self.engine) as session:
-            if generation_id is not None:
-                gen = session.get(Generation, generation_id)
-                if gen is None or gen.state != "ACCEPTED":
-                    raise ValueError("report_not_found")
-                res = session.get(Resource, gen.resource_id)
-                if res is None or res.architecture_version_id != record.id:
-                    raise ValueError("report_not_found")
-
-                desc = descriptor(gen, res)
-                return ReportSummary(
-                    scope=scope,
-                    report_id=res.id,
-                    report_type="architecture_analysis",
-                    profile=desc.reference.binding,
-                    input_fingerprint=gen.input_fingerprint,
-                    availability="READY",
-                    readability="verified",
-                    reference=desc.reference,
-                    pdf_size_bytes=gen.pdf_size,
-                    pdf_sha256=gen.pdf_sha256,
-                    page_count=gen.page_count,
-                    spec_digest=gen.spec_digest,
-                    created_at=gen.created_at,
-                    accepted_at=gen.accepted_at,
-                    observed_at=now,
-                )
-
-            # Active report summary
-            stmt = (
-                select(Resource)
-                .where(Resource.architecture_version_id == record.id)
-                .order_by(Resource.created_at.desc())
+            resource = session.get(Resource, report_id)
+            if (
+                resource is None
+                or resource.architecture_version_id != record.id
+                or resource.project_id != record.project_id
+            ):
+                raise ValueError("report_not_found")
+            scope = VersionScope.model_validate_json(json.dumps(resource.scope))
+            target = generation_id or resource.accepted_generation_id
+            generation = session.get(Generation, target) if target else None
+            if generation_id is not None and (
+                generation is None
+                or generation.resource_id != report_id
+                or generation.state != "ACCEPTED"
+            ):
+                raise ValueError("report_not_found")
+            ref = (
+                descriptor(generation, resource).reference
+                if generation is not None and generation.state == "ACCEPTED"
+                else None
             )
-            res = session.scalars(stmt).first()
-
-            if res is not None and res.accepted_generation_id is not None:
-                gen = session.get(Generation, res.accepted_generation_id)
-                if gen is not None and gen.state == "ACCEPTED":
-                    desc = descriptor(gen, res)
-                    return ReportSummary(
-                        scope=scope,
-                        report_id=res.id,
-                        report_type="architecture_analysis",
-                        profile=desc.reference.binding,
-                        input_fingerprint=gen.input_fingerprint,
-                        availability="READY",
-                        readability="verified",
-                        reference=desc.reference,
-                        pdf_size_bytes=gen.pdf_size,
-                        pdf_sha256=gen.pdf_sha256,
-                        page_count=gen.page_count,
-                        spec_digest=gen.spec_digest,
-                        created_at=gen.created_at,
-                        accepted_at=gen.accepted_at,
-                        observed_at=now,
-                    )
-
-            # Not ready / in progress / not scheduled
-            availability = "NOT_SCHEDULED"
-            if runtime is not None:
-                try:
-                    delivery_sum = runtime.summary(scope, role)
-                    report_work = delivery_sum.report
-                    if report_work is not None:
-                        availability = report_work.state
-                    else:
-                        availability = "WAITING_FOR_DIAGRAMS"
-                except Exception:
-                    availability = "UNAVAILABLE"
-
-            res_id = res.id if res is not None else uuid4()
-            created_at = res.created_at if res is not None else now
             return ReportSummary(
                 scope=scope,
-                report_id=res_id,
+                report_id=resource.id,
                 report_type="architecture_analysis",
-                profile=default_profile,
-                input_fingerprint="0" * 64,
-                availability=availability,
-                readability="unknown",
-                reference=None,
-                pdf_size_bytes=None,
-                pdf_sha256=None,
-                page_count=None,
-                spec_digest=None,
-                created_at=created_at,
-                accepted_at=None,
-                observed_at=now,
+                profile=HandlerProfile.model_validate_json(
+                    json.dumps(resource.binding)
+                ),
+                input_fingerprint=resource.input_fingerprint,
+                availability="READY" if ref else "BUILDING",
+                readability="metadata_only" if ref else "unknown",
+                reference=ref,
+                pdf_size_bytes=generation.pdf_size if ref and generation else None,
+                pdf_sha256=generation.pdf_sha256 if ref and generation else None,
+                page_count=generation.page_count if ref and generation else None,
+                spec_digest=generation.spec_digest if ref and generation else None,
+                created_at=resource.created_at,
+                accepted_at=generation.accepted_at if ref and generation else None,
+                observed_at=datetime.now(UTC),
             )
 
     def collection(
@@ -505,12 +568,13 @@ class ReportService:
         limit: int = 20,
         cursor: str | None = None,
     ) -> ReportCollection:
-        scope = _canonical_scope(record)
+        scope = self._scope(record, runtime)
         now = datetime.now(UTC)
 
         status_str = "NOT_SCHEDULED"
         waiting_on: tuple[str, ...] = ()
         ref: ArtifactReference | None = None
+        report_work = None
 
         if runtime is not None:
             try:
@@ -534,17 +598,84 @@ class ReportService:
             status=status_str,
             waiting_on=waiting_on,
             reference=ref,
+            work=report_work,
         )
 
         items: list[ReportSummary] = []
+        actor = self.actor_id
+        if actor is None:
+            raise ValueError("report_authentication_required")
+        continuation = self.signer.read(cursor) if cursor else None
+        if continuation is not None and (
+            continuation.operation != "collection"
+            or continuation.actor_id != actor
+            or continuation.project_id != record.project_id
+            or continuation.version_id != record.id
+            or continuation.page_size != limit
+            or continuation.high_water is None
+            or continuation.profile != "all_profiles"
+        ):
+            raise ValueError("report_cursor_invalid")
         with metadata_session(self.engine) as session:
             stmt = (
                 select(Resource)
-                .where(Resource.architecture_version_id == record.id)
-                .order_by(Resource.created_at.desc())
-                .limit(limit)
+                .where(
+                    Resource.architecture_version_id == record.id,
+                    Resource.project_id == record.project_id,
+                    Resource.accepted_generation_id.is_not(None),
+                )
+                .order_by(Resource.created_at.desc(), Resource.id.desc())
             )
-            resources = list(session.scalars(stmt))
+            if continuation is not None:
+                upper = continuation.high_water
+                assert upper is not None
+                stmt = stmt.where(
+                    tuple_(Resource.created_at, Resource.id)
+                    <= tuple_(literal(upper.accepted_at), literal(upper.id)),
+                    tuple_(Resource.created_at, Resource.id)
+                    < tuple_(
+                        literal(continuation.after.accepted_at),
+                        literal(continuation.after.id),
+                    ),
+                )
+            resources = list(session.scalars(stmt.limit(limit + 1)))
+            more = len(resources) > limit
+            resources = resources[:limit]
+            high_water = (
+                continuation.high_water
+                if continuation
+                else (
+                    ReportCursorKey(
+                        accepted_at=resources[0].created_at, id=resources[0].id
+                    )
+                    if resources
+                    else None
+                )
+            )
+            next_cursor = None
+            if more and high_water is not None:
+                issued = continuation.issued_at if continuation else int(time())
+                next_cursor = self.signer.issue(
+                    ReportCursor(
+                        kid=self.signer.key_id,
+                        operation="collection",
+                        actor_id=actor,
+                        project_id=record.project_id,
+                        version_id=record.id,
+                        after=ReportCursorKey(
+                            accepted_at=resources[-1].created_at, id=resources[-1].id
+                        ),
+                        high_water=high_water,
+                        page_size=limit,
+                        profile="all_profiles",
+                        issued_at=issued,
+                        expires_at=(
+                            continuation.expires_at
+                            if continuation
+                            else issued + self.signer.ttl
+                        ),
+                    )
+                )
             for res in resources:
                 if res.accepted_generation_id is not None:
                     gen = session.get(Generation, res.accepted_generation_id)
@@ -558,7 +689,7 @@ class ReportService:
                                 profile=desc.reference.binding,
                                 input_fingerprint=gen.input_fingerprint,
                                 availability="READY",
-                                readability="verified",
+                                readability="metadata_only",
                                 reference=desc.reference,
                                 pdf_size_bytes=gen.pdf_size,
                                 pdf_sha256=gen.pdf_sha256,
@@ -574,7 +705,7 @@ class ReportService:
             scope=scope,
             automatic=slot_status,
             items=tuple(items),
-            next_cursor=None,
+            next_cursor=next_cursor,
         )
 
     def generations(
@@ -585,7 +716,7 @@ class ReportService:
         limit: int = 20,
         cursor: str | None = None,
     ) -> ReportGenerationPage:
-        scope = _canonical_scope(record)
+        scope = self._scope(record)
 
         if cursor is not None:
             c = self.signer.read(cursor)
@@ -594,6 +725,9 @@ class ReportService:
                 or c.report_id != report_id
                 or c.actor_id != actor_id
                 or c.version_id != record.id
+                or c.project_id != record.project_id
+                or c.page_size != limit
+                or c.high_water is None
             ):
                 raise ValueError("report_cursor_invalid")
 
@@ -601,6 +735,8 @@ class ReportService:
             res = session.get(Resource, report_id)
             if res is None or res.architecture_version_id != record.id:
                 raise ValueError("report_not_found")
+            if cursor is not None and c.profile != res.binding_fingerprint:
+                raise ValueError("report_cursor_invalid")
 
             stmt = (
                 select(Generation)
@@ -612,6 +748,13 @@ class ReportService:
             )
             if cursor is not None:
                 c = self.signer.read(cursor)
+                assert c.high_water is not None
+                stmt = stmt.where(
+                    tuple_(Generation.accepted_at, Generation.id)
+                    <= tuple_(
+                        literal(c.high_water.accepted_at), literal(c.high_water.id)
+                    )
+                )
                 if c.after.accepted_at is not None:
                     stmt = stmt.where(
                         (Generation.accepted_at < c.after.accepted_at)
@@ -622,6 +765,15 @@ class ReportService:
                     )
 
             rows = list(session.scalars(stmt.limit(limit + 1)))
+            high_water = (
+                c.high_water
+                if cursor is not None
+                else (
+                    ReportCursorKey(accepted_at=rows[0].accepted_at, id=rows[0].id)
+                    if rows
+                    else None
+                )
+            )
 
             next_cursor = None
             if len(rows) > limit:
@@ -639,8 +791,15 @@ class ReportService:
                             accepted_at=last.accepted_at,
                             id=last.id,
                         ),
-                        issued_at=int(time()),
-                        expires_at=int(time()) + self.signer.ttl,
+                        high_water=high_water,
+                        profile=res.binding_fingerprint,
+                        page_size=limit,
+                        issued_at=c.issued_at if cursor is not None else int(time()),
+                        expires_at=(
+                            c.expires_at
+                            if cursor is not None
+                            else int(time()) + self.signer.ttl
+                        ),
                     )
                 )
 
@@ -695,7 +854,7 @@ class ReportService:
         self,
         record: ArchitectureVersionResponse,
         report_id: UUID,
-        generation_id: UUID | None = None,
+        generation_id: UUID,
     ) -> tuple[
         VerifiedArtifactHandle, ReportArtifactMember, ArchitectureVersionResponse
     ]:
@@ -704,11 +863,7 @@ class ReportService:
             if res is None or res.architecture_version_id != record.id:
                 raise ValueError("report_not_found")
 
-            target_gen_id = (
-                generation_id
-                if generation_id is not None
-                else res.accepted_generation_id
-            )
+            target_gen_id = generation_id
             if target_gen_id is None:
                 raise ValueError("report_not_ready")
 
@@ -725,53 +880,6 @@ class ReportService:
 
         handle = self.reader.open_exact(ref.scope, ref, member="pdf")
         return handle, pdf_member, record
-
-    def retry(
-        self,
-        record: ArchitectureVersionResponse,
-        report_id: UUID,
-        idempotency_key: str,
-        actor_id: UUID,
-        role: str,
-        runtime: DeliveryCoordinator | None,
-    ) -> ReportRetryResponse:
-        scope = _canonical_scope(record)
-        if role not in {"OWNER", "ADMIN"}:
-            raise ValueError("report_forbidden")
-
-        if runtime is None:
-            raise ValueError("report_runtime_unavailable")
-
-        with metadata_session(self.engine) as session:
-            res = session.get(Resource, report_id)
-            if res is None or res.architecture_version_id != record.id:
-                raise ValueError("report_not_found")
-
-        delivery_sum = runtime.summary(scope, role)
-        report_work = delivery_sum.report
-        if (
-            report_work is None
-            or report_work.state != "FAILED"
-            or report_work.work_id is None
-        ):
-            raise ValueError("report_conflict")
-
-        retry_req = RetryRequest(
-            resource_type=WorkKind.REPORT,
-            resource_id=report_work.work_id,
-            idempotency_key=idempotency_key,
-        )
-        retry_accepted = runtime.retry(
-            scope, retry_req, actor_id=actor_id, actor_role=role
-        )
-
-        return ReportRetryResponse(
-            scope=scope,
-            report_id=report_id,
-            work_id=retry_accepted.work_id,
-            operation_id=retry_accepted.operation_id,
-            state="PENDING",
-        )
 
 
 __all__ = [

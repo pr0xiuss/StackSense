@@ -284,7 +284,7 @@ class TestIRM3Benchmarks:
         peak_mb = peak_memory / (1024 * 1024)
 
         # 25k facts normalized within generous limits
-        assert construction_duration < 60.0
+        assert construction_duration < 35.0
         assert peak_mb < 250.0  # Peak memory well under 250 MB
         assert len(doc.entities) >= 10000
         assert len(doc.relationships) >= 20000

@@ -77,10 +77,36 @@ def sample_prepared_diagram(
     template: DiagramTemplate,
     scope: VersionScope | None = None,
     bundle_id: UUID | None = None,
+    *,
+    detailed: bool = False,
 ) -> tuple[PreparedDiagram, PublicationReceipt]:
     scope = scope or sample_scope()
     bundle_id = bundle_id or UUID("00000000-0000-0000-0000-000000000099")
     spec, catalog, layout = empty_parts(template)
+    if detailed:
+        from time import monotonic
+
+        from backend.platform.diagrams.configuration import DiagramLimits
+        from backend.platform.diagrams.export import prepare_layout
+        from backend.platform.diagrams.fonts import DiagramFonts
+        from tests.p5.diagrams.test_builders import build, monorepo
+        from tests.p5.diagrams.test_exports import Control, UnitLayout
+
+        built = build(monorepo(), template)
+        fonts = DiagramFonts()
+        try:
+            layout = prepare_layout(
+                built,
+                fonts,
+                UnitLayout(),
+                layout.profile,
+                DiagramLimits(),
+                monotonic() + 30,
+                Control(),
+            )
+        finally:
+            fonts.close()
+        spec, catalog = built.spec, built.catalog
 
     binding = sample_handler_profile(WorkKind.DIAGRAM, template)
     work = WorkIdentity(
@@ -181,6 +207,8 @@ def sample_prepared_diagram(
 
 def sample_barrier_receipt(
     scope: VersionScope | None = None,
+    *,
+    detailed: bool = False,
 ) -> tuple[BarrierReceipt, dict[DiagramTemplate, PreparedDiagram]]:
     scope = scope or sample_scope()
     bundle_id = uuid4()
@@ -193,7 +221,9 @@ def sample_barrier_receipt(
         DiagramTemplate.DEPENDENCY,
         DiagramTemplate.DATA_FLOW,
     ):
-        p_diag, p_receipt = sample_prepared_diagram(tpl, scope, bundle_id)
+        p_diag, p_receipt = sample_prepared_diagram(
+            tpl, scope, bundle_id, detailed=detailed
+        )
         receipts.append(p_receipt)
         diagrams[tpl] = p_diag
 
@@ -214,9 +244,11 @@ def sample_barrier_receipt(
 
 def sample_work_context(
     scope: VersionScope | None = None,
+    *,
+    detailed: bool = False,
 ) -> tuple[WorkExecutionContext, dict[DiagramTemplate, PreparedDiagram]]:
     scope = scope or sample_scope()
-    barrier, diagrams = sample_barrier_receipt(scope)
+    barrier, diagrams = sample_barrier_receipt(scope, detailed=detailed)
     binding = sample_handler_profile(WorkKind.REPORT, "architecture_analysis")
     bundle_id = barrier.diagrams[0].prepared.attempt.work.bundle_id
     bundle_fingerprint = barrier.diagrams[0].prepared.attempt.work.bundle_fingerprint
@@ -269,6 +301,7 @@ class FakeArchitectureQueryService:
         class FakeVersion:
             id = version_id
             state = "published"
+            analysis_id = sample_scope().analysis_id
 
         return FakeVersion()
 
@@ -283,7 +316,7 @@ class FakeArchitectureQueryService:
                 self.status = "confirmed"
 
         class Collection:
-            items = [Entity(i) for i in range(10)]
+            items = [Entity(i) for i in range(offset, min(10, offset + limit))]
             total = 10
 
         return Collection()
@@ -298,7 +331,7 @@ class FakeArchitectureQueryService:
                 self.kind = "calls"
 
         class Collection:
-            items = [Rel(i) for i in range(5)]
+            items = [Rel(i) for i in range(offset, min(5, offset + limit))]
             total = 5
 
         return Collection()
@@ -307,7 +340,7 @@ class FakeArchitectureQueryService:
         self, version_id: UUID, project_id: UUID, *, limit: int, offset: int
     ) -> Any:
         class Collection:
-            items = []
+            items = [object() for _ in range(offset, min(12, offset + limit))]
             total = 12
 
         return Collection()
@@ -316,7 +349,7 @@ class FakeArchitectureQueryService:
         self, version_id: UUID, project_id: UUID, *, limit: int, offset: int
     ) -> Any:
         class Collection:
-            items = []
+            items = [object() for _ in range(offset, min(1, offset + limit))]
             total = 1
 
         return Collection()

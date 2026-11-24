@@ -111,10 +111,6 @@ def neo4j_env() -> Generator[tuple[Driver, Settings]]:
     infra = Neo4jInfrastructure(settings)
     try:
         infra.initialize()
-    except Exception as exc:
-        infra.close()
-        pytest.skip(f"Neo4j not reachable: {exc}")
-    try:
         yield infra.driver, settings
     finally:
         infra.close()

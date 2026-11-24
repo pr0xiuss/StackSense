@@ -8,13 +8,9 @@ deleted. Run with -s --junitxml=... to retain individual race outcomes.
 import hashlib
 import json
 import os
+import pwd
 import re
 import subprocess
-
-try:
-    import pwd
-except ImportError:
-    pwd = None  # type: ignore[assignment]
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path

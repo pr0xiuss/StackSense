@@ -39,8 +39,6 @@ from backend.platform.reports.api_contracts import (
     ReportCollection,
     ReportGenerationPage,
     ReportGenerationSummary,
-    ReportRetryRequest,
-    ReportRetryResponse,
     ReportSummary,
 )
 from backend.platform.reports.dependencies import (
@@ -61,14 +59,14 @@ STATUSES: dict[str, int] = {
     "report_generation_changed": 409,
     "report_cursor_expired": 410,
     "report_range_unsupported": 416,
-    "report_cursor_invalid": 422,
+    "report_cursor_invalid": 400,
     "report_input_invalid": 422,
-    "report_contract_unsupported": 422,
-    "report_limit_exceeded": 422,
+    "report_contract_unsupported": 409,
+    "report_limit_exceeded": 413,
     "report_store_unavailable": 503,
     "report_source_unavailable": 503,
     "report_runtime_unavailable": 503,
-    "report_integrity_error": 500,
+    "report_integrity_error": 503,
     "report_timeout": 504,
     "report_internal_error": 500,
 }
@@ -169,7 +167,7 @@ router = APIRouter(
     route_class=ReportRoute,
     responses={
         status: {"model": ErrorResponse}
-        for status in (401, 403, 404, 409, 410, 416, 422, 500, 503, 504)
+        for status in (400, 401, 403, 404, 409, 410, 413, 416, 422, 500, 503, 504)
     },
 )
 
@@ -241,6 +239,7 @@ def get_report_summary(
     """Return active or exact historical report summary."""
     return service.summary(
         record=access.record,
+        report_id=report_id,
         runtime=runtime,
         role=access.role,
         generation_id=generation_id,
@@ -284,7 +283,7 @@ def _download_stream(
     handle: Any,
     pdf_member: Any,
     record: ArchitectureVersionResponse,
-    immutable: bool,
+    generation_id: UUID,
 ) -> StreamingResponse:
     def stream_bytes() -> Iterator[bytes]:
         try:
@@ -298,18 +297,14 @@ def _download_stream(
 
     raw_sha = bytes.fromhex(pdf_member.sha256)
     b64_digest = base64.b64encode(raw_sha).decode("ascii")
-    filename = (
-        f"report-architecture-v{record.sequence_number}-{pdf_member.sha256[:8]}.pdf"
-    )
+    filename = f"report-architecture-v{record.sequence_number}-{generation_id}.pdf"
 
     headers = {
         "Content-Type": "application/pdf",
         "Content-Length": str(pdf_member.size_bytes),
         "Content-Digest": f"sha-256=:{b64_digest}:",
         "ETag": f'"{pdf_member.sha256}"',
-        "Cache-Control": (
-            "private, immutable, max-age=31536000" if immutable else "private, no-store"
-        ),
+        "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
         "Content-Disposition": f'attachment; filename="{filename}"',
     }
@@ -318,34 +313,6 @@ def _download_stream(
         media_type="application/pdf",
         headers=headers,
     )
-
-
-@router.get(
-    PREFIX + "/{report_id}/download",
-    responses={
-        200: {
-            "content": {
-                "application/pdf": {"schema": {"type": "string", "format": "binary"}}
-            }
-        }
-    },
-)
-def download_report(
-    report_id: UUID,
-    access: A,
-    service: S,
-    request: Request,
-) -> Response:
-    """Download verified active generation PDF stream."""
-    if request.headers.get("range") is not None:
-        raise ValueError("report_range_unsupported")
-
-    handle, pdf_member, record = service.open_pdf(
-        record=access.record,
-        report_id=report_id,
-        generation_id=None,
-    )
-    return _download_stream(handle, pdf_member, record, immutable=False)
 
 
 @router.get(
@@ -374,33 +341,7 @@ def download_report_generation(
         report_id=report_id,
         generation_id=generation_id,
     )
-    return _download_stream(handle, pdf_member, record, immutable=True)
-
-
-@router.post(
-    PREFIX + "/{report_id}/retry",
-    response_model=ReportRetryResponse,
-    status_code=202,
-)
-def retry_report(
-    report_id: UUID,
-    body: ReportRetryRequest,
-    access: A,
-    service: S,
-    runtime: R,
-) -> ReportRetryResponse:
-    """Trigger retry for failed report generation under M1 policy."""
-    if access.role not in {"OWNER", "ADMIN"}:
-        raise ValueError("report_forbidden")
-
-    return service.retry(
-        record=access.record,
-        report_id=report_id,
-        idempotency_key=body.idempotency_key,
-        actor_id=access.actor,
-        role=access.role,
-        runtime=runtime,
-    )
+    return _download_stream(handle, pdf_member, record, generation_id)
 
 
 __all__ = ["router"]

@@ -2,7 +2,6 @@
 
 import json
 import struct
-import sys
 from uuid import UUID
 
 import pytest
@@ -161,10 +160,6 @@ def test_absent_installation_is_not_a_bare_subprocess_fallback():
         verify_installation()
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="ElkLayoutEngine non-blocking pipe selector exchange requires POSIX pipes",
-)
 @pytest.mark.parametrize("exit_code", [1, 2, 137])
 def test_failed_child_cannot_return_success_geometry(exit_code):
     import subprocess

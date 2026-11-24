@@ -7,12 +7,15 @@ accepted, pinned artifacts with SHA256 and length verification.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import io
 import json
 import os
 import shutil
-from contextlib import AbstractContextManager, ExitStack
+import stat
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
@@ -51,7 +54,7 @@ REPORT_STORE_ROOT = Path("/var/lib/stacksense/reports")
 _O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
-READONLY = os.O_RDONLY | _O_CLOEXEC | _O_NOFOLLOW
+READONLY = os.O_RDONLY | _O_CLOEXEC | _O_NOFOLLOW | os.O_NONBLOCK
 DIRECTORY = READONLY | _O_DIRECTORY
 
 
@@ -100,7 +103,10 @@ class _VerifiedReportHandle(VerifiedArtifactHandle):
         if not self._closed:
             self._closed = True
             self._stream.close()
-            self._lease.close()
+            try:
+                self._authority.recheck(self._scope, self._reference)
+            finally:
+                self._lease.close()
 
 
 def _read_hash_file(
@@ -108,9 +114,34 @@ def _read_hash_file(
 ) -> bytes:
     if monotonic() >= deadline:
         raise TimeoutError("report_timeout")
-    if not path.is_file() or path.is_symlink():
-        raise ValueError("report_integrity_error")
-    data = path.read_bytes()
+    with ExitStack() as stack:
+        parent = os.open(path.anchor, DIRECTORY)
+        stack.callback(os.close, parent)
+        for part in path.parent.parts[1:]:
+            parent = os.open(part, DIRECTORY, dir_fd=parent)
+            stack.callback(os.close, parent)
+        fd = os.open(path.name, READONLY, dir_fd=parent)
+        stack.callback(os.close, fd)
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_size != expected_size
+        ):
+            raise ValueError("report_integrity_error")
+        chunks: list[bytes] = []
+        remaining = expected_size
+        while remaining:
+            if monotonic() >= deadline:
+                raise TimeoutError("report_timeout")
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                raise ValueError("report_integrity_error")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(fd, 1):
+            raise ValueError("report_integrity_error")
+        data = b"".join(chunks)
     if len(data) != expected_size:
         raise ValueError(
             f"report_size_mismatch: expected {expected_size}, got {len(data)}"
@@ -121,6 +152,25 @@ def _read_hash_file(
             f"report_hash_mismatch: expected {expected_sha256}, got {actual_hash}"
         )
     return data
+
+
+@contextmanager
+def generation_lock(root: Path, generation_id: UUID) -> Iterator[None]:
+    """Serialize application writers/GC; this is not a physical-principal seal."""
+    locks = root / "locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    if locks.is_symlink():
+        raise ValueError("report_integrity_error")
+    fd = os.open(
+        locks / str(generation_id),
+        os.O_RDWR | os.O_CREAT | _O_NOFOLLOW | _O_CLOEXEC,
+        0o600,
+    )
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
 
 
 class LocalReportArtifactStore(GeneratedArtifactStore[Literal["spec", "pdf"]]):
@@ -213,12 +263,14 @@ class CandidateReportWriter:
         artifact_id: UUID,
         limits: ReportLimits | None = None,
         root: Path | None = None,
+        require_staging: Callable[[AttemptIdentity], None] | None = None,
     ) -> None:
         self.attempt = attempt
         self.candidate_id = candidate_id
         self.artifact_id = artifact_id
         self.limits = limits or ReportLimits()
         self.root = root or REPORT_STORE_ROOT
+        self.require_staging = require_staging
         self.staging_dir = self.root / "staging" / str(candidate_id)
         self.sealed_dir = self.root / "sealed" / str(candidate_id)
 
@@ -234,17 +286,117 @@ class CandidateReportWriter:
         page_placement_digest: str,
         asset_hashes: tuple[tuple[str, str], ...] = (),
     ) -> tuple[ReportArtifactManifest, CandidateSeal, PreparedOutput]:
+        with generation_lock(self.root, self.candidate_id):
+            if self.require_staging is None:
+                raise PermissionError("report write requires staging authority")
+            self.require_staging(self.attempt)
+            return self._stage_artifacts(
+                spec,
+                pdf_bytes,
+                pdf_sha256,
+                page_count,
+                source_snapshot_digest,
+                renderer_profile_digest,
+                limits_digest,
+                page_placement_digest,
+                asset_hashes,
+            )
+
+    def _stage_artifacts(
+        self,
+        spec: ReportSpec,
+        pdf_bytes: bytes,
+        pdf_sha256: str,
+        page_count: int,
+        source_snapshot_digest: str,
+        renderer_profile_digest: str,
+        limits_digest: str,
+        page_placement_digest: str,
+        asset_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> tuple[ReportArtifactManifest, CandidateSeal, PreparedOutput]:
         """Stage spec and PDF bytes, write manifest, and compute seal."""
+        spec = ReportSpec.model_validate(spec)
+        if (
+            spec.metadata.scope != self.attempt.work.scope
+            or spec.metadata.profile != self.attempt.work.binding
+            or source_snapshot_digest != spec.metadata.source_snapshot_digest
+        ):
+            raise ReportContractError("report_integrity_error")
+        if self.sealed_dir.exists():
+            raw = self.sealed_dir / "manifest.json"
+            if raw.is_symlink() or raw.stat().st_size > self.limits.max_spec_bytes:
+                raise ReportContractError("report_integrity_error")
+            manifest = ReportArtifactManifest.from_bytes(
+                raw.read_bytes(), max_bytes=self.limits.max_spec_bytes
+            )
+            if (
+                manifest.attempt_id != self.attempt.attempt_id
+                or manifest.generation_id != self.candidate_id
+                or manifest.artifact_id != self.artifact_id
+                or manifest.scope != self.attempt.work.scope
+                or manifest.binding != self.attempt.work.binding
+                or manifest.report_spec_digest != spec.report_spec_digest
+            ):
+                raise ReportContractError("report_integrity_error")
+            for member in manifest.members:
+                _read_hash_file(
+                    self.sealed_dir / member.file_name,
+                    member.size_bytes,
+                    member.sha256,
+                    monotonic() + self.limits.read_timeout_seconds,
+                )
+            pdf = next(m for m in manifest.members if m.member == "pdf")
+            if pdf.sha256 != pdf_sha256 or pdf.size_bytes != len(pdf_bytes):
+                raise ReportContractError("report_integrity_error")
+            seal = CandidateSeal(
+                generation_id=self.candidate_id,
+                artifact_id=self.artifact_id,
+                digests=OutputDigests(
+                    content=hashlib.sha256(manifest.to_bytes()).hexdigest(),
+                    spec=manifest.report_spec_digest,
+                    layout=None,
+                ),
+                size_bytes=len(manifest.to_bytes()),
+                sealed=True,
+            )
+            return manifest, seal, PreparedOutput(attempt=self.attempt, candidate=seal)
+        if hashlib.sha256(pdf_bytes).hexdigest() != pdf_sha256:
+            raise ReportContractError("report_integrity_error")
         if self.staging_dir.exists():
-            shutil.rmtree(self.staging_dir)
-        self.staging_dir.mkdir(parents=True, exist_ok=True)
+            if self.staging_dir.is_symlink() or set(
+                p.name for p in self.staging_dir.iterdir()
+            ) - {"report-spec.json", "report.pdf", "manifest.json"}:
+                raise ReportContractError("report_integrity_error")
+            for name in ("report-spec.json", "report.pdf", "manifest.json"):
+                path = self.staging_dir / name
+                if path.exists():
+                    if path.is_symlink() or not path.is_file():
+                        raise ReportContractError("report_integrity_error")
+                    path.unlink()
+        self.staging_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+        def write(path: Path, data: bytes) -> None:
+            fd = os.open(
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_CLOEXEC,
+                0o600,
+            )
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
 
         # 1. Write spec
         spec_bytes = c4_canonical_bytes(spec.model_dump(mode="python"))
         spec_size = len(spec_bytes)
         spec_sha256 = hashlib.sha256(spec_bytes).hexdigest()
         spec_path = self.staging_dir / "report-spec.json"
-        spec_path.write_bytes(spec_bytes)
+        if (
+            spec_size > self.limits.max_spec_bytes
+            or spec_size + len(pdf_bytes) > self.limits.max_staged_bytes
+        ):
+            raise ReportContractError("report_limit_exceeded")
+        write(spec_path, spec_bytes)
 
         # 2. Write PDF
         pdf_size = len(pdf_bytes)
@@ -253,7 +405,7 @@ class CandidateReportWriter:
                 f"PDF size {pdf_size} exceeds maximum {self.limits.max_pdf_bytes}"
             )
         pdf_path = self.staging_dir / "report.pdf"
-        pdf_path.write_bytes(pdf_bytes)
+        write(pdf_path, pdf_bytes)
 
         # Calculate digests
         spec_digest = c4_report_spec_digest(spec)
@@ -319,21 +471,54 @@ class CandidateReportWriter:
 
         manifest_bytes = manifest.to_bytes()
         manifest_path = self.staging_dir / "manifest.json"
-        manifest_path.write_bytes(manifest_bytes)
+        if (
+            spec_size + len(pdf_bytes) + len(manifest_bytes)
+            > self.limits.max_staged_bytes
+        ):
+            raise ReportContractError("report_limit_exceeded")
+        write(manifest_path, manifest_bytes)
         manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
         manifest_size = len(manifest_bytes)
 
         # Seal promote: move staging to sealed
-        if self.sealed_dir.exists():
-            shutil.rmtree(self.sealed_dir)
         self.sealed_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(self.staging_dir), str(self.sealed_dir))
+        import ctypes
+
+        rename = ctypes.CDLL(None, use_errno=True).renameat2
+        if (
+            rename(
+                -100,
+                os.fsencode(self.staging_dir),
+                -100,
+                os.fsencode(self.sealed_dir),
+                1,
+            )
+            != 0
+        ):
+            raise OSError(ctypes.get_errno(), "report promotion failed")
+        for directory in (
+            self.sealed_dir,
+            self.sealed_dir.parent,
+            self.staging_dir.parent,
+        ):
+            fd = os.open(directory, DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
 
         # Check permissions and readback
         sealed_manifest_path = self.sealed_dir / "manifest.json"
         readback_manifest = sealed_manifest_path.read_bytes()
         if hashlib.sha256(readback_manifest).hexdigest() != manifest_sha256:
             raise ValueError("seal_verification_failed")
+        for member in manifest.members:
+            _read_hash_file(
+                self.sealed_dir / member.file_name,
+                member.size_bytes,
+                member.sha256,
+                monotonic() + self.limits.read_timeout_seconds,
+            )
 
         seal = CandidateSeal(
             generation_id=self.candidate_id,
@@ -354,8 +539,13 @@ class CandidateReportWriter:
 class ReportOperatorGC:
     """Bounded operator orphan candidate cleaner for report directories."""
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(
+        self,
+        root: Path | None = None,
+        require_deleting: Callable[[UUID], None] | None = None,
+    ) -> None:
         self.root = root or REPORT_STORE_ROOT
+        self.require_deleting = require_deleting
 
     def cleanup_unaccepted(
         self,
@@ -363,14 +553,22 @@ class ReportOperatorGC:
         grace_seconds: float = 300.0,
     ) -> bool:
         """Safely remove a candidate staging or unaccepted sealed directory."""
+        if self.require_deleting is None:
+            raise PermissionError("report cleanup requires reserved deletion authority")
+        self.require_deleting(candidate_id)
         staging_dir = self.root / "staging" / str(candidate_id)
         if staging_dir.exists():
-            shutil.rmtree(staging_dir, ignore_errors=True)
+            if staging_dir.is_symlink():
+                raise ValueError("report_integrity_error")
+            shutil.rmtree(staging_dir)
 
         sealed_dir = self.root / "sealed" / str(candidate_id)
         if sealed_dir.exists():
             mtime = sealed_dir.stat().st_mtime
             if (datetime.now().timestamp() - mtime) >= grace_seconds:
-                shutil.rmtree(sealed_dir, ignore_errors=True)
+                if sealed_dir.is_symlink():
+                    raise ValueError("report_integrity_error")
+                shutil.rmtree(sealed_dir)
                 return True
-        return False
+            return False
+        return True

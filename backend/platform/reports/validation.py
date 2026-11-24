@@ -13,7 +13,7 @@ from backend.platform.reports.contracts import (
     ReportDiagramPlacement,
     ReportSpec,
 )
-from backend.platform.reports.model import c4_report_spec_digest
+from backend.platform.reports.model import c4_canonical_bytes, c4_report_spec_digest
 
 
 class ReportValidator:
@@ -75,6 +75,20 @@ class ReportValidator:
             s for s in spec.sections if isinstance(s, DiagramsSection)
         )
         self._validate_placements(diagrams_section.placements, ordered_templates)
+        references = {
+            d.template: d.receipt.accepted.reference for d in spec.diagram_inputs
+        }
+        if any(
+            p.reference != references[p.template] for p in diagrams_section.placements
+        ):
+            raise ReportContractError("report placement reference mismatch")
+        if len(diagrams_section.placements) > self.limits.max_diagram_tiles:
+            raise ReportContractError("report_limit_exceeded")
+        if (
+            len(c4_canonical_bytes(spec.model_dump(mode="python")))
+            > self.limits.max_spec_bytes
+        ):
+            raise ReportContractError("report_limit_exceeded")
 
         # 4. Diagnostic limits validation
         diag_section = next(s for s in spec.sections if s.section_kind == "diagnostics")
@@ -96,6 +110,11 @@ class ReportValidator:
                 )
                 raise ReportContractError(msg)
 
+        try:
+            ReportSpec.model_validate(spec)
+        except ValueError as exc:
+            raise ReportContractError(str(exc)) from exc
+
     def _validate_placements(
         self,
         placements: Sequence[ReportDiagramPlacement],
@@ -116,6 +135,7 @@ class ReportValidator:
 
         # Ensure no overlapping slot/clip on the same page
         slots_by_page: dict[int, set[str]] = {}
+        boxes_by_page: dict[int, list[tuple[int, int, int, int]]] = {}
         for p in placements:
             if p.scale_numerator <= 0 or p.scale_denominator <= 0:
                 raise ReportContractError("Placement scales must be positive integers")
@@ -129,3 +149,17 @@ class ReportValidator:
                     f"Duplicate slot '{p.slot_id}' on diagram page {p.page_index}"
                 )
             page_slots.add(p.slot_id)
+            width, height = (
+                (841890, 595276) if p.slot_id == "full_landscape" else (595276, 841890)
+            )
+            if (
+                min_x < 36000
+                or min_y < 36000
+                or max_x > width - 36000
+                or max_y > height - 36000
+            ):
+                raise ReportContractError("report placement outside page")
+            for x0, y0, x1, y1 in boxes_by_page.setdefault(p.page_index, []):
+                if max(min_x, x0) < min(max_x, x1) and max(min_y, y0) < min(max_y, y1):
+                    raise ReportContractError("report placements overlap")
+            boxes_by_page[p.page_index].append(p.clip_rect)
