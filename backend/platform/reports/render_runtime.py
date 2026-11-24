@@ -110,7 +110,6 @@ class IsolatedReportRenderRuntime:
 
         import reportlab  # type: ignore[import-untyped]
 
-
         if sys.platform != "linux":
             raise ReportContractError("report_runtime_unavailable")
         prepared = PreparedReport.model_validate(prepared)

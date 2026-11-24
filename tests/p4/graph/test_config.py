@@ -119,8 +119,17 @@ def test_graph_query_rejects_invalid_bounds(overrides: dict[str, Any]) -> None:
         Settings(**overrides)
 
 
-def test_graph_scheduling_defaults_fail_closed() -> None:
-    settings = Settings()
+def test_graph_scheduling_defaults_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Test model defaults, not a developer's explicitly enabled deployment.
+    for name in (
+        "GRAPH_QUEUE_NAME",
+        "GRAPH_MAINTENANCE_QUEUE_NAME",
+        "GRAPH_PROJECTION_DISPATCH_ENABLED",
+        "GRAPH_HEARTBEAT_INTERVAL_SECONDS",
+        "GRAPH_LEASE_DURATION_SECONDS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    settings = Settings(_env_file=None)
 
     assert settings.graph_queue_name == "graph.projections"
     assert settings.graph_maintenance_queue_name == "graph.maintenance"

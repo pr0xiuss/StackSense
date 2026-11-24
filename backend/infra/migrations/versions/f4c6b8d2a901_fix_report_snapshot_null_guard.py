@@ -27,7 +27,8 @@ def upgrade() -> None:
       THEN RAISE EXCEPTION 'immutable report resource'; END IF;
       IF jsonb_typeof(OLD.captured_snapshot)='object' AND
          (NEW.captured_snapshot,NEW.source_snapshot_digest,NEW.captured_at)
-         IS DISTINCT FROM (OLD.captured_snapshot,OLD.source_snapshot_digest,OLD.captured_at)
+         IS DISTINCT FROM
+         (OLD.captured_snapshot,OLD.source_snapshot_digest,OLD.captured_at)
       THEN RAISE EXCEPTION 'captured report snapshot is insert-once'; END IF;
       IF OLD.accepted_generation_id IS NOT NULL AND NEW.accepted_generation_id IS NULL
       THEN RAISE EXCEPTION 'accepted report pointer cannot be cleared'; END IF;
