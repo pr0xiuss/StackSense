@@ -110,13 +110,14 @@ def test_report_repository_candidate_lifecycle_and_publication(
         candidate_id=candidate_id,
         artifact_id=artifact_id,
         root=tmp_path,
+        require_staging=lambda attempt: None,
     )
     manifest, seal, prepared_output = writer.stage_artifacts(
         spec=spec,
         pdf_bytes=b"%PDF-1.4 dummy",
         pdf_sha256=hashlib.sha256(b"%PDF-1.4 dummy").hexdigest(),
         page_count=5,
-        source_snapshot_digest="0" * 64,
+        source_snapshot_digest=spec.metadata.source_snapshot_digest,
         renderer_profile_digest="1" * 64,
         limits_digest="2" * 64,
         page_placement_digest="3" * 64,

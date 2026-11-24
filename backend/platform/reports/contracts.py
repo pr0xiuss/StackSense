@@ -8,7 +8,7 @@ Constructing a value is never proof of physical sealing or publication.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, Protocol, Self
+from typing import Annotated, Literal, Protocol, Self
 from uuid import UUID
 
 from pydantic import (
@@ -21,6 +21,7 @@ from pydantic import (
     model_validator,
 )
 
+from backend.platform.delivery.api_contracts import WorkSummary
 from backend.platform.delivery.artifacts import VerifiedArtifactHandle
 from backend.platform.delivery.contracts import (
     ArtifactReference,
@@ -29,7 +30,7 @@ from backend.platform.delivery.contracts import (
     PublicationReceipt,
     VersionScope,
 )
-from backend.platform.diagrams.contracts import PreparedDiagram
+from backend.platform.diagrams.contracts import Coverage, PreparedDiagram
 
 C4_VERSION: Literal["1.0.0"] = "1.0.0"
 REPORT_TYPE: Literal["architecture_analysis"] = "architecture_analysis"
@@ -75,6 +76,8 @@ class FrozenReportModel(BaseModel):
         extra="forbid",
         strict=True,
         revalidate_instances="always",
+        ser_json_bytes="base64",
+        val_json_bytes="base64",
     )
 
     @field_validator("*", mode="after")
@@ -88,12 +91,23 @@ class FrozenReportModel(BaseModel):
     def from_bytes(cls, data: bytes, *, max_bytes: int | None = None) -> Self:
         if max_bytes is not None and len(data) > max_bytes:
             raise ValueError("size_bytes_exceeded")
+        import json
+
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate C4 JSON key")
+                result[key] = value
+            return result
+
+        json.loads(data, object_pairs_hook=unique)
         return cls.model_validate_json(data)
 
     def to_bytes(self) -> bytes:
         from backend.platform.reports.model import c4_canonical_bytes
 
-        return c4_canonical_bytes(self)
+        return c4_canonical_bytes(type(self).model_validate(self))
 
 
 class ReportSourceRef(FrozenReportModel):
@@ -113,6 +127,20 @@ class ReportSourceRef(FrozenReportModel):
     producer_version: str | None = None
     strength: str | None = None
     polarity: str | None = None
+    namespace: tuple[str, ...] | None = None
+    source_logical_id: str | None = None
+    target_logical_id: str | None = None
+
+    @field_validator("path")
+    @classmethod
+    def safe_path(cls, path: str | None) -> str | None:
+        if path is not None and (
+            path.startswith(("/", "\\"))
+            or ":" in path
+            or ".." in path.replace("\\", "/").split("/")
+        ):
+            raise ReportContractError("unsafe source path")
+        return path
 
 
 class ReportDiagnostic(FrozenReportModel):
@@ -141,6 +169,24 @@ class ReportDiagnostic(FrozenReportModel):
         return value.astimezone(UTC)
 
 
+class AnalysisCoverage(FrozenReportModel):
+    analyzed_files_count: NonnegativeInt
+    unsupported_files_count: NonnegativeInt
+    failed_files_count: NonnegativeInt
+    excluded_files_count: NonnegativeInt
+    is_partial: bool
+
+
+class DiagramProvenance(FrozenReportModel):
+    diagram_id: str
+    template: DiagramTemplate
+
+
+class OmittedTotals(FrozenReportModel):
+    omitted_entities: NonnegativeInt = 0
+    omitted_relationships: NonnegativeInt = 0
+
+
 class ReportCoverage(FrozenReportModel):
     """Canonical and analysis completeness metrics and explicit selection counts."""
 
@@ -151,7 +197,7 @@ class ReportCoverage(FrozenReportModel):
     total_conflicts: NonnegativeInt
 
     analysis_status: str
-    persisted_coverage: dict[str, Any] | None = None
+    persisted_coverage: AnalysisCoverage | None = None
 
     selected_inventory_count: NonnegativeInt
     omitted_inventory_count: NonnegativeInt
@@ -160,7 +206,7 @@ class ReportCoverage(FrozenReportModel):
     selected_reference_count: NonnegativeInt
     omitted_reference_count: NonnegativeInt
 
-    diagnostic_cap_indicated: bool = False
+    diagnostic_cap_indicated: bool | None = None
     limitation_codes: tuple[str, ...] = ()
 
 
@@ -168,8 +214,8 @@ class ReportMetadata(FrozenReportModel):
     """Top-level immutable report provenance and scope identity."""
 
     c4_version: Literal["1.0.0"] = C4_VERSION
-    schema_version: str = "1.0.0"
-    template: str = TEMPLATE_NAME
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    template: Literal["architecture_analysis_v1"] = TEMPLATE_NAME
     report_type: Literal["architecture_analysis"] = REPORT_TYPE
     report_id: UUID
     scope: VersionScope
@@ -199,13 +245,13 @@ class ReportDiagramInput(FrozenReportModel):
     receipt: PublicationReceipt
     scope: VersionScope
     template: DiagramTemplate
-    schema_version: str = "1.0.0"
+    schema_version: Literal["1.0.0"] = "1.0.0"
     profile: HandlerProfile
     semantic_digest: Digest
     layout_digest: Digest
     member_digests: tuple[tuple[str, str], ...]
-    coverage: dict[str, Any]
-    provenance: dict[str, Any]
+    coverage: Coverage
+    provenance: DiagramProvenance
     prepared_diagram: PreparedDiagram
 
     @model_validator(mode="after")
@@ -218,6 +264,19 @@ class ReportDiagramInput(FrozenReportModel):
             raise ReportContractError("Semantic digest mismatch")
         if self.layout_digest != self.prepared_diagram.layout.layout_digest:
             raise ReportContractError("Layout digest mismatch")
+        ref = self.receipt.accepted.reference
+        if (
+            self.prepared_diagram.descriptor.reference != ref
+            or self.profile != ref.binding
+            or self.scope != self.prepared_diagram.descriptor.manifest.scope
+            or self.coverage != self.prepared_diagram.spec.coverage
+            or self.member_digests
+            != tuple(
+                (m.member, m.sha256)
+                for m in self.prepared_diagram.descriptor.manifest.members
+            )
+        ):
+            raise ReportContractError("Diagram descriptor binding mismatch")
         return self
 
 
@@ -294,7 +353,9 @@ class ProvenanceSection(FrozenReportModel):
     diagram_receipts: tuple[PublicationReceipt, ...]
     font_licenses: tuple[str, ...]
     selection_policy: str
-    omitted_totals: dict[str, int]
+    omitted_totals: OmittedTotals
+    source_refs: tuple[ReportSourceRef, ...] = ()
+    font_license_notice: str = ""
 
 
 ReportSection = Annotated[
@@ -351,6 +412,28 @@ class ReportSpec(FrozenReportModel):
                 f"got {actual_templates}"
             )
             raise ReportContractError(msg)
+        for diagram in self.diagram_inputs:
+            if diagram.scope != self.metadata.scope:
+                raise ReportContractError("Report diagram scope mismatch")
+        metadata, _, diagrams, _, coverage, provenance = self.sections
+        if (
+            not isinstance(metadata, MetadataSection)
+            or metadata.metadata != self.metadata
+            or not isinstance(diagrams, DiagramsSection)
+            or diagrams.diagram_inputs != self.diagram_inputs
+            or not isinstance(coverage, CoverageSection)
+            or coverage.coverage != self.coverage
+            or not isinstance(provenance, ProvenanceSection)
+            or provenance.diagram_receipts
+            != tuple(d.receipt for d in self.diagram_inputs)
+            or provenance.source_snapshot_digest != self.metadata.source_snapshot_digest
+        ):
+            raise ReportContractError("Report section binding mismatch")
+        if self.report_spec_digest:
+            from backend.platform.reports.model import c4_report_spec_digest
+
+            if self.report_spec_digest != c4_report_spec_digest(self):
+                raise ReportContractError("Report spec digest mismatch")
         return self
 
 
@@ -363,6 +446,19 @@ class ReportInputSnapshot(FrozenReportModel):
     snapshot_digest: Digest
     snapshot_size_bytes: NonnegativeInt
     captured_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def integrity(self) -> Self:
+        import hashlib
+
+        if self.snapshot_digest != hashlib.sha256(
+            self.report_spec.to_bytes()
+        ).hexdigest() or self.snapshot_size_bytes != len(self.report_spec.to_bytes()):
+            raise ReportContractError("report snapshot integrity mismatch")
+        for _, sha, data in (*self.font_assets, *self.diagram_assets):
+            if hashlib.sha256(data).hexdigest() != sha:
+                raise ReportContractError("report snapshot asset mismatch")
+        return self
 
     @field_validator("captured_at")
     @classmethod
@@ -379,6 +475,16 @@ class PreparedReport(FrozenReportModel):
     renderer_profile_digest: Digest
     limits_digest: Digest
 
+    @model_validator(mode="after")
+    def placement_binding(self) -> Self:
+        section = self.spec.sections[2]
+        if (
+            not isinstance(section, DiagramsSection)
+            or self.page_placements != section.placements
+        ):
+            raise ReportContractError("report placement binding mismatch")
+        return self
+
 
 class RenderedReport(FrozenReportModel):
     """Result of PDF rendering before sealing and verification."""
@@ -392,6 +498,17 @@ class RenderedReport(FrozenReportModel):
     renderer_profile_digest: Digest
     validation_version: Literal["1.0.0"] = "1.0.0"
 
+    @model_validator(mode="after")
+    def bytes_match(self) -> Self:
+        import hashlib
+
+        if (
+            len(self.pdf_bytes) != self.size_bytes
+            or hashlib.sha256(self.pdf_bytes).hexdigest() != self.sha256
+        ):
+            raise ReportContractError("rendered report integrity mismatch")
+        return self
+
 
 class ReportArtifactMember(FrozenReportModel):
     """Member descriptor for sealed report artifact bundle."""
@@ -399,7 +516,7 @@ class ReportArtifactMember(FrozenReportModel):
     member: Literal["spec", "pdf"]
     file_name: str
     media_type: str
-    schema_version: str = "1.0.0"
+    schema_version: Literal["1.0.0"] = "1.0.0"
     size_bytes: NonnegativeInt
     sha256: Digest
 
@@ -435,15 +552,62 @@ class ReportArtifactManifest(FrozenReportModel):
     members: tuple[ReportArtifactMember, ...]
     verification_version: Literal["1.0.0"] = "1.0.0"
 
+    @model_validator(mode="after")
+    def members_binding(self) -> Self:
+        if tuple((m.member, m.file_name, m.media_type) for m in self.members) != (
+            ("spec", "report-spec.json", "application/json"),
+            ("pdf", "report.pdf", "application/pdf"),
+        ):
+            raise ReportContractError("report member allowlist mismatch")
+        if (
+            self.candidate_id != self.generation_id
+            or len(self.diagram_receipt_ids) != 4
+            or len(set(self.diagram_receipt_ids)) != 4
+            or len(self.diagram_member_digests) != 4
+        ):
+            raise ReportContractError("report manifest binding mismatch")
+        return self
+
     def to_bytes(self) -> bytes:
         from backend.platform.reports.model import c4_canonical_bytes
 
-        return c4_canonical_bytes(self)
+        return c4_canonical_bytes(type(self).model_validate(self))
 
 
 class ReportArtifactDescriptor(FrozenReportModel):
     reference: ArtifactReference
     manifest: ReportArtifactManifest
+
+    @model_validator(mode="after")
+    def exact(self) -> Self:
+        import hashlib
+
+        from backend.platform.delivery.contracts import OutputDigests
+
+        m, r = self.manifest, self.reference
+        if (
+            any(
+                getattr(m, name) != getattr(r, name)
+                for name in (
+                    "scope",
+                    "binding",
+                    "input_fingerprint",
+                    "resource_id",
+                    "generation_id",
+                    "artifact_id",
+                    "candidate_id",
+                )
+            )
+            or r.digests
+            != OutputDigests(
+                content=hashlib.sha256(m.to_bytes()).hexdigest(),
+                spec=m.report_spec_digest,
+                layout=None,
+            )
+            or r.size_bytes != len(m.to_bytes())
+        ):
+            raise ReportContractError("Report descriptor mismatch")
+        return self
 
 
 # API DTO contracts for M6 consumer fixtures
@@ -451,6 +615,7 @@ class ReportSlotStatus(FrozenReportModel):
     status: str
     waiting_on: tuple[str, ...] = ()
     reference: ArtifactReference | None = None
+    work: WorkSummary | None = None
 
 
 class ReportSummary(FrozenReportModel):
@@ -459,8 +624,18 @@ class ReportSummary(FrozenReportModel):
     report_type: Literal["architecture_analysis"] = REPORT_TYPE
     profile: HandlerProfile
     input_fingerprint: Digest
-    availability: str
-    readability: str
+    availability: Literal[
+        "NOT_SCHEDULED",
+        "WAITING",
+        "BUILDING",
+        "READY",
+        "FAILED",
+        "CANCELLED",
+        "UNAVAILABLE",
+    ]
+    readability: Literal[
+        "metadata_only", "verified", "unknown", "unavailable", "corrupt"
+    ]
     reference: ArtifactReference | None = None
     pdf_size_bytes: NonnegativeInt | None = None
     pdf_sha256: Digest | None = None
@@ -469,6 +644,27 @@ class ReportSummary(FrozenReportModel):
     created_at: AwareDatetime
     accepted_at: AwareDatetime | None = None
     observed_at: AwareDatetime
+    work: WorkSummary | None = None
+    coverage: ReportCoverage | None = None
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def exact_summary(self) -> Self:
+        if self.availability == "READY" and self.reference is None:
+            raise ReportContractError(
+                "READY report requires an exact accepted reference"
+            )
+        if self.reference is not None:
+            r = self.reference
+            if (
+                r.scope != self.scope
+                or r.binding != self.profile
+                or r.resource_id != self.report_id
+                or r.input_fingerprint != self.input_fingerprint
+                or r.digests.spec != self.spec_digest
+            ):
+                raise ReportContractError("report summary reference mismatch")
+        return self
 
     @field_validator("created_at", "accepted_at", "observed_at")
     @classmethod

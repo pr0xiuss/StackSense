@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import os
+import pwd
 import stat
-
-try:
-    import pwd
-except ImportError:
-    pwd = None  # type: ignore[assignment]
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -70,8 +66,6 @@ def _storage_preflight() -> None:
     ):
         raise ValueError("diagram_store_unavailable")
     protected_regular(root / "seal-generation")
-    if pwd is None:
-        raise ValueError("diagram_store_unavailable")
     worker, owner = pwd.getpwnam("stacksense-worker"), pwd.getpwnam(
         "stacksense-artifacts"
     )

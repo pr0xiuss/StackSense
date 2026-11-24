@@ -32,7 +32,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.platform.projects.infra.base import Base
 
-JSON_VALUE = JSON().with_variant(JSONB(), "postgresql")
+JSON_VALUE = JSON(none_as_null=True).with_variant(
+    JSONB(none_as_null=True), "postgresql"
+)
 
 
 class ReportResourceModel(Base):
@@ -385,7 +387,7 @@ def install_guards(connection: Connection, schema: str) -> None:
       RETURN NEW;
     END $$;
 
-    CREATE FUNCTION {q}.immutable_report_resource()
+    CREATE OR REPLACE FUNCTION {q}.immutable_report_resource()
     RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN
       IF (to_jsonb(NEW) - ARRAY['accepted_generation_id','captured_snapshot',
@@ -394,8 +396,10 @@ def install_guards(connection: Connection, schema: str) -> None:
           'captured_snapshot','source_snapshot_digest','captured_at'])
       THEN RAISE EXCEPTION 'immutable report resource'; END IF;
 
-      IF OLD.captured_snapshot IS NOT NULL AND
-         NEW.captured_snapshot IS DISTINCT FROM OLD.captured_snapshot
+      IF jsonb_typeof(OLD.captured_snapshot)='object' AND
+         (NEW.captured_snapshot,NEW.source_snapshot_digest,NEW.captured_at)
+         IS DISTINCT FROM
+           (OLD.captured_snapshot,OLD.source_snapshot_digest,OLD.captured_at)
       THEN RAISE EXCEPTION 'captured report snapshot is insert-once'; END IF;
 
       IF OLD.accepted_generation_id IS NOT NULL AND

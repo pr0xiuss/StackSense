@@ -6,10 +6,11 @@ and building C4 ReportSpec.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 from backend.platform.delivery.contracts import (
@@ -20,11 +21,14 @@ from backend.platform.delivery.contracts import (
 from backend.platform.diagrams.contracts import DiagramReadPort
 from backend.platform.reports.configuration import ReportRuntimeConfig
 from backend.platform.reports.contracts import (
+    AnalysisCoverage,
     CoverageSection,
     DiagnosticsSection,
+    DiagramProvenance,
     DiagramsSection,
     InventorySection,
     MetadataSection,
+    OmittedTotals,
     PreparedReport,
     ProvenanceSection,
     ReportContractError,
@@ -35,6 +39,7 @@ from backend.platform.reports.contracts import (
     ReportInputSnapshot,
     ReportMetadata,
     ReportSection,
+    ReportSourceKind,
     ReportSourceRef,
     ReportSpec,
 )
@@ -82,17 +87,18 @@ class AnalysisLifecyclePort(Protocol):
 def load_verified_font_assets() -> tuple[tuple[str, str, bytes], ...]:
     """Load font assets from verified diagrams directory."""
     assets: list[tuple[str, str, bytes]] = []
-    for filename in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf"):
-        font_path = FONTS_DIR / filename
-        if font_path.exists():
-            data = font_path.read_bytes()
-            sha256 = hashlib.sha256(data).hexdigest()
-            assets.append((filename, sha256, data))
-        else:
-            # Fallback for environments where asset files are mocked/unavailable
-            dummy_data = b"DUMMY_TTF_BYTES_FOR_FIXTURES"
-            sha256 = hashlib.sha256(dummy_data).hexdigest()
-            assets.append((filename, sha256, dummy_data))
+    manifest = json.loads((FONTS_DIR / "font-manifest.json").read_bytes())
+    if (
+        hashlib.sha256((FONTS_DIR / "LICENSE.dejavu.txt").read_bytes()).hexdigest()
+        != manifest["license_sha256"]
+    ):
+        raise ReportContractError("report_font_integrity")
+    for item in manifest["files"]:
+        data = (FONTS_DIR / item["name"]).read_bytes()
+        sha256 = hashlib.sha256(data).hexdigest()
+        if sha256 != item["sha256"] or len(data) != item["size_bytes"]:
+            raise ReportContractError("report_font_integrity")
+        assets.append((item["name"], sha256, data))
     return tuple(assets)
 
 
@@ -161,15 +167,10 @@ class ReportPreparer:
                     (m.member, m.sha256)
                     for m in prepared_diagram.descriptor.manifest.members
                 ),
-                coverage=(
-                    prepared_diagram.spec.coverage.model_dump(mode="python")
-                    if hasattr(prepared_diagram.spec.coverage, "model_dump")
-                    else dict(prepared_diagram.spec.coverage)
+                coverage=prepared_diagram.spec.coverage,
+                provenance=DiagramProvenance(
+                    diagram_id=prepared_diagram.spec.diagram_id, template=tpl
                 ),
-                provenance={
-                    "diagram_id": prepared_diagram.spec.diagram_id,
-                    "template": str(tpl),
-                },
                 prepared_diagram=prepared_diagram,
             )
             diagram_inputs.append(diag_input)
@@ -224,8 +225,8 @@ class ReportPreparer:
                     + len(inventory_data["selected_relationships"])
                 ),
             ),
-            diagnostic_cap_indicated=False,
-            limitation_codes=(),
+            diagnostic_cap_indicated=None,
+            limitation_codes=("diagnostic_cap_observation_unavailable",),
         )
 
         # 5. Build Placements
@@ -239,9 +240,9 @@ class ReportPreparer:
         ).hexdigest()
 
         captured_summary = {
-            "entities": inventory_data["total_entities"],
-            "relationships": inventory_data["total_relationships"],
-            "diagnostics": len(all_diagnostics),
+            "inventory": inventory_data,
+            "diagnostics": [d.model_dump(mode="python") for d in all_diagnostics],
+            "diagrams": [d.model_dump(mode="python") for d in diagram_inputs],
         }
         receipt_ids = tuple(d.receipt.receipt_id for d in diagram_inputs)
         source_snapshot_digest = c4_source_snapshot_digest(
@@ -299,22 +300,28 @@ class ReportPreparer:
         sec6 = ProvenanceSection(
             source_snapshot_digest=source_snapshot_digest,
             diagram_receipts=tuple(d.receipt for d in diagram_inputs),
-            font_licenses=("SIL Open Font License 1.1", "Bitstream Vera License"),
+            font_licenses=(
+                "DejaVu 2.37: Bitstream Vera license and public-domain additions",
+            ),
+            font_license_notice=(FONTS_DIR / "LICENSE.dejavu.txt").read_text(
+                encoding="utf-8"
+            ),
             selection_policy=(
                 "Boundary, application, and persistence elements ordered by kind and ID"
             ),
-            omitted_totals={
-                "omitted_entities": max(
+            omitted_totals=OmittedTotals(
+                omitted_entities=max(
                     0,
                     inventory_data["total_entities"]
                     - len(inventory_data["selected_entities"]),
                 ),
-                "omitted_relationships": max(
+                omitted_relationships=max(
                     0,
                     inventory_data["total_relationships"]
                     - len(inventory_data["selected_relationships"]),
                 ),
-            },
+            ),
+            source_refs=inventory_data["source_refs"],
         )
 
         sections: tuple[ReportSection, ...] = (sec1, sec2, sec3, sec4, sec5, sec6)
@@ -367,8 +374,10 @@ class ReportPreparer:
         }
 
         while True:
+            if offset >= self.limits.max_cumulative_source_rows:
+                raise ReportContractError("report_limit_exceeded")
             res = self.analysis_lifecycle.list_diagnostics(
-                analysis_id, project_id, limit=limit, offset=offset
+                analysis_id, project_id, limit=min(100, limit), offset=offset
             )
             items = getattr(res, "items", res) if hasattr(res, "items") else res
             if not items:
@@ -380,13 +389,13 @@ class ReportPreparer:
                     raw_sev.value if hasattr(raw_sev, "value") else raw_sev
                 ).lower()
                 if sev_str not in ("info", "warning", "error", "critical"):
-                    sev_str = "info"
+                    raise ReportContractError("report_contract_unsupported")
 
                 diag_id = getattr(diag, "id", None) or getattr(
                     diag, "diagnostic_id", None
                 )
                 if not diag_id:
-                    continue
+                    raise ReportContractError("report_contract_unsupported")
 
                 source_ref = ReportSourceRef(
                     source_kind="analysis_diagnostic",
@@ -430,7 +439,7 @@ class ReportPreparer:
                     )
                     raise ReportContractError(msg)
 
-            if len(items) < limit:
+            if len(items) < min(100, limit):
                 break
             offset += len(items)
 
@@ -446,147 +455,293 @@ class ReportPreparer:
         return captured
 
     def _capture_inventory(self, version_id: UUID, project_id: UUID) -> dict[str, Any]:
-        """Capture canonical architecture totals and selected boundary elements."""
-        entities_res = self.architecture_query.list_entities(
-            version_id, project_id, limit=self.limits.max_source_page_size, offset=0
-        )
-        relationships_res = self.architecture_query.list_relationships(
-            version_id, project_id, limit=self.limits.max_source_page_size, offset=0
-        )
-        evidence_res = self.architecture_query.list_evidence(
-            version_id, project_id, limit=1, offset=0
-        )
-        unresolved_res = self.architecture_query.list_unresolved(
-            version_id, project_id, limit=1, offset=0
-        )
-        conflicts_res = self.architecture_query.list_conflicts(
-            version_id, project_id, limit=1, offset=0
-        )
-
-        total_entities = getattr(
-            entities_res, "total", len(getattr(entities_res, "items", entities_res))
-        )
-        total_relationships = getattr(
-            relationships_res,
-            "total",
-            len(getattr(relationships_res, "items", relationships_res)),
-        )
-        total_evidence = getattr(evidence_res, "total", 0)
-        total_unresolved = getattr(unresolved_res, "total", 0)
-        total_conflicts = getattr(conflicts_res, "total", 0)
-
-        # Aggregate counts by kind and status
-        entity_items = getattr(entities_res, "items", entities_res)
+        """Count every public row, retain only a bounded deterministic selection."""
+        version = self.architecture_query.get_version(version_id, project_id)
+        analysis = self.analysis_lifecycle.get_analysis(version.analysis_id, project_id)
+        totals: dict[str, int] = {}
         kind_counter: Counter[str] = Counter()
         status_counter: Counter[str] = Counter()
-        selected_entities: list[ReportSourceRef] = []
-
-        for e in entity_items:
-            k = str(getattr(e, "kind", "unknown"))
-            s = str(getattr(e, "status", "unknown"))
-            kind_counter[k] += 1
-            status_counter[s] += 1
-            if len(selected_entities) < self.limits.max_selected_inventory:
-                selected_entities.append(
-                    ReportSourceRef(
-                        source_kind="entity",
-                        architecture_version_id=version_id,
-                        logical_id=str(getattr(e, "logical_id", getattr(e, "id", ""))),
-                        source_record_type=k,
-                    )
+        rel_counter: Counter[str] = Counter()
+        selections: dict[str, list[ReportSourceRef]] = {
+            "entities": [],
+            "relationships": [],
+        }
+        source_refs: list[ReportSourceRef] = []
+        calls = rows = 0
+        for collection in (
+            "entities",
+            "relationships",
+            "evidence",
+            "unresolved",
+            "conflicts",
+        ):
+            offset = 0
+            total: int | None = None
+            while total is None or offset < total:
+                if calls >= self.limits.max_source_calls:
+                    raise ReportContractError("report_limit_exceeded")
+                page = getattr(self.architecture_query, "list_" + collection)(
+                    version_id,
+                    project_id,
+                    limit=self.limits.max_source_page_size,
+                    offset=offset,
                 )
-
-        rel_items = getattr(relationships_res, "items", relationships_res)
-        rel_kind_counter: Counter[str] = Counter()
-        selected_relationships: list[ReportSourceRef] = []
-        for r in rel_items:
-            rk = str(getattr(r, "kind", "unknown"))
-            rel_kind_counter[rk] += 1
-            if len(selected_relationships) < self.limits.max_selected_inventory:
-                selected_relationships.append(
-                    ReportSourceRef(
-                        source_kind="relationship",
-                        architecture_version_id=version_id,
-                        logical_id=str(getattr(r, "logical_id", getattr(r, "id", ""))),
-                        source_record_type=rk,
-                    )
-                )
-
+                calls += 1
+                items = page.items
+                if total is None:
+                    total = page.total
+                if page.total != total or (not items and offset < total):
+                    raise ReportContractError("report_selection_drift")
+                rows += len(items)
+                if rows > self.limits.max_cumulative_source_rows:
+                    raise ReportContractError("report_limit_exceeded")
+                for item in items:
+                    if len(source_refs) < self.limits.max_selected_references:
+                        names = (
+                            "artifact_id",
+                            "source_fact_key",
+                            "path",
+                            "producer_id",
+                            "producer_version",
+                            "strength",
+                            "polarity",
+                            "source_record_type",
+                        )
+                        source_refs.append(
+                            ReportSourceRef(
+                                source_kind=cast(
+                                    ReportSourceKind,
+                                    {
+                                        "entities": "entity",
+                                        "relationships": "relationship",
+                                        "evidence": "evidence",
+                                        "unresolved": "unresolved",
+                                        "conflicts": "conflict",
+                                    }[collection],
+                                ),
+                                architecture_version_id=version_id,
+                                logical_id=getattr(item, "logical_id", None),
+                                **{
+                                    name: getattr(item, name)
+                                    for name in names
+                                    if getattr(item, name, None) is not None
+                                },
+                            )
+                        )
+                    if collection == "entities":
+                        kind_counter[item.kind] += 1
+                        status_counter[item.status] += 1
+                    elif collection == "relationships":
+                        rel_counter[item.kind] += 1
+                    if collection in selections:
+                        kind = item.kind
+                        if collection == "entities" and kind not in {
+                            "application",
+                            "service",
+                            "controller",
+                            "component",
+                            "endpoint",
+                            "database",
+                            "data_repository",
+                            "external_service",
+                            "external_api",
+                            "message_broker",
+                            "queue",
+                            "infrastructure",
+                        }:
+                            continue
+                        selected = selections[collection]
+                        selected.append(
+                            ReportSourceRef(
+                                source_kind=(
+                                    "entity"
+                                    if collection == "entities"
+                                    else "relationship"
+                                ),
+                                architecture_version_id=version_id,
+                                artifact_id=item.id,
+                                logical_id=item.logical_id,
+                                source_record_type=kind,
+                                namespace=getattr(item, "namespace", None),
+                                source_logical_id=getattr(
+                                    item, "source_logical_id", None
+                                ),
+                                target_logical_id=getattr(
+                                    item, "target_logical_id", None
+                                ),
+                            )
+                        )
+                        selected.sort(
+                            key=lambda ref: (
+                                ref.source_record_type or "",
+                                (ref.logical_id or "").encode("utf-8"),
+                                str(ref.artifact_id),
+                            )
+                        )
+                        del selected[self.limits.max_selected_inventory :]
+                offset += len(items)
+                if total == 0:
+                    break
+            totals[collection] = total or 0
+        completeness = getattr(analysis, "completeness", None)
+        coverage = (
+            None
+            if completeness is None
+            else AnalysisCoverage(
+                **{
+                    key: getattr(completeness, key)
+                    for key in AnalysisCoverage.model_fields
+                }
+            )
+        )
         return {
-            "total_entities": total_entities,
-            "total_relationships": total_relationships,
-            "total_evidence": total_evidence,
-            "total_unresolved": total_unresolved,
-            "total_conflicts": total_conflicts,
-            "analysis_status": "completed",
-            "persisted_coverage": None,
+            "total_entities": totals["entities"],
+            "total_relationships": totals["relationships"],
+            "total_evidence": totals["evidence"],
+            "total_unresolved": totals["unresolved"],
+            "total_conflicts": totals["conflicts"],
+            "analysis_status": analysis.status,
+            "persisted_coverage": coverage,
             "counts_by_kind": tuple(sorted(kind_counter.items())),
             "counts_by_status": tuple(sorted(status_counter.items())),
-            "relationship_counts_by_kind": tuple(sorted(rel_kind_counter.items())),
-            "selected_entities": tuple(selected_entities),
-            "selected_relationships": tuple(selected_relationships),
+            "relationship_counts_by_kind": tuple(sorted(rel_counter.items())),
+            "selected_entities": tuple(selections["entities"]),
+            "selected_relationships": tuple(selections["relationships"]),
+            "source_refs": tuple(source_refs),
         }
 
     def _compute_placements(
-        self,
-        diagram_inputs: list[ReportDiagramInput],
-        compact: bool = True,
+        self, diagram_inputs: list[ReportDiagramInput], compact: bool = True
     ) -> list[ReportDiagramPlacement]:
-        """Compute PDF page placements for the 4 diagrams according to Option 3."""
-        placements: list[ReportDiagramPlacement] = []
-        # Page 1 in diagrams section has 2 slots or full page
-        # Check density of diagrams
-        is_dense = (not compact) or any(
-            len(d.prepared_diagram.layout.nodes) > 30 for d in diagram_inputs
-        )
+        """Pack readable unchanged vectors; otherwise tile at a readable scale."""
+        from fractions import Fraction
+        from math import ceil
 
-        if not is_dense:
-            # Compact 2-per-page placement: 2 pages for 4 diagrams
-            # Page 1: Overview and Component
-            # Page 2: Dependency and Data Flow
-            slots = [
-                (1, "compact_top", 0, 400_000),
-                (1, "compact_bottom", 0, 50_000),
-                (2, "compact_top", 0, 400_000),
-                (2, "compact_bottom", 0, 50_000),
+        result: list[ReportDiagramPlacement] = []
+        page = 1
+
+        def minimum(d: ReportDiagramInput) -> float:
+            # Frozen C2 font profile prepares regular14px/bold12px, not the
+            # padded label-box height. Preserve the actual six-point floor.
+            sizes = [
+                12 if glyph.font == "bold" else 14
+                for glyph in d.prepared_diagram.layout.glyphs
             ]
-            for i, d in enumerate(diagram_inputs):
-                page_idx, slot_id, tx, ty = slots[i]
-                placements.append(
-                    ReportDiagramPlacement(
-                        template=d.template,
-                        reference=d.receipt.accepted.reference,
-                        page_index=page_idx,
-                        slot_id=slot_id,
-                        scale_numerator=1,
-                        scale_denominator=2,
-                        translation_mpt_x=tx,
-                        translation_mpt_y=ty,
-                        clip_rect=(0, 0, 500_000, 350_000),
-                        caption=(
-                            f"Figure 3.{i + 1}: "
-                            f"{d.template.value.replace('_', ' ').title()}"
-                        ),
-                    )
+            return self.profile.min_readable_font_pt / min(sizes, default=14)
+
+        def fit(d: ReportDiagramInput, w: int, h: int) -> float:
+            b = d.prepared_diagram.layout.bounds
+            return min(0.75, w / max(b.width, 1), h / max(b.height, 1))
+
+        def emit(
+            d: ReportDiagramInput,
+            slot: str,
+            scale: float,
+            x: int,
+            y: int,
+            w: int,
+            h: int,
+            row: int | None = None,
+            col: int | None = None,
+        ) -> None:
+            b = d.prepared_diagram.layout.bounds
+            rational = Fraction(str(scale)).limit_denominator(1000000)
+            result.append(
+                ReportDiagramPlacement(
+                    template=d.template,
+                    reference=d.receipt.accepted.reference,
+                    page_index=page,
+                    slot_id=slot,
+                    scale_numerator=rational.numerator,
+                    scale_denominator=rational.denominator,
+                    translation_mpt_x=x - int(b.x * scale),
+                    translation_mpt_y=y + int(b.y * scale),
+                    clip_rect=(x, y, x + w, y + h),
+                    tile_row=row,
+                    tile_column=col,
+                    caption=d.template.value.replace("_", " ").title(),
                 )
-        else:
-            # Full page per diagram: 4 pages
-            for i, d in enumerate(diagram_inputs):
-                placements.append(
-                    ReportDiagramPlacement(
-                        template=d.template,
-                        reference=d.receipt.accepted.reference,
-                        page_index=i + 1,
-                        slot_id="full_page",
-                        scale_numerator=1,
-                        scale_denominator=1,
-                        translation_mpt_x=0,
-                        translation_mpt_y=0,
-                        clip_rect=(0, 0, 500_000, 700_000),
-                        caption=(
-                            f"Figure 3.{i + 1}: "
-                            f"{d.template.value.replace('_', ' ').title()} (Full Page)"
-                        ),
+            )
+
+        i = 0
+        while i < len(diagram_inputs):
+            # Try a 2x2 grid, then vertical slots, consecutive templates only.
+            four = diagram_inputs[i : i + 4]
+            if (
+                compact
+                and len(four) == 4
+                and all(fit(d, 245000, 310000) >= minimum(d) for d in four)
+            ):
+                for j, d in enumerate(four):
+                    emit(
+                        d,
+                        "compact_grid_" + str(j),
+                        fit(d, 245000, 310000),
+                        36000 + (j % 2) * 270000,
+                        420000 - (j // 2) * 350000,
+                        245000,
+                        310000,
                     )
+                i += 4
+                page += 1
+                continue
+            pair = diagram_inputs[i : i + 2]
+            if (
+                compact
+                and len(pair) == 2
+                and all(fit(d, 523000, 310000) >= minimum(d) for d in pair)
+            ):
+                for j, d in enumerate(pair):
+                    emit(
+                        d,
+                        "compact_" + str(j),
+                        fit(d, 523000, 310000),
+                        36000,
+                        420000 - j * 350000,
+                        523000,
+                        310000,
+                    )
+                i += 2
+                page += 1
+                continue
+            d = diagram_inputs[i]
+            portrait = fit(d, 523000, 650000)
+            landscape = fit(d, 769000, 400000)
+            if max(portrait, landscape) >= minimum(d):
+                wide = landscape > portrait
+                emit(
+                    d,
+                    "full_landscape" if wide else "full_page",
+                    landscape if wide else portrait,
+                    36000,
+                    90000,
+                    769000 if wide else 523000,
+                    400000 if wide else 650000,
                 )
-        return placements
+                page += 1
+            else:
+                scale = minimum(d)
+                b = d.prepared_diagram.layout.bounds
+                width, height = b.width * scale, b.height * scale
+                columns = max(1, ceil(max(0, width - 523000) / 503000) + 1)
+                rows = max(1, ceil(max(0, height - 650000) / 630000) + 1)
+                if (
+                    columns > self.profile.max_tile_columns
+                    or rows > self.profile.max_tile_rows
+                ):
+                    raise ReportContractError("report_limit_exceeded")
+                if rows * columns + len(result) > self.limits.max_diagram_tiles:
+                    raise ReportContractError("report_limit_exceeded")
+                for row in range(rows):
+                    for col in range(columns):
+                        emit(d, "tile", scale, 36000, 90000, 523000, 650000, row, col)
+                        p = result[-1]
+                        result[-1] = p.model_copy(
+                            update={
+                                "translation_mpt_x": p.translation_mpt_x - col * 503000,
+                                "translation_mpt_y": p.translation_mpt_y + row * 630000,
+                            }
+                        )
+                        page += 1
+            i += 1
+        return result

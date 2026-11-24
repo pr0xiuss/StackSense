@@ -726,6 +726,4 @@ def test_frozen_b1_schema_accepts_builder_goldens(template):
         / f"b2_{template.value}.json"
     )
     result = build(monorepo(), template)
-    assert result.spec.to_bytes() == path.read_bytes().replace(b"\r\n", b"\n").rstrip(
-        b"\n"
-    )
+    assert result.spec.to_bytes() == path.read_bytes().rstrip(b"\n")

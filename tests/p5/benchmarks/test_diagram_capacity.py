@@ -71,13 +71,6 @@ print(json.dumps({'scope':('real rootless ELK + prepared SVG; '
     print("M4_B3_LAYOUT_EXPORT_MEASUREMENT " + json.dumps(value, sort_keys=True))
 
 
-@pytest.mark.skipif(
-    sys.platform != "linux",
-    reason=(
-        "Fresh-process /proc/self/status and POSIX resource"
-        " measurements require Linux"
-    ),
-)
 @pytest.mark.parametrize("count", [20, 150, 500])
 def test_fresh_process_contract_scene_measurements(count):
     script = r"""
@@ -133,13 +126,6 @@ print(json.dumps({'scope':'C2/protocol only; not ELK, DB, seal or browser proof'
     print("M4_B1_CONTRACT_MEASUREMENT " + json.dumps(measured, sort_keys=True))
 
 
-@pytest.mark.skipif(
-    sys.platform != "linux",
-    reason=(
-        "Fresh-process /proc/self/status and POSIX resource"
-        " measurements require Linux"
-    ),
-)
 @pytest.mark.parametrize("count", [20, 150, 500])
 def test_fresh_process_four_b2_builder_measurements(count):
     """Measure actual semantic builders separately from ELK/store/pytest peak."""

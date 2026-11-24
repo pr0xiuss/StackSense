@@ -50,7 +50,7 @@ def test_report_artifact_manifest_and_descriptor_schema() -> None:
         attempt_id=uuid4(),
         work_id=uuid4(),
         run_id=uuid4(),
-        candidate_id=uuid4(),
+        candidate_id=gen_id,
         fence_token=1,
         epoch=uuid4(),
         resource_id=uuid4(),
@@ -80,7 +80,7 @@ def test_report_artifact_manifest_and_descriptor_schema() -> None:
         size_bytes=len(manifest_bytes),
         sealed=True,
         digests=OutputDigests(
-            content=manifest.members[1].sha256,
+            content=__import__("hashlib").sha256(manifest_bytes).hexdigest(),
             spec=manifest.report_spec_digest,
             layout=None,
         ),
@@ -104,8 +104,20 @@ def test_report_summary_and_collection_for_m6() -> None:
         report_type=REPORT_TYPE,
         profile=binding,
         input_fingerprint="a" * 64,
-        availability="ready",
-        readability="readable",
+        availability="READY",
+        readability="metadata_only",
+        reference=ArtifactReference(
+            scope=scope,
+            binding=binding,
+            input_fingerprint="a" * 64,
+            resource_id=UUID("00000000-0000-0000-0000-000000000010"),
+            generation_id=uuid4(),
+            candidate_id=uuid4(),
+            artifact_id=uuid4(),
+            size_bytes=1024,
+            sealed=True,
+            digests=OutputDigests(content="e" * 64, spec="d" * 64),
+        ),
         pdf_size_bytes=20480,
         pdf_sha256="c" * 64,
         page_count=6,
@@ -118,7 +130,7 @@ def test_report_summary_and_collection_for_m6() -> None:
     collection = ReportCollection(
         scope=scope,
         automatic=ReportSlotStatus(
-            status="ready",
+            status="READY",
             waiting_on=(),
         ),
         items=(summary,),
@@ -126,7 +138,7 @@ def test_report_summary_and_collection_for_m6() -> None:
     )
     json_bytes = c4_canonical_bytes(collection)
     assert len(json_bytes) > 0
-    assert summary.availability == "ready"
+    assert summary.availability == "READY"
     assert len(collection.items) == 1
 
 

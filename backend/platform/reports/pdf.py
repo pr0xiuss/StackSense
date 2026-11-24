@@ -1,42 +1,26 @@
-"""Deterministic PDF rendering engine for Architecture Analysis Report.
-
-Uses ReportLab 5.1.0 and pypdf 7.1.1.
-"""
+"""Provider-free PDF rendering of validated C4 and unchanged C2 vectors."""
 
 from __future__ import annotations
 
 import hashlib
 import io
+import unicodedata
+from collections import Counter
 from time import monotonic
 from typing import Any
+from xml.sax.saxutils import escape
 
 from pypdf import PdfReader
-from reportlab.graphics.shapes import (  # type: ignore[import-untyped]
-    Drawing,
-    Group,
-    Line,
-    Rect,
-    String,
-)
-from reportlab.lib import colors  # type: ignore[import-untyped]
-from reportlab.lib.pagesizes import A4  # type: ignore[import-untyped]
-from reportlab.lib.styles import (  # type: ignore[import-untyped]
-    ParagraphStyle,
-    getSampleStyleSheet,
-)
+from pypdf.generic import ContentStream, IndirectObject, StreamObject
+from reportlab.lib.pagesizes import A4, landscape  # type: ignore[import-untyped]
+from reportlab.lib.styles import ParagraphStyle  # type: ignore[import-untyped]
 from reportlab.pdfbase import pdfmetrics  # type: ignore[import-untyped]
 from reportlab.pdfbase.ttfonts import TTFont  # type: ignore[import-untyped]
 from reportlab.pdfgen import canvas  # type: ignore[import-untyped]
-from reportlab.platypus import (  # type: ignore[import-untyped]
-    PageBreak,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
+from reportlab.platypus import Paragraph  # type: ignore[import-untyped]
 
 from backend.platform.delivery.contracts import ExecutionControl
+from backend.platform.reports.configuration import ReportLimits
 from backend.platform.reports.contracts import (
     CoverageSection,
     DiagnosticsSection,
@@ -46,55 +30,40 @@ from backend.platform.reports.contracts import (
     ProvenanceSection,
     RenderedReport,
     ReportContractError,
-    ReportDiagramInput,
-    ReportDiagramPlacement,
+    ReportSourceRef,
     ReportSpec,
 )
+from backend.platform.reports.validation import ReportValidator
+
+
+def register_dejavu_fonts(assets: tuple[tuple[str, str, bytes], ...]) -> None:
+    expected = {
+        "DejaVuSans.ttf": (
+            "7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954"
+        ),
+        "DejaVuSans-Bold.ttf": (
+            "e6476c1b80502924294eed40894c5b18e06c181444ca953e5334262df9c27724"
+        ),
+    }
+    if {name: sha for name, sha, _ in assets} != expected:
+        raise ReportContractError("report_font_integrity")
+    for name, sha, data in sorted(assets):
+        if hashlib.sha256(data).hexdigest() != sha:
+            raise ReportContractError("report_font_integrity")
+        font_name = "DejaVuSans-Bold" if "Bold" in name else "DejaVuSans"
+        # Register from the exact pinned bytes; never fall back to a host font.
+        pdfmetrics.registerFont(TTFont(font_name, io.BytesIO(data)))
 
 
 class DeterministicCanvas(canvas.Canvas):  # type: ignore[misc]
-    """Canvas enforcing invariant mode and fixed dates for byte-level determinism."""
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        kwargs["invariant"] = 1
-        kwargs["pageCompression"] = 0
+        kwargs.update(invariant=1, pageCompression=1)
         super().__init__(*args, **kwargs)
 
 
-_FONTS_REGISTERED = False
-
-
-def register_dejavu_fonts(font_assets: tuple[tuple[str, str, bytes], ...]) -> None:
-    """Register DejaVu font family into ReportLab pdfmetrics."""
-    global _FONTS_REGISTERED
-    if _FONTS_REGISTERED:
-        return
-
-    registered_names = set(pdfmetrics.getRegisteredFontNames())
-    for filename, _sha256, data in font_assets:
-        font_name = "DejaVuSans-Bold" if "Bold" in filename else "DejaVuSans"
-        if font_name not in registered_names:
-            try:
-                font = TTFont(font_name, io.BytesIO(data))
-                pdfmetrics.registerFont(font)
-                registered_names.add(font_name)
-            except Exception:
-                # Fallback to Helvetica if font parsing fails
-                pass
-    _FONTS_REGISTERED = True
-
-
-def _safe_font(preferred: str, fallback: str = "Helvetica") -> str:
-    if preferred in pdfmetrics.getRegisteredFontNames():
-        return preferred
-    return fallback
-
-
 class ReportLabPdfRenderer:
-    """Deterministic, provider-free ReportLab PDF renderer and pypdf validator."""
-
-    def __init__(self) -> None:
-        pass
+    def __init__(self, limits: ReportLimits | None = None) -> None:
+        self.limits = limits or ReportLimits()
 
     def render(
         self,
@@ -102,540 +71,558 @@ class ReportLabPdfRenderer:
         deadline: float,
         control: ExecutionControl | None = None,
     ) -> RenderedReport:
-        """Render prepared report into deterministic validated PDF bytes."""
-        if monotonic() >= deadline:
-            raise TimeoutError("report_render_timeout")
-        if control:
-            control.checkpoint()
-
-        register_dejavu_fonts(prepared.font_assets)
-        font_body = _safe_font("DejaVuSans", "Helvetica")
-        font_bold = _safe_font("DejaVuSans-Bold", "Helvetica-Bold")
-
-        spec = prepared.spec
-        buffer = io.BytesIO()
-
-        # Page geometry: A4 (595.27 x 841.89 points) with 36pt margins
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=A4,
-            leftMargin=36,
-            rightMargin=36,
-            topMargin=36,
-            bottomMargin=36,
-            title="Architecture Analysis Report",
-            author="StackSense Platform",
-        )
-
-        styles = getSampleStyleSheet()
-        title_style = ParagraphStyle(
-            "ReportTitle",
-            parent=styles["Title"],
-            fontName=font_bold,
-            fontSize=22,
-            leading=26,
-            textColor=colors.HexColor("#1A202C"),
-            alignment=0,
-        )
-        h1_style = ParagraphStyle(
-            "ReportH1",
-            parent=styles["Heading1"],
-            fontName=font_bold,
-            fontSize=14,
-            leading=18,
-            textColor=colors.HexColor("#2D3748"),
-            spaceBefore=14,
-            spaceAfter=8,
-            keepWithNext=True,
-        )
-        h2_style = ParagraphStyle(
-            "ReportH2",
-            parent=styles["Heading2"],
-            fontName=font_bold,
-            fontSize=11,
-            leading=15,
-            textColor=colors.HexColor("#4A5568"),
-            spaceBefore=10,
-            spaceAfter=6,
-            keepWithNext=True,
-        )
-        body_style = ParagraphStyle(
-            "ReportBody",
-            parent=styles["Normal"],
-            fontName=font_body,
-            fontSize=9,
-            leading=12,
-            textColor=colors.HexColor("#2D3748"),
-        )
-        caption_style = ParagraphStyle(
-            "ReportCaption",
-            parent=styles["Italic"],
-            fontName=font_body,
-            fontSize=8,
-            leading=10,
-            textColor=colors.HexColor("#718096"),
-            alignment=1,
-        )
-
-        story: list[Any] = []
-
-        # ==========================================
-        # SECTION 1: METADATA & COVER
-        # ==========================================
-        story.append(Paragraph("StackSense Architecture Analysis Report", title_style))
-        story.append(Spacer(1, 10))
-        story.append(
-            Paragraph(
-                f"Report Type: <b>{spec.metadata.report_type}</b> &nbsp;|&nbsp; "
-                f"Schema: <b>C4 v{spec.metadata.c4_version}</b> &nbsp;|&nbsp; "
-                f"Mode: <b>{spec.metadata.deterministic_mode}</b>",
-                body_style,
-            )
-        )
-        story.append(Spacer(1, 15))
-
-        scope = spec.metadata.scope
-        meta_table_data = [
-            ["Report ID", str(spec.metadata.report_id)],
-            ["Architecture Version ID", str(scope.architecture_version_id)],
-            ["Analysis ID", str(scope.analysis_id)],
-            ["Project ID", str(scope.project_id)],
-            ["Repository ID", str(scope.repository_id)],
-            [
-                "Captured At (UTC)",
-                spec.metadata.captured_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
-            ],
-            [
-                "Canonical Model Digest",
-                scope.canonical_digest[:16] + "..." + scope.canonical_digest[-16:],
-            ],
-            [
-                "Snapshot Digest",
-                spec.metadata.source_snapshot_digest[:16]
-                + "..."
-                + spec.metadata.source_snapshot_digest[-16:],
-            ],
-            ["Renderer Profile", f"{prepared.renderer_profile_digest[:16]}..."],
-        ]
-        meta_table = Table(
-            [
-                [
-                    Paragraph(f"<b>{c[0]}</b>", body_style),
-                    Paragraph(str(c[1]), body_style),
-                ]
-                for c in meta_table_data
-            ],
-            colWidths=[180, 343],
-        )
-        meta_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F7FAFC")),
-                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#EDF2F7")),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ]
-            )
-        )
-        story.append(meta_table)
-        story.append(Spacer(1, 20))
-
-        # ==========================================
-        # SECTION 2: INVENTORY & BOUNDARIES
-        # ==========================================
-        story.append(PageBreak())
-        story.append(Paragraph("1. Architecture Inventory & Boundaries", h1_style))
-        story.append(Spacer(1, 8))
-
-        inv_sec = next(s for s in spec.sections if isinstance(s, InventorySection))
-        story.append(Paragraph("<b>Canonical Entities by Kind:</b>", h2_style))
-        if inv_sec.counts_by_kind:
-            kind_table_data = [["Kind", "Count"]] + [
-                [k, str(v)] for k, v in inv_sec.counts_by_kind
-            ]
-            t = Table(kind_table_data, colWidths=[260, 263])
-            t.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EDF2F7")),
-                        ("FONTNAME", (0, 0), (-1, 0), font_bold),
-                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
-                        ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ]
-                )
-            )
-            story.append(t)
-        else:
-            story.append(
-                Paragraph("<i>No canonical entities recorded.</i>", body_style)
-            )
-        story.append(Spacer(1, 10))
-
-        story.append(
-            Paragraph("<b>Selected Boundary Architecture Elements:</b>", h2_style)
-        )
-        if inv_sec.selected_entities:
-            ent_rows = [["Logical Identifier", "Kind"]] + [
-                [e.logical_id or str(e.artifact_id), e.source_record_type or "entity"]
-                for e in inv_sec.selected_entities[:15]
-            ]
-            t_ent = Table(ent_rows, colWidths=[380, 143])
-            t_ent.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EDF2F7")),
-                        ("FONTNAME", (0, 0), (-1, 0), font_bold),
-                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
-                        ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ]
-                )
-            )
-            story.append(t_ent)
-        else:
-            story.append(Paragraph("<i>No boundary entities selected.</i>", body_style))
-        story.append(Spacer(1, 10))
-
-        # ==========================================
-        # SECTION 3: ARCHITECTURE DIAGRAMS
-        # ==========================================
-        story.append(PageBreak())
-        story.append(
-            Paragraph("2. Architecture Diagrams (Option 3 Embedded)", h1_style)
-        )
-        story.append(Spacer(1, 8))
-
-        diag_sec = next(s for s in spec.sections if isinstance(s, DiagramsSection))
-        diagram_inputs_map = {d.template: d for d in diag_sec.diagram_inputs}
-
-        for placement in diag_sec.placements:
+        def checkpoint() -> None:
             if control:
                 control.checkpoint()
-            diag_input = diagram_inputs_map.get(placement.template)
-            if diag_input:
-                d_drawing = self._render_diagram_drawing(
-                    diag_input, placement, font_body, font_bold
+            if monotonic() >= deadline:
+                raise TimeoutError("report_timeout")
+
+        checkpoint()
+        prepared = PreparedReport.model_validate(prepared)
+        spec = ReportSpec.model_validate(prepared.spec)
+        ReportValidator(self.limits).validate(spec)
+        register_dejavu_fonts(prepared.font_assets)
+        out = io.BytesIO()
+        c = DeterministicCanvas(out, pagesize=A4)
+        c.setTitle("StackSense Architecture Analysis Report")
+        c.setAuthor("StackSense")
+        c.setSubject("C4:" + spec.report_spec_digest)
+        style = ParagraphStyle(
+            "body",
+            fontName="DejaVuSans",
+            fontSize=9,
+            leading=12,
+            splitLongWords=True,
+            spaceAfter=6,
+        )
+        y = A4[1] - 36
+        page_count = 1
+
+        def text(value: object) -> str:
+            raw = str(value)
+            if len(raw.encode("utf-8")) > self.limits.max_text_field_bytes:
+                raise ReportContractError("report_limit_exceeded")
+            cmap = pdfmetrics.getFont("DejaVuSans").face.charWidths
+            displayed = []
+            for char in raw:
+                n = ord(char)
+                supported = (
+                    (32 <= n <= 0x24F or 0x300 <= n <= 0x52F)
+                    and n in cmap
+                    and unicodedata.bidirectional(char)
+                    not in {
+                        "R",
+                        "AL",
+                        "RLE",
+                        "RLO",
+                        "LRE",
+                        "LRO",
+                        "PDF",
+                        "RLI",
+                        "LRI",
+                        "FSI",
+                        "PDI",
+                    }
                 )
-                story.append(d_drawing)
-                story.append(Spacer(1, 4))
-                story.append(Paragraph(placement.caption, caption_style))
-                story.append(Spacer(1, 14))
-
-        # ==========================================
-        # SECTION 4: AUTHORITATIVE DIAGNOSTICS
-        # ==========================================
-        story.append(PageBreak())
-        story.append(Paragraph("3. Authoritative Analysis Diagnostics", h1_style))
-        story.append(Spacer(1, 8))
-
-        diag_sec_record = next(
-            s for s in spec.sections if isinstance(s, DiagnosticsSection)
-        )
-        if diag_sec_record.diagnostics:
-            diag_rows = [["Severity", "Code", "Stage", "Path / Scope", "Message"]]
-            for d in diag_sec_record.diagnostics[:30]:
-                msg = d.message[:80] + "..." if len(d.message) > 80 else d.message
-                loc = d.path or d.scope
-                diag_rows.append(
-                    [
-                        d.severity.upper(),
-                        d.code,
-                        d.stage,
-                        loc or "-",
-                        msg,
-                    ]
+                displayed.append(
+                    char if supported or char in "\n\t" else f"[U+{n:04X}]"
                 )
-            t_diag = Table(
-                [[Paragraph(c, body_style) for c in row] for row in diag_rows],
-                colWidths=[65, 95, 75, 110, 178],
+            return (
+                escape("".join(displayed)).replace("\n", "<br/>").replace("\t", "    ")
             )
-            t_diag.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EDF2F7")),
-                        ("FONTNAME", (0, 0), (-1, 0), font_bold),
-                        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("TOPPADDING", (0, 0), (-1, -1), 4),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                    ]
+
+        def new_page(size: tuple[float, float] = A4) -> None:
+            nonlocal y, page_count
+            checkpoint()
+            c.setFont("DejaVuSans", 8)
+            c.drawString(36, 20, f"StackSense | {page_count}")
+            c.showPage()
+            page_count += 1
+            if page_count > self.limits.max_pdf_pages:
+                raise ReportContractError("report_limit_exceeded")
+            c.setPageSize(size)
+            y = size[1] - 36
+
+        def paragraph(value: object, heading: bool = False) -> None:
+            nonlocal y
+            checkpoint()
+            s = (
+                ParagraphStyle(
+                    "heading",
+                    parent=style,
+                    fontName="DejaVuSans-Bold",
+                    fontSize=14,
+                    leading=18,
                 )
+                if heading
+                else style
             )
-            story.append(t_diag)
-        else:
-            story.append(Paragraph(diag_sec_record.empty_disclaimer, body_style))
-        story.append(Spacer(1, 15))
+            pending = [Paragraph(text(value), s)]
+            while pending:
+                checkpoint()
+                p = pending.pop(0)
+                _, h = p.wrap(A4[0] - 72, A4[1] - 72)
+                if h > y - 36:
+                    parts = p.split(A4[0] - 72, max(0, y - 36))
+                    if not parts:
+                        new_page()
+                        pending.insert(0, p)
+                        continue
+                    first, *rest = parts
+                    _, used = first.wrap(A4[0] - 72, y - 36)
+                    first.drawOn(c, 36, y - used)
+                    new_page()
+                    pending = rest + pending
+                else:
+                    p.drawOn(c, 36, y - h)
+                    y -= h + 6
 
-        # ==========================================
-        # SECTION 5: COVERAGE & LIMITATIONS
-        # ==========================================
-        story.append(PageBreak())
-        story.append(Paragraph("4. Coverage, Uncertainty & Limitations", h1_style))
-        story.append(Spacer(1, 8))
+        def section(title: str, key: str, first: bool = False) -> None:
+            if not first:
+                new_page()
+            c.bookmarkPage(key)
+            c.addOutlineEntry(title, key, level=0)
+            paragraph(title, True)
 
-        cov_sec = next(s for s in spec.sections if isinstance(s, CoverageSection))
-        cov = cov_sec.coverage
-        cov_data = [
-            ["Metric", "Value"],
-            ["Total Canonical Entities", str(cov.total_entities)],
-            ["Total Canonical Relationships", str(cov.total_relationships)],
-            ["Total Evidence Records", str(cov.total_evidence)],
-            ["Unresolved References", str(cov.total_unresolved)],
-            ["Model Conflicts", str(cov.total_conflicts)],
-            ["Analysis Status", cov.analysis_status],
-            ["Selected Inventory Count", str(cov.selected_inventory_count)],
-            ["Omitted Inventory Count", str(cov.omitted_inventory_count)],
-            ["Authoritative Diagnostics Total", str(cov.selected_diagnostic_count)],
-        ]
-        t_cov = Table(cov_data, colWidths=[260, 263])
-        t_cov.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EDF2F7")),
-                    ("FONTNAME", (0, 0), (-1, 0), font_bold),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ]
+        def fields(value: Any) -> str:
+            def compact(item: Any) -> str:
+                if isinstance(item, tuple):
+                    return " / ".join(compact(value) for value in item)
+                if isinstance(item, dict):
+                    return ", ".join(
+                        f"{key.replace('_', ' ')}={compact(value)}"
+                        for key, value in item.items()
+                    )
+                return str(item)
+
+            return "; ".join(
+                f"{key.replace('_', ' ')}: {compact(item)}"
+                for key, item in value.model_dump(
+                    mode="python", exclude_none=True
+                ).items()
             )
-        )
-        story.append(t_cov)
-        story.append(Spacer(1, 12))
-        story.append(
-            Paragraph(
-                "<b>Operational Limitations:</b><br/>"
-                "• Deterministic static inspection: facts represent verified "
-                "source-code structure without runtime profiling.<br/>"
-                "• Strict four-diagram barrier: report incorporates immutable "
-                "diagram generations pinned at barrier time.<br/>"
-                "• Security boundary: source credentials and raw host paths "
-                "are redacted from export representations.",
-                body_style,
-            )
-        )
-        story.append(Spacer(1, 15))
 
-        # ==========================================
-        # SECTION 6: PROVENANCE & APPENDIX
-        # ==========================================
-        story.append(PageBreak())
-        story.append(Paragraph("5. Provenance, Licenses & Appendix", h1_style))
-        story.append(Spacer(1, 8))
+        def source_ref(value: ReportSourceRef) -> str:
+            data = value.model_dump(mode="python", exclude_none=True)
+            location = data.get("path", "not recorded")
+            if data.get("line") is not None:
+                location += f":{data['line']}"
+            parts = [
+                str(data.get("source_kind", "source")),
+                str(data.get("source_record_type", "record")),
+            ]
+            if data.get("logical_id"):
+                parts.append(f"logical ID {data['logical_id']}")
+            if data.get("source_fact_key"):
+                parts.append(f"fact {data['source_fact_key']}")
+            parts.append(f"location {location}")
+            return " | ".join(parts)
 
-        prov_sec = next(s for s in spec.sections if isinstance(s, ProvenanceSection))
-        prov_data = [
-            ["Item", "Details"],
-            ["Report Spec Digest", spec.report_spec_digest[:32] + "..."],
-            ["Source Snapshot Digest", prov_sec.source_snapshot_digest[:32] + "..."],
-            ["Selection Policy", prov_sec.selection_policy],
-            ["Font Licenses", ", ".join(prov_sec.font_licenses)],
-        ]
-        for receipt in prov_sec.diagram_receipts:
-            tpl = receipt.accepted.reference.binding.slot.template or "diagram"
-            prov_data.append([f"Receipt: {tpl}", str(receipt.receipt_id)])
+        def counts(values: tuple[tuple[str, int], ...]) -> str:
+            return "; ".join(f"{kind}: {count}" for kind, count in values)
 
-        t_prov = Table(
-            [
-                [Paragraph(f"<b>{r[0]}</b>", body_style), Paragraph(r[1], body_style)]
-                for r in prov_data
-            ],
-            colWidths=[180, 343],
+        section("StackSense Architecture Analysis Report", "metadata", True)
+        paragraph(
+            "Deterministic static report — not runtime verification "
+            "or a security assessment."
         )
-        t_prov.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F7FAFC")),
-                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#EDF2F7")),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ]
+        paragraph(f"Report ID: {spec.metadata.report_id}")
+        paragraph(f"Captured at: {spec.metadata.captured_at.isoformat()}")
+        paragraph(
+            "Repository display: "
+            + (
+                f"{spec.metadata.project_name or 'unavailable'} / "
+                f"{spec.metadata.repository_name or 'unavailable'}"
+                if spec.metadata.display_names_available
+                else "unavailable in the immutable source snapshot"
             )
         )
-        story.append(t_prov)
-
-        # Build document with deterministic canvas
-        doc.build(story, canvasmaker=DeterministicCanvas)
-        pdf_bytes = buffer.getvalue()
-
-        # Validate with pypdf
-        page_count = self._validate_rendered_pdf(pdf_bytes, spec)
-
-        pdf_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
+        paragraph(f"Revision: {spec.metadata.revision_sha or 'unavailable'}")
+        paragraph(f"Source snapshot digest: {spec.metadata.source_snapshot_digest}")
+        paragraph("Exact source scope", True)
+        for key, value in spec.metadata.scope.model_dump(mode="python").items():
+            paragraph(f"{key.replace('_',' ')}: {value}")
+        paragraph("Producer profile: " + fields(spec.metadata.profile.profile))
+        section("1. Architecture Inventory & Boundaries", "inventory")
+        inv = next(s for s in spec.sections if isinstance(s, InventorySection))
+        paragraph(f"Counts by kind: {counts(inv.counts_by_kind)}")
+        paragraph(f"Counts by status: {counts(inv.counts_by_status)}")
+        paragraph(
+            "Relationship counts by kind: " + counts(inv.relationship_counts_by_kind)
+        )
+        paragraph(f"Selected: {inv.selected_count}; omitted: {inv.omitted_count}")
+        for ref in (*inv.selected_entities, *inv.selected_relationships):
+            paragraph(source_ref(ref))
+        diagrams = next(s for s in spec.sections if isinstance(s, DiagramsSection))
+        inputs = {d.template: d for d in spec.diagram_inputs}
+        pages = sorted({p.page_index for p in diagrams.placements})
+        for index in pages:
+            placements = [p for p in diagrams.placements if p.page_index == index]
+            size = landscape(A4) if placements[0].slot_id == "full_landscape" else A4
+            new_page(size)
+            if index == pages[0]:
+                c.bookmarkPage("diagrams")
+                c.addOutlineEntry("2. Architecture Diagrams", "diagrams", level=0)
+            c.setFont("DejaVuSans-Bold", 12)
+            c.drawString(36, size[1] - 30, "2. Architecture Diagrams")
+            for p in placements:
+                checkpoint()
+                d = inputs[p.template]
+                x0, y0, x1, y1 = (v / 1000 for v in p.clip_rect)
+                c.setFont("DejaVuSans", 8)
+                title = p.caption + (
+                    f" — tile {p.tile_row},{p.tile_column}"
+                    if p.tile_row is not None
+                    else ""
+                )
+                c.drawString(x0, y1 + 10, title)
+                c.saveState()
+                clip = c.beginPath()
+                clip.rect(x0, y0, x1 - x0, y1 - y0)
+                c.clipPath(clip, stroke=0)
+                scale = p.scale_numerator / p.scale_denominator / 1000
+                c.transform(
+                    scale,
+                    0,
+                    0,
+                    -scale,
+                    p.translation_mpt_x / 1000,
+                    y1 + (p.translation_mpt_y - p.clip_rect[1]) / 1000,
+                )
+                c.addLiteral(f"/SS_{d.template.value} BMC")
+                self._draw_vectors(c, d.prepared_diagram.layout, checkpoint)
+                c.addLiteral("EMC")
+                c.restoreState()
+                caption = Paragraph(
+                    text(
+                        f"View: {d.coverage.view_state}; exact generation: "
+                        f"{d.receipt.accepted.reference.generation_id}"
+                    ),
+                    ParagraphStyle(
+                        "caption", fontName="DejaVuSans", fontSize=7, leading=9
+                    ),
+                )
+                _, caption_height = caption.wrap(x1 - x0, 50)
+                caption.drawOn(c, x0, y0 - 8 - caption_height)
+        section("3. Authoritative Analysis Diagnostics", "diagnostics")
+        ds = next(s for s in spec.sections if isinstance(s, DiagnosticsSection))
+        if not ds.diagnostics:
+            paragraph(ds.empty_disclaimer)
+        for diagnostic in ds.diagnostics:
+            paragraph(
+                f"{diagnostic.severity.upper()} | {diagnostic.code} | "
+                f"{diagnostic.stage}",
+                False,
+            )
+            paragraph(
+                diagnostic.message
+                if diagnostic.withheld_reason is None
+                else f"Message withheld: {diagnostic.withheld_reason}"
+            )
+            paragraph(
+                f"ID {diagnostic.diagnostic_id} | "
+                f"category {diagnostic.category} | scope {diagnostic.scope}"
+            )
+            paragraph(
+                f"Created {diagnostic.created_at.isoformat()} | "
+                f"retryability {diagnostic.retryability}"
+            )
+            paragraph("Source: " + source_ref(diagnostic.source_ref))
+            for evidence in diagnostic.evidence_refs:
+                paragraph("Evidence: " + source_ref(evidence))
+        section("4. Coverage, Uncertainty & Limitations", "coverage")
+        cv = next(s for s in spec.sections if isinstance(s, CoverageSection))
+        paragraph(f"Entities: {cv.coverage.total_entities}")
+        paragraph(f"Relationships: {cv.coverage.total_relationships}")
+        paragraph(f"Evidence records: {cv.coverage.total_evidence}")
+        paragraph(f"Unresolved findings: {cv.coverage.total_unresolved}")
+        paragraph(f"Conflicts: {cv.coverage.total_conflicts}")
+        paragraph(f"Analysis status: {cv.coverage.analysis_status}")
+        if cv.coverage.persisted_coverage is not None:
+            persisted = cv.coverage.persisted_coverage
+            paragraph(
+                "File coverage: "
+                f"analyzed {persisted.analyzed_files_count}; "
+                f"unsupported {persisted.unsupported_files_count}; "
+                f"failed {persisted.failed_files_count}; "
+                f"excluded {persisted.excluded_files_count}; "
+                f"partial {persisted.is_partial}"
+            )
+        paragraph(
+            "Report selection: "
+            f"inventory {cv.coverage.selected_inventory_count} selected / "
+            f"{cv.coverage.omitted_inventory_count} omitted; "
+            f"diagnostics {cv.coverage.selected_diagnostic_count} selected / "
+            f"{cv.coverage.omitted_diagnostic_count} omitted; "
+            f"source references {cv.coverage.selected_reference_count} selected / "
+            f"{cv.coverage.omitted_reference_count} omitted."
+        )
+        if cv.coverage.limitation_codes:
+            paragraph(
+                "Recorded limitations: " + ", ".join(cv.coverage.limitation_codes)
+            )
+        paragraph(
+            "UNKNOWN and unavailable values are not zero or complete. "
+            "Findings retain canonical uncertainty and conflict; static source "
+            "references do not prove runtime behavior."
+        )
+        paragraph(
+            "Unsupported glyphs/scripts are visibly escaped as [U+XXXX]; "
+            "original Unicode remains in the immutable specification."
+        )
+        for d in spec.diagram_inputs:
+            paragraph(d.template.value, True)
+            paragraph(
+                f"View {d.coverage.view_state}; "
+                f"source partial {d.coverage.source_partial}; "
+                f"selection bounded {d.coverage.selection_bounded}; "
+                f"scan exhausted {d.coverage.scan_exhausted}"
+            )
+            paragraph("Source completeness: " + fields(d.coverage.source_completeness))
+            for count in d.coverage.counts:
+                paragraph(fields(count))
+            paragraph("Coverage reasons: " + ", ".join(d.coverage.reasons))
+            for item in d.prepared_diagram.spec.legend:
+                paragraph("Legend: " + fields(item))
+            for limitation in d.prepared_diagram.layout.limitations:
+                paragraph(limitation)
+        section("5. Provenance, Licenses & Appendix", "provenance")
+        pr = next(s for s in spec.sections if isinstance(s, ProvenanceSection))
+        paragraph("Report spec digest: " + spec.report_spec_digest)
+        paragraph("Source snapshot digest: " + pr.source_snapshot_digest)
+        paragraph("Selection policy: " + pr.selection_policy)
+        paragraph("Font licenses: " + ", ".join(pr.font_licenses))
+        for receipt in pr.diagram_receipts:
+            diagram_ref = receipt.accepted.reference
+            paragraph(str(diagram_ref.binding.slot.template), True)
+            paragraph(
+                f"Receipt: {receipt.receipt_id}; same exact source scope as the "
+                "cover (validated)"
+            )
+            for key in (
+                "resource_id",
+                "generation_id",
+                "artifact_id",
+                "candidate_id",
+                "input_fingerprint",
+                "size_bytes",
+            ):
+                paragraph(f"{key.replace('_',' ')}: {getattr(diagram_ref,key)}")
+            paragraph("Digests: " + fields(diagram_ref.digests))
+            paragraph("Profile: " + fields(diagram_ref.binding.profile))
+        for provenance_ref in pr.source_refs:
+            paragraph(source_ref(provenance_ref))
+        paragraph("Bundled font-license notice digest", True)
+        paragraph(
+            "The immutable C4 input records the complete bundled license notice. "
+            "Its SHA-256 is "
+            + hashlib.sha256(pr.font_license_notice.encode("utf-8")).hexdigest()
+            + "."
+        )
+        c.setFont("DejaVuSans", 8)
+        c.drawString(36, 20, f"StackSense | {page_count}")
+        checkpoint()
+        c.save()
+        data = out.getvalue()
+        checkpoint()
+        pages_count = self._validate_rendered_pdf(data, spec)
         return RenderedReport(
-            media_type="application/pdf",
-            pdf_bytes=pdf_bytes,
-            sha256=pdf_sha256,
-            size_bytes=len(pdf_bytes),
-            page_count=page_count,
+            pdf_bytes=data,
+            sha256=hashlib.sha256(data).hexdigest(),
+            size_bytes=len(data),
+            page_count=pages_count,
             report_spec_digest=spec.report_spec_digest,
             renderer_profile_digest=prepared.renderer_profile_digest,
             validation_version="1.0.0",
         )
 
-    def _render_diagram_drawing(
-        self,
-        diag: ReportDiagramInput,
-        placement: ReportDiagramPlacement,
-        font_body: str,
-        font_bold: str,
-    ) -> Drawing:
-        """Render C2 layout boxes, routes, and labels into a ReportLab Drawing."""
-        width_pt = 523.0
-        height_pt = 260.0 if "compact" in placement.slot_id else 450.0
-
-        drawing = Drawing(width_pt, height_pt)
-        # Background box
-        drawing.add(
-            Rect(
-                0,
-                0,
-                width_pt,
-                height_pt,
-                fillColor=colors.HexColor("#FAFAFA"),
-                strokeColor=colors.HexColor("#E2E8F0"),
-                strokeWidth=0.5,
-                rx=3,
-                ry=3,
-            )
-        )
-
-        layout = diag.prepared_diagram.layout
-        bounds = layout.bounds
-        src_w = (
-            max(100.0, float(bounds.width) / 1000.0)
-            if hasattr(bounds, "width")
-            else 600.0
-        )
-        src_h = (
-            max(100.0, float(bounds.height) / 1000.0)
-            if hasattr(bounds, "height")
-            else 400.0
-        )
-
-        scale_x = (width_pt - 40.0) / src_w
-        scale_y = (height_pt - 40.0) / src_h
-        scale = min(scale_x, scale_y)
-
-        # Draw Title inside drawing
-        drawing.add(
-            String(
-                12,
-                height_pt - 18,
-                f"{diag.template.value.replace('_', ' ').title()} View",
-                fontName=font_bold,
-                fontSize=9,
-                fillColor=colors.HexColor("#2D3748"),
-            )
-        )
-
-        group = Group()
-        group.translate(20, 20)
-
-        # Draw Nodes
-        nodes = getattr(layout, "nodes", ())
-        for node in nodes:
-            x_mcss = float(getattr(node, "x", 0)) / 1000.0
-            y_mcss = float(getattr(node, "y", 0)) / 1000.0
-            w_mcss = float(getattr(node, "width", 80_000)) / 1000.0
-            h_mcss = float(getattr(node, "height", 30_000)) / 1000.0
-
-            # Transform into drawing coordinate space
-            x = x_mcss * scale
-            y = (src_h - (y_mcss + h_mcss)) * scale
-            w = w_mcss * scale
-            h = h_mcss * scale
-
-            group.add(
-                Rect(
-                    x,
-                    y,
-                    w,
-                    h,
-                    fillColor=colors.HexColor("#FFFFFF"),
-                    strokeColor=colors.HexColor("#4A5568"),
-                    strokeWidth=1,
-                    rx=2,
-                    ry=2,
-                )
-            )
-
-            label = getattr(node, "label", getattr(node, "id", "node"))
-            group.add(
-                String(
-                    x + 4,
-                    y + (h / 2) - 3,
-                    str(label)[:25],
-                    fontName=font_body,
-                    fontSize=max(6.0, 7.5 * scale),
-                    fillColor=colors.HexColor("#1A202C"),
-                )
-            )
-
-        # Draw Routes / Edges
-        routes = getattr(layout, "routes", ())
-        for route in routes:
-            points = getattr(route, "points", ())
-            for i in range(len(points) - 1):
-                p1, p2 = points[i], points[i + 1]
-                x1 = (float(p1[0]) / 1000.0) * scale
-                y1 = (src_h - (float(p1[1]) / 1000.0)) * scale
-                x2 = (float(p2[0]) / 1000.0) * scale
-                y2 = (src_h - (float(p2[1]) / 1000.0)) * scale
-                group.add(
-                    Line(
-                        x1,
-                        y1,
-                        x2,
-                        y2,
-                        strokeColor=colors.HexColor("#718096"),
-                        strokeWidth=0.8,
-                    )
-                )
-
-        # Empty view indication if zero nodes
-        if not nodes:
-            group.add(
-                String(
-                    src_w * scale / 3,
-                    src_h * scale / 2,
-                    f"Authoritative Empty View: {diag.template.value}",
-                    fontName=font_body,
-                    fontSize=8,
-                    fillColor=colors.HexColor("#A0AEC0"),
-                )
-            )
-
-        drawing.add(group)
-        return drawing
+    @staticmethod
+    def _draw_vectors(c: Any, layout: Any, checkpoint: Any) -> None:
+        c.setLineWidth(1000)
+        for item in (*layout.groups, *layout.nodes):
+            checkpoint()
+            b = item.box
+            c.setFillColorRGB(0.94, 0.97, 0.99)
+            c.setStrokeColorRGB(0.1, 0.3, 0.45)
+            c.rect(b.x, b.y, b.width, b.height, stroke=1, fill=1)
+        c.setStrokeColorRGB(0.1, 0.4, 0.65)
+        for route in layout.routes:
+            checkpoint()
+            for s in route.sections:
+                points = (s.start, *s.bends, s.end)
+                path = c.beginPath()
+                path.moveTo(points[0].x, points[0].y)
+                for p in points[1:]:
+                    path.lineTo(p.x, p.y)
+                c.drawPath(path, stroke=1, fill=0)
+                p, q = points[-2:]
+                dx, dy = q.x - p.x, q.y - p.y
+                scale = max(abs(dx), abs(dy), 1)
+                ux, uy = dx * 6000 // scale, dy * 6000 // scale
+                path = c.beginPath()
+                path.moveTo(q.x - ux - uy // 2, q.y - uy + ux // 2)
+                path.lineTo(q.x, q.y)
+                path.lineTo(q.x - ux + uy // 2, q.y - uy - ux // 2)
+                c.drawPath(path, stroke=1, fill=0)
+        glyphs = {g.id: g for g in layout.glyphs}
+        c.setFillColorRGB(0.05, 0.08, 0.12)
+        for label in layout.labels:
+            checkpoint()
+            for place in label.glyphs:
+                c.saveState()
+                c.translate(place.origin.x, place.origin.y)
+                path = c.beginPath()
+                current = (0.0, 0.0)
+                for command in glyphs[place.glyph_id].commands:
+                    o = command.operands
+                    if command.command == "M":
+                        path.moveTo(*o)
+                        current = (float(o[0]), float(o[1]))
+                    elif command.command == "L":
+                        path.lineTo(*o)
+                        current = (float(o[0]), float(o[1]))
+                    elif command.command == "C":
+                        path.curveTo(*o)
+                        current = (float(o[-2]), float(o[-1]))
+                    elif command.command == "Q":
+                        x, y = current
+                        cx, cy, ex, ey = o
+                        path.curveTo(
+                            x + 2 * (cx - x) / 3,
+                            y + 2 * (cy - y) / 3,
+                            ex + 2 * (cx - ex) / 3,
+                            ey + 2 * (cy - ey) / 3,
+                            ex,
+                            ey,
+                        )
+                        current = (float(ex), float(ey))
+                    else:
+                        path.close()
+                c.drawPath(path, stroke=0, fill=1)
+                c.restoreState()
 
     def _validate_rendered_pdf(self, pdf_bytes: bytes, spec: ReportSpec) -> int:
-        """Validate rendered PDF byte structure using pypdf 7.1.1 per §15.5.5."""
-        if not pdf_bytes.startswith(b"%PDF-"):
-            raise ReportContractError("Rendered bytes lack valid PDF header")
-        if b"%%EOF" not in pdf_bytes[-1024:]:
-            raise ReportContractError("Rendered bytes lack valid %%EOF marker")
+        if len(pdf_bytes) > self.limits.max_pdf_bytes:
+            raise ReportContractError("report_limit_exceeded")
+        if not pdf_bytes.startswith(b"%PDF-") or b"%%EOF" not in pdf_bytes[-1024:]:
+            raise ReportContractError("report_integrity_error")
+        reader = PdfReader(io.BytesIO(pdf_bytes), strict=True)
+        if (
+            reader.is_encrypted
+            or not 1 <= len(reader.pages) <= self.limits.max_pdf_pages
+        ):
+            raise ReportContractError("report_integrity_error")
+        forbidden = {
+            "/JavaScript",
+            "/JS",
+            "/OpenAction",
+            "/AA",
+            "/EmbeddedFiles",
+            "/Filespec",
+            "/URI",
+            "/Launch",
+            "/GoToR",
+            "/RichMedia",
+            "/XFA",
+        }
+        seen: set[tuple[int, int]] = set()
+        visited = stream_bytes = 0
 
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        if reader.is_encrypted:
-            raise ReportContractError("Rendered report PDF must not be encrypted")
+        def visit(value: Any) -> None:
+            nonlocal visited, stream_bytes
+            visited += 1
+            if visited > 200000:
+                raise ReportContractError("report_limit_exceeded")
+            if isinstance(value, IndirectObject):
+                key = (value.idnum, value.generation)
+                if key in seen:
+                    return
+                seen.add(key)
+                visit(value.get_object())
+                return
+            if isinstance(value, dict):
+                if (
+                    forbidden.intersection(str(k) for k in value)
+                    or str(value.get("/S")) in forbidden
+                ):
+                    raise ReportContractError("report_integrity_error")
+                if isinstance(value, StreamObject):
+                    stream_bytes += len(value.get_data())
+                    if stream_bytes > self.limits.max_staged_bytes:
+                        raise ReportContractError("report_limit_exceeded")
+                for child in value.values():
+                    visit(child)
+            elif isinstance(value, (list, tuple)):
+                for child in value:
+                    visit(child)
 
-        page_count = len(reader.pages)
-        if page_count < 1:
-            raise ReportContractError("Rendered PDF contains 0 pages")
-
-        # Security check: inspect root trailer catalog for prohibited actions
-        trailer = getattr(reader, "trailer", None) or {}
-        catalog = trailer.get("/Root", {}) if isinstance(trailer, dict) else {}
-        if isinstance(catalog, dict):
-            if "/JavaScript" in catalog:
-                raise ReportContractError(
-                    "Prohibited /JavaScript action found in PDF catalog"
-                )
-            if "/OpenAction" in catalog:
-                oa = catalog["/OpenAction"]
-                if isinstance(oa, dict) and oa.get("/S") in ("/JavaScript", "/Launch"):
-                    raise ReportContractError(
-                        f"Prohibited /OpenAction {oa.get('/S')} found"
-                    )
-
-        return page_count
+        visit(reader.trailer)
+        if (
+            reader.metadata is None
+            or reader.metadata.get("/Subject") != "C4:" + spec.report_spec_digest
+        ):
+            raise ReportContractError("report_integrity_error")
+        for page in reader.pages:
+            dims = sorted(
+                (round(float(page.mediabox.width)), round(float(page.mediabox.height)))
+            )
+            if dims != sorted(round(v) for v in A4):
+                raise ReportContractError("report_integrity_error")
+        expected = {
+            "/SS_" + d.template.value: d.prepared_diagram.layout
+            for d in spec.diagram_inputs
+        }
+        observed: Counter[str] = Counter()
+        section = spec.sections[2]
+        assert isinstance(section, DiagramsSection)
+        wanted = Counter("/SS_" + p.template.value for p in section.placements)
+        for page in reader.pages:
+            current: str | None = None
+            operators: Counter[bytes] = Counter()
+            rectangles: list[tuple[int, ...]] = []
+            for operands, operator in ContentStream(
+                page.get_contents(), reader
+            ).operations:
+                if operator == b"BMC":
+                    current = str(operands[0])
+                    operators = Counter()
+                    rectangles = []
+                elif operator == b"EMC" and current is not None:
+                    if current not in expected:
+                        raise ReportContractError("report_integrity_error")
+                    layout = expected[current]
+                    boxes = [
+                        (n.box.x, n.box.y, n.box.width, n.box.height)
+                        for n in (*layout.groups, *layout.nodes)
+                    ]
+                    if rectangles != boxes:
+                        raise ReportContractError("report vector rectangle mismatch")
+                    wanted_ops: Counter[bytes] = Counter()
+                    for route in layout.routes:
+                        for route_section in route.sections:
+                            wanted_ops[b"m"] += 2
+                            wanted_ops[b"l"] += len(route_section.bends) + 3
+                    glyphs = {g.id: g for g in layout.glyphs}
+                    for label in layout.labels:
+                        for place in label.glyphs:
+                            for command in glyphs[place.glyph_id].commands:
+                                wanted_ops[
+                                    {
+                                        "M": b"m",
+                                        "L": b"l",
+                                        "Q": b"c",
+                                        "C": b"c",
+                                        "Z": b"h",
+                                    }[command.command]
+                                ] += 1
+                    if any(operators[op] != count for op, count in wanted_ops.items()):
+                        raise ReportContractError("report vector path mismatch")
+                    observed[current] += 1
+                    current = None
+                elif current is not None:
+                    operators[operator] += 1
+                    if operator == b"re":
+                        rectangles.append(tuple(int(v) for v in operands))
+        if observed != wanted:
+            raise ReportContractError("report four-diagram embedding mismatch")
+        return len(reader.pages)

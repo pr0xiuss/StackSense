@@ -15,10 +15,11 @@ from datetime import UTC, datetime, timedelta
 from threading import Event, Thread
 from time import monotonic
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, event, func, select
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.platform.delivery.contracts import (
@@ -45,7 +46,6 @@ from backend.platform.reports.contracts import (
 )
 from backend.platform.reports.model import (
     c4_binding_digest,
-    c4_canonical_json,
     c4_report_resource_id,
 )
 from backend.platform.reports.persistence import (
@@ -77,7 +77,9 @@ def metadata_operation(deadline: float) -> Iterator[None]:
 
 
 @contextmanager
-def metadata_session(engine: Engine, seconds: int = 5) -> Iterator[Session]:
+def metadata_session(
+    engine: Engine, seconds: int = 5, *, read_only: bool = False
+) -> Iterator[Session]:
     deadline = min(_deadline.get() or float("inf"), monotonic() + seconds)
     if deadline <= monotonic() or (
         _deadline.get() is not None and deadline - monotonic() < 1
@@ -86,6 +88,10 @@ def metadata_session(engine: Engine, seconds: int = 5) -> Iterator[Session]:
     done, expired = Event(), Event()
 
     owned = engine.connect()
+    if read_only:
+        owned = owned.execution_options(
+            isolation_level="REPEATABLE READ", postgresql_readonly=True
+        )
     session = Session(owned)
 
     def cancel() -> None:
@@ -93,11 +99,21 @@ def metadata_session(engine: Engine, seconds: int = 5) -> Iterator[Session]:
             return
         expired.set()
         try:
-            owned.close()
+            driver = owned.connection.driver_connection
+            if driver is not None:
+                driver.cancel_safe(timeout=1)
         except Exception:
             pass
 
     watcher = Thread(target=cancel, daemon=True)
+    if engine.dialect.name == "postgresql":
+
+        @event.listens_for(session, "after_begin")
+        def bounded_transaction(s: Any, transaction: Any, connection: Any) -> None:
+            remaining = max(1, min(5000, int((deadline - monotonic()) * 1000)))
+            connection.exec_driver_sql(f"SET LOCAL statement_timeout={remaining}")
+            connection.exec_driver_sql("SET LOCAL lock_timeout=1000")
+
     watcher.start()
     try:
         yield session
@@ -168,6 +184,18 @@ def descriptor(row: Generation, resource: Resource) -> ReportArtifactDescriptor:
         ),
         size_bytes=row.manifest_size or 0,
     )
+    if (
+        resource.project_id != scope.project_id
+        or resource.architecture_version_id != scope.architecture_version_id
+        or row.project_id != scope.project_id
+        or row.architecture_version_id != scope.architecture_version_id
+        or row.resource_id != resource.id
+        or manifest.page_count != row.page_count
+    ):
+        raise ValueError("report_integrity_error")
+    pdf = next(m for m in manifest.members if m.member == "pdf")
+    if (pdf.sha256, pdf.size_bytes) != (row.pdf_sha256, row.pdf_size):
+        raise ValueError("report_integrity_error")
     return ReportArtifactDescriptor(manifest=manifest, reference=reference)
 
 
@@ -198,8 +226,19 @@ class ReportRepository:
                 captured_at=None,
                 accepted_generation_id=None,
             )
-            self.session.add(resource)
-            self.session.flush()
+            try:
+                with self.session.begin_nested():
+                    self.session.add(resource)
+                    self.session.flush()
+            except IntegrityError:
+                existing = self.session.get(Resource, rid)
+                if existing is None:
+                    raise
+                resource = existing
+        if resource.scope != scope.model_dump(
+            mode="json"
+        ) or resource.binding != binding.model_dump(mode="json"):
+            raise ValueError("report_integrity_error")
         return resource
 
     def capture_snapshot(
@@ -216,7 +255,7 @@ class ReportRepository:
             # Already captured
             return resource
 
-        snapshot_dict = json.loads(c4_canonical_json(snapshot))
+        snapshot_dict = json.loads(snapshot.model_dump_json())
         resource.captured_snapshot = snapshot_dict
         resource.source_snapshot_digest = snapshot.snapshot_digest
         resource.captured_at = snapshot.captured_at
@@ -235,6 +274,12 @@ class ReportRepository:
         input_fp = attempt.work.input_fingerprint
 
         resource = self.get_or_create_resource(scope, binding, input_fp)
+
+        prior = self.get_generation(resource.id, candidate_id)
+        if prior is not None:
+            if prior.attempt_snapshot != attempt.model_dump(mode="json"):
+                raise ValueError("report_integrity_error")
+            return prior
 
         gen = Generation(
             id=candidate_id,
@@ -277,6 +322,38 @@ class ReportRepository:
         manifest_dict = manifest.model_dump(mode="json")
         manifest_bytes = manifest.to_bytes()
         manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+        attempt = AttemptIdentity.model_validate_json(json.dumps(gen.attempt_snapshot))
+        for field, expected in {
+            "scope": attempt.work.scope,
+            "binding": attempt.work.binding,
+            "input_fingerprint": attempt.work.input_fingerprint,
+            "work_id": attempt.work.work_id,
+            "attempt_id": attempt.attempt_id,
+            "candidate_id": attempt.candidate_id,
+            "generation_id": gen.id,
+            "artifact_id": gen.artifact_id,
+            "fence_token": attempt.fence,
+            "epoch": attempt.dispatch_epoch,
+            "run_id": uuid5(attempt.attempt_id, f"run:{attempt.work.run_number}"),
+        }.items():
+            if getattr(manifest, field) != expected:
+                raise ValueError("report_integrity_error")
+        if (
+            seal_proof.get("manifest_sha256") != manifest_sha256
+            or seal_proof.get("pdf_sha256") != pdf_sha256
+            or seal_proof.get("verification_version") != "1.0.0"
+        ):
+            raise ValueError("report_integrity_error")
+        if (
+            hashlib.sha256(pdf_bytes).hexdigest() != pdf_sha256
+            or page_count != manifest.page_count
+        ):
+            raise ValueError("report_integrity_error")
+        expected_pdf = next(m for m in manifest.members if m.member == "pdf")
+        if expected_pdf.sha256 != pdf_sha256 or expected_pdf.size_bytes != len(
+            pdf_bytes
+        ):
+            raise ValueError("report_integrity_error")
 
         gen.manifest = manifest_dict
         gen.manifest_sha256 = manifest_sha256
@@ -367,8 +444,10 @@ class ReportRepository:
     ) -> bool:
         """Reserve a retired unaccepted generation for operator deletion."""
         gen = self.session.get(Generation, generation_id, with_for_update=True)
-        if gen is None or gen.state in ("ACCEPTED", "DELETING", "DELETED"):
+        if gen is None or gen.state in ("ACCEPTED", "DELETED"):
             return False
+        if gen.state == "DELETING":
+            return gen.deletion_actor == actor_id
 
         # Verify retirement using reader
         attempt_data = gen.attempt_snapshot
@@ -388,7 +467,9 @@ class ReportRepository:
             return False
 
         # Verify no active pins
-        pin_stmt = select(func.count(Pin.id)).where(Pin.generation_id == generation_id)
+        pin_stmt = select(func.count(Pin.id)).where(
+            Pin.generation_id == generation_id, Pin.expires_at > datetime.now(UTC)
+        )
         pin_count = self.session.scalar(pin_stmt) or 0
         if pin_count > 0:
             return False
@@ -428,6 +509,12 @@ class ReportPublicationPort(ProducerPublicationPort):
             or row.manifest_size != reference.size_bytes
         ):
             raise ValueError("report_digest_mismatch")
+
+        resource = self.session.scalar(select(Resource).where(Resource.id == rid))
+        if resource is None or descriptor(row, resource).reference != reference:
+            raise ValueError("report_integrity_error")
+        if row.attempt_snapshot != context.attempt.model_dump(mode="json"):
+            raise ValueError("report_integrity_error")
 
         return ReadyValidation(reference=reference)
 
@@ -504,7 +591,7 @@ class ReportDatabaseReadAuthority:
         limits: ReportLimits,
         *,
         actor_id: UUID | None = None,
-        purpose: str = "report",
+        purpose: str = "export",
     ) -> None:
         self.engine = engine
         self.limits = limits
@@ -527,13 +614,11 @@ class ReportDatabaseReadAuthority:
             raise ValueError("report_generation_unavailable")
         actual = descriptor(row, resource)
         if (
-            actual.reference.generation_id != ref.generation_id
-            or actual.reference.resource_id != ref.resource_id
-            or (
-                row.accepted_reference
-                and row.accepted_reference.get("generation_id")
-                != str(ref.generation_id)
-            )
+            actual.reference != ref
+            or row.resource_id != resource.id
+            or not row.accepted_reference
+            or ArtifactReference.model_validate_json(json.dumps(row.accepted_reference))
+            != ref
         ):
             raise ValueError("report_integrity_error")
         return actual.manifest
@@ -542,6 +627,7 @@ class ReportDatabaseReadAuthority:
         self, scope: VersionScope, reference: ArtifactReference
     ) -> ReportArtifactDescriptor:
         with metadata_session(self.engine) as session:
+            self._exact(session, scope, reference)
             ref = ArtifactReference.model_validate(reference)
             resource = session.scalar(
                 select(Resource).where(Resource.id == ref.resource_id)
@@ -563,10 +649,27 @@ class ReportDatabaseReadAuthority:
     ) -> Iterator[ReportArtifactManifest]:
         now, pid = datetime.now(UTC), uuid4()
         with metadata_session(self.engine) as session, session.begin():
+            session.scalar(
+                select(Resource)
+                .where(Resource.id == reference.resource_id)
+                .with_for_update()
+            )
+            session.scalar(
+                select(Generation)
+                .where(Generation.id == reference.generation_id)
+                .with_for_update()
+            )
             manifest = self._exact(session, scope, reference)
+            session.execute(
+                delete(Pin).where(
+                    Pin.generation_id == reference.generation_id, Pin.expires_at <= now
+                )
+            )
             pins = session.scalars(
                 select(Pin.id)
-                .where(Pin.generation_id == reference.generation_id)
+                .where(
+                    Pin.generation_id == reference.generation_id, Pin.expires_at > now
+                )
                 .limit(self.limits.max_pins_per_generation)
             ).all()
             if len(pins) >= self.limits.max_pins_per_generation:

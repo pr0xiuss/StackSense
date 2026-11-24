@@ -163,8 +163,6 @@ class LayoutOutcome:
 
 def verify_installation() -> RuntimeLock:
     """A lock proves installation integrity, never B1 security acceptance."""
-    if sys.platform != "linux" or not hasattr(os, "geteuid"):
-        raise ValueError("diagram_runtime_unavailable")
     if os.geteuid() == 0:
         raise ValueError("diagram_runtime_unavailable")
     lock_path = INSTALL_ROOT / "deployment" / "runtime-lock.json"

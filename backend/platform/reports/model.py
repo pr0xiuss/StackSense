@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
-import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
@@ -50,16 +50,16 @@ def _canonicalize(value: Any) -> Any:
             raise ReportContractError("Integer outside safe JSON 53-bit range")
         return value
     if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ReportContractError("Non-finite floating point numbers not permitted")
-        return value
+        raise ReportContractError("Floating point numbers are not C4 JSON values")
     if isinstance(value, Mapping):
         sorted_keys = sorted(str(k) for k in value.keys())
         return {k: _canonicalize(value[k]) for k in sorted_keys}
-    if isinstance(value, (tuple, list, set, frozenset)):
+    if isinstance(value, (set, frozenset)):
+        raise ReportContractError("Unordered collections are not C4 JSON values")
+    if isinstance(value, (tuple, list)):
         return [_canonicalize(item) for item in value]
     if isinstance(value, bytes):
-        return hashlib.sha256(value).hexdigest()
+        return base64.b64encode(value).decode("ascii")
     raise ReportContractError(
         f"Unsupported canonical serialization type: {type(value)}"
     )

@@ -48,6 +48,9 @@ class ReportCursor(FrozenReportModel):
     version_id: UUID
     report_id: UUID | None = None
     after: ReportCursorKey
+    high_water: ReportCursorKey | None = None
+    profile: str | None = None
+    page_size: int | None = None
     issued_at: int
     expires_at: int
 

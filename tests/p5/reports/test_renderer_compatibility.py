@@ -30,7 +30,7 @@ def test_pdf_renderer_three_cold_renders_byte_identical() -> None:
     )
     spec, snapshot, prepared_report = preparer.prepare(context)
 
-    renderer = ReportLabPdfRenderer()
+    renderer = IsolatedReportRenderRuntime()
 
     # 1st render
     res1 = renderer.render(prepared_report, deadline=time.monotonic() + 30.0)
@@ -94,5 +94,5 @@ def test_isolated_render_runtime_bounded_execution() -> None:
     assert rendered.page_count > 0
 
     # Test immediate deadline timeout
-    with pytest.raises(TimeoutError, match="exceeded deadline"):
+    with pytest.raises(TimeoutError, match="report_timeout"):
         runtime.execute_render(prepared_report, timeout_seconds=0.000001)
