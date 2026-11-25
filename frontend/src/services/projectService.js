@@ -11,16 +11,17 @@ export const projectService = {
    * @param {number} [offset=0]
    * @returns {Promise<Array<{ id: string, name: string, description: string | null, created_at: string, updated_at: string, role?: string }>>}
    */
-  async listProjects(limit = 50, offset = 0) {
-    return apiClient.get(`/projects?limit=${limit}&offset=${offset}`);
+  async listProjects(limit = 50, offset = 0, options = {}) {
+    return apiClient.get(`/projects?limit=${limit}&offset=${offset}`, options);
   },
 
   /**
    * Retrieve a single project by ID.
    * @param {string} projectId
+   * @param {object} [options]
    */
-  async getProject(projectId) {
-    return apiClient.get(`/projects/${projectId}`);
+  async getProject(projectId, options = {}) {
+    return apiClient.get(`/projects/${projectId}`, options);
   },
 
   async updateProject(projectId, payload) {

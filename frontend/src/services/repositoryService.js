@@ -11,17 +11,18 @@ export const repositoryService = {
    * @param {number} [limit=50]
    * @param {number} [offset=0]
    */
-  async listRepositories(projectId, limit = 50, offset = 0) {
-    return apiClient.get(`/projects/${projectId}/repositories?limit=${limit}&offset=${offset}`);
+  async listRepositories(projectId, limit = 50, offset = 0, options = {}) {
+    return apiClient.get(`/projects/${projectId}/repositories?limit=${limit}&offset=${offset}`, options);
   },
 
   /**
    * Retrieve a specific repository within a project.
    * @param {string} projectId
    * @param {string} repositoryId
+   * @param {object} [options]
    */
-  async getRepository(projectId, repositoryId) {
-    return apiClient.get(`/projects/${projectId}/repositories/${repositoryId}`);
+  async getRepository(projectId, repositoryId, options = {}) {
+    return apiClient.get(`/projects/${projectId}/repositories/${repositoryId}`, options);
   },
 
   /**

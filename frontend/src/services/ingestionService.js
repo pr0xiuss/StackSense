@@ -12,9 +12,10 @@ export const ingestionService = {
    * @param {number} [limit=50]
    * @param {number} [offset=0]
    */
-  async listIngestions(projectId, repositoryId, limit = 50, offset = 0) {
+  async listIngestions(projectId, repositoryId, limit = 50, offset = 0, options = {}) {
     return apiClient.get(
-      `/projects/${projectId}/repositories/${repositoryId}/ingestions?limit=${limit}&offset=${offset}`
+      `/projects/${projectId}/repositories/${repositoryId}/ingestions?limit=${limit}&offset=${offset}`,
+      options
     );
   },
 
@@ -23,10 +24,12 @@ export const ingestionService = {
    * @param {string} projectId
    * @param {string} repositoryId
    * @param {string} ingestionId
+   * @param {object} [options]
    */
-  async getIngestion(projectId, repositoryId, ingestionId) {
+  async getIngestion(projectId, repositoryId, ingestionId, options = {}) {
     return apiClient.get(
-      `/projects/${projectId}/repositories/${repositoryId}/ingestions/${ingestionId}`
+      `/projects/${projectId}/repositories/${repositoryId}/ingestions/${ingestionId}`,
+      options
     );
   },
 
@@ -98,9 +101,10 @@ export const ingestionService = {
    * @param {number} [limit=50]
    * @param {number} [offset=0]
    */
-  async listRevisions(projectId, repositoryId, limit = 50, offset = 0) {
+  async listRevisions(projectId, repositoryId, limit = 50, offset = 0, options = {}) {
     return apiClient.get(
-      `/projects/${projectId}/repositories/${repositoryId}/revisions?limit=${limit}&offset=${offset}`
+      `/projects/${projectId}/repositories/${repositoryId}/revisions?limit=${limit}&offset=${offset}`,
+      options
     );
   },
 
@@ -109,10 +113,12 @@ export const ingestionService = {
    * @param {string} projectId
    * @param {string} repositoryId
    * @param {string} revisionId
+   * @param {object} [options]
    */
-  async getRevision(projectId, repositoryId, revisionId) {
+  async getRevision(projectId, repositoryId, revisionId, options = {}) {
     return apiClient.get(
-      `/projects/${projectId}/repositories/${repositoryId}/revisions/${revisionId}`
+      `/projects/${projectId}/repositories/${repositoryId}/revisions/${revisionId}`,
+      options
     );
   },
 
@@ -123,10 +129,12 @@ export const ingestionService = {
    * @param {string} revisionId
    * @param {number} [limit=50]
    * @param {number} [offset=0]
+   * @param {object} [options]
    */
-  async listArtifacts(projectId, repositoryId, revisionId, limit = 50, offset = 0) {
+  async listArtifacts(projectId, repositoryId, revisionId, limit = 50, offset = 0, options = {}) {
     return apiClient.get(
-      `/projects/${projectId}/repositories/${repositoryId}/revisions/${revisionId}/artifacts?limit=${limit}&offset=${offset}`
+      `/projects/${projectId}/repositories/${repositoryId}/revisions/${revisionId}/artifacts?limit=${limit}&offset=${offset}`,
+      options
     );
   },
 };

@@ -11,6 +11,7 @@ import AuthPage from './pages/AuthPage.jsx';
 import { isValidUuid } from './contracts/graphContracts.js';
 
 const ArchitectureExplorerPage = React.lazy(() => import('./pages/ArchitectureExplorerPage.jsx'));
+const RepositoryIntelligencePage = React.lazy(() => import('./pages/RepositoryIntelligencePage.jsx'));
 
 import './styles/index.css';
 import './styles/landing.css';
@@ -29,7 +30,43 @@ export function parseCurrentRoute() {
   const hash = window.location.hash || '';
   const pathname = window.location.pathname || '';
 
-  // 1. Graph Explorer Route (most specific, end-anchored):
+  // 1. Intelligence Route (most specific, end-anchored):
+  //    #/projects/:projectId/repositories/:repositoryId/analyses/:analysisId/architecture/:versionId/intelligence
+  //    /projects/:projectId/repositories/:repositoryId/analyses/:analysisId/architecture/:versionId/intelligence
+  const intelHashMatch = hash.match(/^#\/?projects\/([^/]+)\/repositories\/([^/]+)\/analyses\/([^/]+)\/architecture\/([^/]+)\/intelligence([/?].*|$)/i);
+  const intelPathMatch = pathname.match(/^\/?projects\/([^/]+)\/repositories\/([^/]+)\/analyses\/([^/]+)\/architecture\/([^/]+)\/intelligence([/?].*|$)/i);
+  const intelMatch = intelHashMatch || intelPathMatch;
+
+  if (intelMatch) {
+    let pId, rId, aId, vId;
+    try {
+      pId = decodeURIComponent(intelMatch[1]);
+      rId = decodeURIComponent(intelMatch[2]);
+      aId = decodeURIComponent(intelMatch[3]);
+      vId = decodeURIComponent(intelMatch[4]);
+    } catch {
+      return { view: 'route_error', message: 'Malformed URL encoding in route identifiers.' };
+    }
+
+    const trailing = intelMatch[5];
+    if (trailing && trailing !== '/' && !trailing.startsWith('?')) {
+      return { view: 'route_error', message: 'Unmatched trailing path on Intelligence route.' };
+    }
+
+    if (!isValidUuid(pId) || !isValidUuid(rId) || !isValidUuid(aId) || !isValidUuid(vId)) {
+      return { view: 'route_error', message: 'Malformed UUID in Intelligence route parameters.' };
+    }
+
+    return {
+      view: 'intelligence',
+      projectId: pId,
+      repositoryId: rId,
+      analysisId: aId,
+      versionId: vId,
+    };
+  }
+
+  // 2. Graph Explorer Route (most specific, end-anchored):
   //    #/projects/:projectId/repositories/:repositoryId/analyses/:analysisId/architecture/:versionId/graph
   //    /projects/:projectId/repositories/:repositoryId/analyses/:analysisId/architecture/:versionId/graph
   const explorerHashMatch = hash.match(/^#\/?projects\/([^/]+)\/repositories\/([^/]+)\/analyses\/([^/]+)\/architecture\/([^/]+)\/graph(?:\/|$)(.*)/i);
@@ -217,6 +254,29 @@ function AppContent() {
     setRoute({ view: 'landing', mode: 'login' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  if (route.view === 'intelligence') {
+    return (
+      <ProtectedRoute>
+        <React.Suspense
+          fallback={
+            <div className="repo-loading-screen" role="status">
+              <span className="btn-spinner" aria-hidden="true" />
+              <p>Loading Repository Intelligence...</p>
+            </div>
+          }
+        >
+          <RepositoryIntelligencePage
+            key={`${route.projectId}-${route.repositoryId}-${route.analysisId}-${route.versionId}`}
+            projectId={route.projectId}
+            repositoryId={route.repositoryId}
+            analysisId={route.analysisId}
+            versionId={route.versionId}
+          />
+        </React.Suspense>
+      </ProtectedRoute>
+    );
+  }
 
   if (route.view === 'explorer') {
     return (

@@ -15,10 +15,13 @@ export const architectureService = {
    * @param {string} options.projectId - Project UUID
    * @returns {Promise<object>} ArchitectureVersionResponse
    */
-  async getVersion(versionId, { projectId } = {}) {
+  async getVersion(versionId, { projectId, signal, ...options } = {}) {
     if (!versionId) throw new Error('versionId is required');
     if (!projectId) throw new Error('projectId is required');
-    return apiClient.get(`/architecture-versions/${versionId}?project_id=${encodeURIComponent(projectId)}`);
+    return apiClient.get(
+      `/architecture-versions/${versionId}?project_id=${encodeURIComponent(projectId)}`,
+      { signal, ...options }
+    );
   },
 
   /**
@@ -33,7 +36,7 @@ export const architectureService = {
    * @param {string} [params.status] - Optional entity status filter
    * @returns {Promise<{ items: object[], total: number, limit: number, offset: number }>}
    */
-  async listEntities(versionId, { projectId, limit = 50, offset = 0, kind, status } = {}) {
+  async listEntities(versionId, { projectId, limit = 50, offset = 0, kind, status, signal, ...options } = {}) {
     if (!versionId) throw new Error('versionId is required');
     if (!projectId) throw new Error('projectId is required');
 
@@ -44,7 +47,7 @@ export const architectureService = {
     if (kind) params.set('kind', kind);
     if (status) params.set('status', status);
 
-    return apiClient.get(`/architecture-versions/${versionId}/entities?${params.toString()}`);
+    return apiClient.get(`/architecture-versions/${versionId}/entities?${params.toString()}`, { signal, ...options });
   },
 
   /**
@@ -56,13 +59,14 @@ export const architectureService = {
    * @param {string} options.projectId - Project UUID
    * @returns {Promise<object>} ArchitectureEntityResponse
    */
-  async getEntity(versionId, entityId, { projectId } = {}) {
+  async getEntity(versionId, entityId, { projectId, signal, ...options } = {}) {
     if (!versionId) throw new Error('versionId is required');
     if (!entityId) throw new Error('entityId is required');
     if (!projectId) throw new Error('projectId is required');
 
     return apiClient.get(
-      `/architecture-versions/${versionId}/entities/${entityId}?project_id=${encodeURIComponent(projectId)}`
+      `/architecture-versions/${versionId}/entities/${entityId}?project_id=${encodeURIComponent(projectId)}`,
+      { signal, ...options }
     );
   },
 
@@ -78,7 +82,7 @@ export const architectureService = {
    * @param {string} [params.status] - Optional relationship status filter
    * @returns {Promise<{ items: object[], total: number, limit: number, offset: number }>}
    */
-  async listRelationships(versionId, { projectId, limit = 50, offset = 0, kind, status } = {}) {
+  async listRelationships(versionId, { projectId, limit = 50, offset = 0, kind, status, signal, ...options } = {}) {
     if (!versionId) throw new Error('versionId is required');
     if (!projectId) throw new Error('projectId is required');
 
@@ -89,7 +93,7 @@ export const architectureService = {
     if (kind) params.set('kind', kind);
     if (status) params.set('status', status);
 
-    return apiClient.get(`/architecture-versions/${versionId}/relationships?${params.toString()}`);
+    return apiClient.get(`/architecture-versions/${versionId}/relationships?${params.toString()}`, { signal, ...options });
   },
 
   /**
@@ -103,7 +107,7 @@ export const architectureService = {
    * @param {string} [params.entityId] - Optional entity UUID filter
    * @returns {Promise<{ items: object[], total: number, limit: number, offset: number }>}
    */
-  async listEvidence(versionId, { projectId, limit = 50, offset = 0, entityId } = {}) {
+  async listEvidence(versionId, { projectId, limit = 50, offset = 0, entityId, signal, ...options } = {}) {
     if (!versionId) throw new Error('versionId is required');
     if (!projectId) throw new Error('projectId is required');
 
@@ -113,7 +117,7 @@ export const architectureService = {
     params.set('offset', String(offset));
     if (entityId) params.set('entity_id', entityId);
 
-    return apiClient.get(`/architecture-versions/${versionId}/evidence?${params.toString()}`);
+    return apiClient.get(`/architecture-versions/${versionId}/evidence?${params.toString()}`, { signal, ...options });
   },
 
   /**
@@ -126,7 +130,7 @@ export const architectureService = {
    * @param {number} [params.offset=0]
    * @returns {Promise<{ items: object[], total: number, limit: number, offset: number }>}
    */
-  async listUnresolved(versionId, { projectId, limit = 50, offset = 0 } = {}) {
+  async listUnresolved(versionId, { projectId, limit = 50, offset = 0, signal, ...options } = {}) {
     if (!versionId) throw new Error('versionId is required');
     if (!projectId) throw new Error('projectId is required');
 
@@ -135,7 +139,7 @@ export const architectureService = {
     params.set('limit', String(limit));
     params.set('offset', String(offset));
 
-    return apiClient.get(`/architecture-versions/${versionId}/unresolved?${params.toString()}`);
+    return apiClient.get(`/architecture-versions/${versionId}/unresolved?${params.toString()}`, { signal, ...options });
   },
 
   /**
@@ -148,7 +152,7 @@ export const architectureService = {
    * @param {number} [params.offset=0]
    * @returns {Promise<{ items: object[], total: number, limit: number, offset: number }>}
    */
-  async listConflicts(versionId, { projectId, limit = 50, offset = 0 } = {}) {
+  async listConflicts(versionId, { projectId, limit = 50, offset = 0, signal, ...options } = {}) {
     if (!versionId) throw new Error('versionId is required');
     if (!projectId) throw new Error('projectId is required');
 
@@ -157,7 +161,7 @@ export const architectureService = {
     params.set('limit', String(limit));
     params.set('offset', String(offset));
 
-    return apiClient.get(`/architecture-versions/${versionId}/conflicts?${params.toString()}`);
+    return apiClient.get(`/architecture-versions/${versionId}/conflicts?${params.toString()}`, { signal, ...options });
   },
 };
 

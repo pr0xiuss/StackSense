@@ -58,7 +58,7 @@ export const analysisService = {
    * @param {string} [params.status] - Optional Analysis status filter
    * @returns {Promise<{ items: object[], total: number, limit: number, offset: number }>}
    */
-  async listAnalyses({ projectId, repositoryId, limit = 50, offset = 0, status } = {}) {
+  async listAnalyses({ projectId, repositoryId, limit = 50, offset = 0, status, signal, ...options } = {}) {
     if (!projectId) {
       throw new Error('projectId is required to list analyses.');
     }
@@ -73,7 +73,7 @@ export const analysisService = {
       params.set('status', status);
     }
 
-    return apiClient.get(`/analyses?${params.toString()}`);
+    return apiClient.get(`/analyses?${params.toString()}`, { signal, ...options });
   },
 
   /**
@@ -84,10 +84,10 @@ export const analysisService = {
    * @param {string} options.projectId - Project UUID
    * @returns {Promise<object>} AnalysisResponse
    */
-  async getAnalysis(analysisId, { projectId } = {}) {
+  async getAnalysis(analysisId, { projectId, signal, ...options } = {}) {
     if (!analysisId) throw new Error('analysisId is required');
     if (!projectId) throw new Error('projectId is required');
-    return apiClient.get(`/analyses/${analysisId}?project_id=${encodeURIComponent(projectId)}`);
+    return apiClient.get(`/analyses/${analysisId}?project_id=${encodeURIComponent(projectId)}`, { signal, ...options });
   },
 
   /**
@@ -121,7 +121,7 @@ export const analysisService = {
    * @param {string} [params.stage] - Optional stage filter
    * @returns {Promise<{ items: object[], total: number, limit: number, offset: number }>}
    */
-  async listDiagnostics(analysisId, { projectId, limit = 50, offset = 0, severity, stage } = {}) {
+  async listDiagnostics(analysisId, { projectId, limit = 50, offset = 0, severity, stage, signal, ...options } = {}) {
     if (!analysisId) throw new Error('analysisId is required');
     if (!projectId) throw new Error('projectId is required');
     const params = new URLSearchParams();
@@ -131,7 +131,7 @@ export const analysisService = {
     if (severity) params.set('severity', severity);
     if (stage) params.set('stage', stage);
 
-    return apiClient.get(`/analyses/${analysisId}/diagnostics?${params.toString()}`);
+    return apiClient.get(`/analyses/${analysisId}/diagnostics?${params.toString()}`, { signal, ...options });
   },
 
   /**
@@ -142,10 +142,10 @@ export const analysisService = {
    * @param {string} options.projectId - Project UUID
    * @returns {Promise<object>} ArchitectureVersionResponse
    */
-  async getAnalysisArchitecture(analysisId, { projectId } = {}) {
+  async getAnalysisArchitecture(analysisId, { projectId, signal, ...options } = {}) {
     if (!analysisId) throw new Error('analysisId is required');
     if (!projectId) throw new Error('projectId is required');
-    return apiClient.get(`/analyses/${analysisId}/architecture?project_id=${encodeURIComponent(projectId)}`);
+    return apiClient.get(`/analyses/${analysisId}/architecture?project_id=${encodeURIComponent(projectId)}`, { signal, ...options });
   },
 
   /**
