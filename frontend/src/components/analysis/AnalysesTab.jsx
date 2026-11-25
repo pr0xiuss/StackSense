@@ -268,19 +268,29 @@ export default function AnalysesTab({ projectId, repositoryId }) {
                     <td>{formatDuration(item.started_at, item.completed_at)}</td>
                     <td>
                       {item.published_version_id ? (
-                        <a
-                          href={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${item.id}/architecture`}
-                          className="model-link-badge"
-                          title="View published architecture version"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="3" y="3" width="7" height="7" />
-                            <rect x="14" y="3" width="7" height="7" />
-                            <rect x="14" y="14" width="7" height="7" />
-                            <rect x="3" y="14" width="7" height="7" />
-                          </svg>
-                          <span>Model v{item.published_version_id.slice(0, 8)} &rarr;</span>
-                        </a>
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          <a
+                            href={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${item.id}/architecture`}
+                            className="model-link-badge"
+                            title="View published architecture version"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <rect x="3" y="3" width="7" height="7" />
+                              <rect x="14" y="3" width="7" height="7" />
+                              <rect x="14" y="14" width="7" height="7" />
+                              <rect x="3" y="14" width="7" height="7" />
+                            </svg>
+                            <span>Model v{item.published_version_id.slice(0, 8)}</span>
+                          </a>
+                          <a
+                            href={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${item.id}/architecture/${item.published_version_id}/intelligence`}
+                            className="model-link-badge"
+                            title="View repository intelligence workspace"
+                            style={{ background: 'rgba(3, 105, 161, 0.2)', borderColor: '#38bdf8' }}
+                          >
+                            <span>Intel</span>
+                          </a>
+                        </div>
                       ) : (
                         <span style={{ color: '#64748B' }}>—</span>
                       )}

@@ -7,6 +7,7 @@ const analysisRoutes = require('./analysisRoutes');
 const architectureRoutes = require('./architectureRoutes');
 const graphRoutes = require('./graphRoutes');
 const graphHealthRoutes = require('./graphHealthRoutes');
+const intelligenceRoutes = require('./intelligenceRoutes');
 
 const router = express.Router();
 
@@ -34,9 +35,10 @@ router.use('/internal', internalAnalysisSourceRoutes);
 router.use('/projects', projectRoutes);
 
 /**
- * Analysis lifecycle, Architecture Graph, and Architecture Model endpoints.
+ * Analysis lifecycle, Architecture Graph, Intelligence, and Architecture Model endpoints.
  */
 router.use('/analyses', analysisRoutes);
+router.use('/architecture-versions/:versionId', intelligenceRoutes);
 router.use('/architecture-versions/:versionId/graph', graphRoutes);
 router.use('/architecture-versions', architectureRoutes);
 

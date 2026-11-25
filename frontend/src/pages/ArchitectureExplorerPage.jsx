@@ -278,6 +278,13 @@ export default function ArchitectureExplorerPage({
                 <div className="graph-header-actions">
                   <button type="button" className="graph-btn" onClick={refreshStatus} disabled={Boolean(graphState.operations.status?.inFlight)}>Refresh status</button>
                   <a
+                    href={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${analysisId}/architecture/${versionId}/intelligence`}
+                    className="btn-secondary"
+                    style={{ textDecoration: 'none' }}
+                  >
+                    Intelligence &rarr;
+                  </a>
+                  <a
                     href={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${analysisId}/architecture/${versionId}`}
                     className="btn-secondary"
                     style={{ textDecoration: 'none' }}

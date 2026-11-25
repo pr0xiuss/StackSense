@@ -137,6 +137,17 @@ export default function AnalysisHeader({
             </a>
           )}
 
+          {/* Intelligence CTA */}
+          {hasPublishedModel && analysis.published_version_id && (
+            <a
+              href={`#/projects/${analysis.project_id}/repositories/${analysis.repository_id}/analyses/${analysis.id}/architecture/${analysis.published_version_id}/intelligence`}
+              className="btn-view-architecture"
+              style={{ background: 'rgba(3, 105, 161, 0.2)', borderColor: '#38bdf8' }}
+            >
+              <span>Intelligence Workspace &rarr;</span>
+            </a>
+          )}
+
           {isCompletedWithoutModel && (
             <span className="badge-severity-warning" title="Integrity error: completed run has no published model version">
               Model Not Published

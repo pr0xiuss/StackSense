@@ -193,6 +193,9 @@ export async function apiRequest(endpoint, options = {}) {
       headers,
     });
   } catch (netErr) {
+    if (netErr.name === 'AbortError' || options.signal?.aborted) {
+      throw netErr;
+    }
     throw new ApiError(
       'Network connection error. Please verify the server is running.',
       0,
@@ -225,10 +228,43 @@ export async function apiRequest(endpoint, options = {}) {
   let data = null;
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
-    try {
-      data = await response.json();
-    } catch {
-      data = null;
+    if (options.maxBytes && response.body && typeof response.body.getReader === 'function') {
+      const reader = response.body.getReader();
+      let totalBytes = 0;
+      const chunks = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.length;
+        if (totalBytes > options.maxBytes) {
+          await reader.cancel();
+          throw new ApiError(
+            `Response exceeded maximum allowed size of ${options.maxBytes} bytes.`,
+            502,
+            'response_limit_exceeded',
+            { max_bytes: options.maxBytes, actual_bytes: totalBytes }
+          );
+        }
+        chunks.push(value);
+      }
+      const fullBuffer = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        fullBuffer.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const text = new TextDecoder('utf-8').decode(fullBuffer);
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+    } else {
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
     }
   } else {
     try {
@@ -452,6 +488,242 @@ export function apiStream(endpoint, options = {}) {
   };
 }
 
+/**
+ * Bounded binary download with SHA-256 verification and blob revocation.
+ *
+ * @param {string} endpoint
+ * @param {object} options
+ * @param {string} [options.expectedMediaType='application/pdf']
+ * @param {string} [options.expectedDigest] - expected SHA-256 hex or base64
+ * @param {number} [options.maxBytes=67108864] - 64 MiB limit
+ * @param {string} [options.filename]
+ * @param {AbortSignal} [options.signal]
+ * @param {boolean} [options.triggerBrowserDownload=true]
+ */
+export async function apiDownload(endpoint, options = {}) {
+  const url = endpoint.startsWith('http')
+    ? endpoint
+    : endpoint.startsWith('/api/')
+      ? endpoint
+      : endpoint.startsWith('/')
+        ? `/api/v1${endpoint}`
+        : `/api/v1/${endpoint}`;
+
+  const expectedMediaType = options.expectedMediaType || 'application/pdf';
+  const maxBytes = options.maxBytes || 67108864; // 64 MiB
+
+  const headers = new Headers(options.headers || {});
+  const token = tokenStorage.getAccessToken();
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  if (!headers.has('Accept')) {
+    headers.set('Accept', expectedMediaType);
+  }
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal: options.signal,
+    });
+  } catch (netErr) {
+    if (netErr.name === 'AbortError' || options.signal?.aborted) {
+      throw netErr;
+    }
+    throw new ApiError(
+      'Network connection error. Please verify the server is running.',
+      0,
+      'network_error'
+    );
+  }
+
+  // 401 retry
+  if (response.status === 401 && !options._retry) {
+    try {
+      await refreshAccessToken();
+      return apiDownload(endpoint, { ...options, _retry: true });
+    } catch (refreshErr) {
+      throw refreshErr;
+    }
+  }
+
+  if (!response.ok) {
+    let errData = null;
+    try {
+      errData = await response.json();
+    } catch {
+      try {
+        errData = await response.text();
+      } catch {
+        errData = null;
+      }
+    }
+    const errorPayload = errData?.error;
+    const message =
+      errorPayload?.message ||
+      (typeof errData?.detail === 'string' ? errData.detail : null) ||
+      `Download failed with status ${response.status}`;
+    const code =
+      errorPayload?.code ||
+      (response.status === 403
+        ? 'forbidden'
+        : response.status === 404
+          ? 'not_found'
+          : 'api_error');
+    throw new ApiError(message, response.status, code, errorPayload?.details || null);
+  }
+
+  const contentType = (response.headers.get('content-type') || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  if (contentType !== expectedMediaType) {
+    throw new ApiError(
+      `Expected ${expectedMediaType} but received ${contentType || 'unknown'}.`,
+      502,
+      'invalid_content_type'
+    );
+  }
+
+  let totalBytes = 0;
+  const chunks = [];
+  if (response.body && typeof response.body.getReader === 'function') {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.length;
+      if (totalBytes > maxBytes) {
+        await reader.cancel();
+        throw new ApiError(
+          `Artifact download exceeded limit of ${maxBytes} bytes.`,
+          413,
+          'download_limit_exceeded',
+          { max_bytes: maxBytes, actual_bytes: totalBytes }
+        );
+      }
+      chunks.push(value);
+    }
+  } else if (typeof response.arrayBuffer === 'function') {
+    const buf = await response.arrayBuffer();
+    const arr = new Uint8Array(buf);
+    totalBytes = arr.length;
+    if (totalBytes > maxBytes) {
+      throw new ApiError(
+        `Artifact download exceeded limit of ${maxBytes} bytes.`,
+        413,
+        'download_limit_exceeded',
+        { max_bytes: maxBytes, actual_bytes: totalBytes }
+      );
+    }
+    chunks.push(arr);
+  }
+
+  const fullBuffer = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    fullBuffer.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  // Digest verification
+  let computedSha256Hex = '';
+  let computedSha256B64 = '';
+  if (
+    typeof crypto !== 'undefined' &&
+    crypto.subtle &&
+    typeof crypto.subtle.digest === 'function'
+  ) {
+    const hashBuf = await crypto.subtle.digest('SHA-256', fullBuffer);
+    const hashArr = Array.from(new Uint8Array(hashBuf));
+    computedSha256Hex = hashArr.map((b) => b.toString(16).padStart(2, '0')).join('');
+    computedSha256B64 = btoa(String.fromCharCode(...hashArr));
+  }
+
+  // Verify against expected digest if provided
+  if (options.expectedDigest && computedSha256Hex) {
+    const cleanExpected = options.expectedDigest.replace(/"/g, '').toLowerCase();
+    if (cleanExpected !== computedSha256Hex && cleanExpected !== computedSha256B64) {
+      throw new ApiError(
+        'Downloaded artifact digest does not match expected generation digest.',
+        502,
+        'digest_mismatch'
+      );
+    }
+  }
+
+  // Verify against Content-Digest header if present
+  const contentDigestHeader = response.headers.get('content-digest');
+  if (contentDigestHeader && computedSha256Hex) {
+    const match =
+      contentDigestHeader.match(/sha-256=:(.*?):/i) ||
+      contentDigestHeader.match(/sha-256=([a-f0-9]+)/i);
+    if (match) {
+      const digestVal = match[1];
+      if (digestVal !== computedSha256B64 && digestVal.toLowerCase() !== computedSha256Hex) {
+        throw new ApiError(
+          'Downloaded artifact Content-Digest header mismatch.',
+          502,
+          'digest_mismatch'
+        );
+      }
+    }
+  }
+
+  // Safe filename resolution
+  let filename = options.filename;
+  if (!filename) {
+    const disp = response.headers.get('content-disposition');
+    if (disp) {
+      const match = disp.match(/filename="?([^";]+)"?/i);
+      if (match) filename = match[1];
+    }
+  }
+  if (!filename) {
+    filename = `artifact-${computedSha256Hex.slice(0, 12) || 'download'}.${
+      expectedMediaType === 'image/svg+xml' ? 'svg' : 'pdf'
+    }`;
+  }
+  filename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+
+  const blob = new Blob([fullBuffer], { type: expectedMediaType });
+  let blobUrl = null;
+  if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    blobUrl = URL.createObjectURL(blob);
+  }
+
+  if (
+    options.triggerBrowserDownload !== false &&
+    blobUrl &&
+    typeof document !== 'undefined'
+  ) {
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    }, 2000);
+  }
+
+  return {
+    filename,
+    size: totalBytes,
+    sha256: computedSha256Hex,
+    blob,
+    blobUrl,
+    revoke: () => {
+      if (blobUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+        URL.revokeObjectURL(blobUrl);
+      }
+    },
+  };
+}
+
 export const apiClient = {
   get(endpoint, options = {}) {
     return apiRequest(endpoint, { ...options, method: 'GET' });
@@ -475,5 +747,9 @@ export const apiClient = {
 
   stream(endpoint, options = {}) {
     return apiStream(endpoint, options);
+  },
+
+  download(endpoint, options = {}) {
+    return apiDownload(endpoint, options);
   },
 };
