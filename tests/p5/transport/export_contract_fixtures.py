@@ -10,33 +10,10 @@ starting any infrastructure or mutating production code.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 from pydantic import BaseModel
-
-# Stub optional PDF / font rendering dependencies if not installed
-for mod in (
-    "pypdf",
-    "pypdf.generic",
-    "reportlab",
-    "reportlab.lib",
-    "reportlab.lib.pagesizes",
-    "reportlab.lib.styles",
-    "reportlab.pdfbase",
-    "reportlab.pdfbase.ttfonts",
-    "reportlab.pdfgen",
-    "reportlab.platypus",
-    "fontTools",
-    "fontTools.pens",
-    "fontTools.pens.basePen",
-):
-    if mod not in sys.modules:
-        mock_mod = MagicMock()
-        mock_mod.__name__ = mod
-        sys.modules[mod] = mock_mod
 
 from backend.api.v1.knowledge import SearchRebuildRequest
 from backend.platform.delivery.api_contracts import (

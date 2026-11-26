@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     diagram_enabled: bool = False
     diagram_operational_approval: bool = False
     diagram_deployment_json: SecretStr | None = None
+    stacksense_local_diagrams: bool = False
 
     # M5 is opt-in; configuration is not evidence of deployment conformance.
     report_enabled: bool = False

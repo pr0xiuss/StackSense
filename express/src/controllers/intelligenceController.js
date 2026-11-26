@@ -265,6 +265,21 @@ const intelligenceController = {
   /**
    * 10. GET /api/v1/architecture-versions/:versionId/diagrams/:template
    */
+  async getLocalDiagramPreview(req, res, next) {
+    try {
+      const projectId = req.validatedQuery.project_id;
+      const access = await projectAuthorization.requireAccess(projectId, req.user.id);
+      const { status, body } = await analysisGatewayService.request({
+        method: 'GET',
+        path: `/architecture-versions/${encodeURIComponent(req.params.versionId)}/diagrams/${encodeURIComponent(req.params.template)}/local-preview`,
+        query: req.validatedQuery, user: req.user, role: String(access.role).toUpperCase(),
+        projectId, correlationId: req.headers['x-correlation-id'], responseMode: 'intelligence',
+        clientReq: req, clientRes: res, timeoutMs: 180000, maxBytes: 45000000,
+      });
+      return res.status(status).json(body);
+    } catch (err) { next(err); }
+  },
+
   async getDiagramSummary(req, res, next) {
     try {
       const projectId = req.validatedQuery.project_id;

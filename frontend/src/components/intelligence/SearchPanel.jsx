@@ -1,7 +1,7 @@
 import React from 'react';
 
-const ENTITY_KINDS = ['SERVICE', 'DATABASE', 'API_ENDPOINT', 'QUEUE', 'MODULE', 'INTERFACE'];
-const STATUSES = ['ACTIVE', 'DEPRECATED', 'PROPOSED'];
+const ENTITY_KINDS = ['application', 'frontend_application', 'service', 'database', 'endpoint', 'queue', 'module', 'component', 'controller', 'worker', 'data_repository', 'message_broker', 'topic', 'external_service', 'external_api', 'library', 'configuration_component', 'unknown'];
+const STATUSES = ['confirmed', 'supported', 'inferred', 'unresolved', 'conflicting'];
 
 export function SearchPanel({
   searchQuery,
@@ -48,8 +48,8 @@ export function SearchPanel({
         <div className="search-capabilities-bar">
           <div className="cap-item">
             <span className="cap-label">Search Index:</span>
-            <span className={`cap-value freshness-${(searchStatus.freshness_state || 'fresh').toLowerCase()}`}>
-              {searchStatus.freshness_state || 'READY'}
+            <span className={`cap-value freshness-${(searchStatus.freshness || 'unknown').toLowerCase()}`}>
+              {searchStatus.resource_state} · {searchStatus.freshness || 'unknown'} · {searchStatus.is_readable ? 'readable' : 'unavailable'}
             </span>
           </div>
           <div className="cap-item">
@@ -157,10 +157,10 @@ export function SearchPanel({
 
             <div className="search-cards-list">
               {searchPage.items.map((item) => (
-                <div key={item.id} className="search-result-card">
+                <div key={item.knowledge_key} className="search-result-card">
                   <div className="search-card-main">
                     <div className="search-card-header">
-                      <h4 className="result-name">{item.name || item.logical_id || item.id}</h4>
+                      <h4 className="result-name">{item.title}</h4>
                       <div className="result-badges">
                         {item.kind && <span className="kind-badge">{item.kind}</span>}
                         {item.status && <span className="status-badge">{item.status}</span>}
@@ -181,35 +181,27 @@ export function SearchPanel({
                       </div>
                     )}
 
-                    {item.highlight && (
-                      <p
-                        className="result-highlight"
-                        dangerouslySetInnerHTML={{ __html: item.highlight }}
-                      />
-                    )}
                   </div>
 
                   <div className="search-card-actions">
-                    {onInspectSubject && (
+                    {onInspectSubject && item.document_kind === 'entity' && (
                       <button
                         type="button"
                         className="btn-card-action"
                         onClick={() => onInspectSubject({
-                          type: 'exact_id',
-                          id: item.id,
-                          name: item.name || item.logical_id,
+                          logical_id: item.canonical_reference,
                         })}
                       >
                         Knowledge Query
                       </button>
                     )}
-                    {onOpenEvidence && (
+                    {onOpenEvidence && item.evidence_ids?.some((id) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id)) && (
                       <button
                         type="button"
                         className="btn-card-action btn-evidence"
                         onClick={() => onOpenEvidence({
-                          entity_id: item.id,
-                          name: item.name || item.logical_id || item.id,
+                          evidence_ids: item.evidence_ids.filter((id) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id)),
+                          name: item.title,
                         })}
                       >
                         Evidence

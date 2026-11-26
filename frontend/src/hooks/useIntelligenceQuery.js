@@ -30,11 +30,12 @@ export function useIntelligenceQuery(versionId, {
 
   const searchSeqRef = useRef(0);
   const searchAbortRef = useRef(null);
+  const searchIdentityRef = useRef(null);
 
   // --- 2. Knowledge Query State (C3) ---
   const [selectorType, setSelectorType] = useState('entity_name'); // 'exact_id' | 'logical_id' | 'entity_name'
   const [selectorValue, setSelectorValue] = useState('');
-  const [operation, setOperation] = useState('LOOKUP'); // 'LOOKUP' | 'RELATIONSHIPS' | 'NEIGHBORHOOD' | 'PATH'
+  const [operation, setOperation] = useState('lookup');
   const [knowledgeResponse, setKnowledgeResponse] = useState(null);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [knowledgeError, setKnowledgeError] = useState(null);
@@ -89,6 +90,10 @@ export function useIntelligenceQuery(versionId, {
   // Execute Search
   const executeSearch = useCallback(async (targetCursor = null, targetIndex = 0) => {
     if (!versionId || !projectId) return;
+    if (!searchQuery.trim()) {
+      setSearchError('Enter a search term.');
+      return;
+    }
 
     searchAbortRef.current?.abort();
     const controller = new AbortController();
@@ -113,11 +118,19 @@ export function useIntelligenceQuery(versionId, {
 
       if (!isMountedRef.current || controller.signal.aborted || currentSeq !== searchSeqRef.current) return;
 
+      const identity = `${result.scope?.project_id}:${result.scope?.architecture_version_id}:${result.generation_id}:${result.index_uuid}`;
+      if (targetCursor && searchIdentityRef.current !== identity) {
+        throw new Error('Search generation changed. Start a new search.');
+      }
+      searchIdentityRef.current = identity;
+
       setSearchPage(result);
       setSearchCursorIndex(targetIndex);
 
       // If there's a next cursor and it's not already in stack
-      if (result.next_cursor && targetIndex === searchCursorStack.length - 1) {
+      if (targetIndex === 0) {
+        setSearchCursorStack(result.next_cursor ? [null, result.next_cursor] : [null]);
+      } else if (result.next_cursor && targetIndex === searchCursorStack.length - 1) {
         setSearchCursorStack((prev) => [...prev, result.next_cursor]);
       }
     } catch (err) {
@@ -156,12 +169,16 @@ export function useIntelligenceQuery(versionId, {
   const resetSearch = useCallback(() => {
     setSearchCursorStack([null]);
     setSearchCursorIndex(0);
+    setSearchPage(null);
+    searchIdentityRef.current = null;
     executeSearch(null, 0);
   }, [executeSearch]);
 
   // Execute Knowledge Query
-  const executeKnowledgeQuery = useCallback(async () => {
-    if (!versionId || !projectId || !selectorValue.trim()) return;
+  const executeKnowledgeQuery = useCallback(async (override = null) => {
+    const type = override?.type || selectorType;
+    const value = override?.value || selectorValue;
+    if (!versionId || !projectId || !value.trim()) return;
 
     knowledgeAbortRef.current?.abort();
     const controller = new AbortController();
@@ -174,14 +191,15 @@ export function useIntelligenceQuery(versionId, {
 
     try {
       const subject = {
-        kind: selectorType,
-        [selectorType === 'exact_id' ? 'id' : selectorType === 'logical_id' ? 'logical_id' : 'name']: selectorValue.trim(),
+        selector_type: type,
+        record_kind: 'entity',
+        [type === 'record_id' ? 'record_id' : type === 'logical_id' ? 'logical_id' : 'name']: value.trim(),
       };
 
       const body = {
         subject,
         operation,
-        max_hops: operation === 'PATH' || operation === 'NEIGHBORHOOD' ? 2 : 1,
+        graph_depth: 1,
       };
 
       const result = await knowledgeService.queryKnowledge(versionId, body, {
@@ -249,6 +267,7 @@ export function useIntelligenceQuery(versionId, {
         cursor: targetCursor || undefined,
         ...(subject.entity_id ? { entity_id: [subject.entity_id] } : {}),
         ...(subject.relationship_id ? { relationship_id: [subject.relationship_id] } : {}),
+        ...(subject.evidence_ids?.length ? { evidence_id: subject.evidence_ids } : {}),
       };
 
       const page = await knowledgeService.getEvidence(versionId, params, {
@@ -260,7 +279,9 @@ export function useIntelligenceQuery(versionId, {
       setEvidencePage(page);
       setEvidenceCursorIndex(targetIndex);
 
-      if (page.next_cursor && targetIndex === evidenceCursorStack.length - 1) {
+      if (targetIndex === 0) {
+        setEvidenceCursorStack(page.next_cursor ? [null, page.next_cursor] : [null]);
+      } else if (page.next_cursor && targetIndex === evidenceCursorStack.length - 1) {
         setEvidenceCursorStack((prev) => [...prev, page.next_cursor]);
       }
     } catch (err) {
@@ -281,6 +302,7 @@ export function useIntelligenceQuery(versionId, {
   }, [loadEvidence]);
 
   const closeEvidence = useCallback(() => {
+    evidenceAbortRef.current?.abort();
     setEvidenceSubject(null);
     setEvidencePage(null);
     setEvidenceError(null);

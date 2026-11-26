@@ -21,7 +21,7 @@ describe('useReportHistory Hook', () => {
     vi.clearAllMocks();
 
     reportService.getReports.mockResolvedValue({
-      reports: [
+      items: [
         { report_id: 'automatic', name: 'Architecture Executive Summary' },
       ],
     });
@@ -29,9 +29,9 @@ describe('useReportHistory Hook', () => {
     reportService.getReportSummary.mockResolvedValue({
       report_id: 'automatic',
       name: 'Architecture Executive Summary',
-      ready: true,
-      active_generation_id: 'gen-rep-1',
-      active_digest: 'sha256-digest-1',
+      availability: 'READY',
+      reference: { generation_id: 'gen-rep-1' },
+      pdf_sha256: 'sha256-digest-1',
       page_count: 14,
     });
 
@@ -41,7 +41,7 @@ describe('useReportHistory Hook', () => {
           generation_id: 'gen-rep-1',
           created_at: new Date().toISOString(),
           status: 'READY',
-          digest: 'sha256-digest-1',
+          pdf_sha256: 'sha256-digest-1',
         },
       ],
       next_cursor: 'cursor-gen-2',
@@ -65,7 +65,7 @@ describe('useReportHistory Hook', () => {
     });
 
     expect(reportService.getReportSummary).toHaveBeenCalledWith(versionId, 'automatic', { projectId });
-    expect(result.current.summary?.ready).toBe(true);
+    expect(result.current.summary?.availability).toBe('READY');
     expect(result.current.selectedGenerationId).toBe('gen-rep-1');
     expect(result.current.hasMoreGenerations).toBe(true);
   });

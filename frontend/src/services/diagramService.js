@@ -4,6 +4,7 @@
  * Interacts with C2 diagram collection, summaries, generations, layout, views, and exports.
  */
 import { apiClient } from './apiClient.js';
+import { validateDiagramSpec as validateLocalSpec, validateLayoutSpec as validateLocalLayout } from '../contracts/diagramContracts.js';
 import {
   validateDiagramCollection,
   validateDiagramSummary,
@@ -16,6 +17,21 @@ import {
 } from '../contracts/intelligenceContracts.js';
 
 export const diagramService = {
+  async getLocalPreview(versionId, template, { projectId, signal } = {}) {
+    const data = await apiClient.get(
+      `/architecture-versions/${encodeURIComponent(versionId)}/diagrams/${encodeURIComponent(template)}/local-preview?project_id=${encodeURIComponent(projectId)}`,
+      { signal, timeoutMs: 180000 },
+    );
+    if (data?.mode !== 'local_unpublished' || typeof data.svg_base64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(data.svg_base64)) {
+      throw new Error('Invalid local diagram response.');
+    }
+    await validateLocalSpec(data.spec);
+    await validateLocalLayout(data.layout, data.spec);
+    if (data.spec.scope.project_id !== projectId || data.spec.scope.architecture_version_id !== versionId || data.spec.template !== template) {
+      throw new Error('Local diagram scope mismatch.');
+    }
+    return data;
+  },
   /**
    * Retrieve four-template DiagramCollection.
    */
@@ -139,7 +155,7 @@ export const diagramService = {
 
     const data = await apiClient.get(
       `/architecture-versions/${encodeURIComponent(versionId)}/diagrams/${encodeURIComponent(template)}/generations/${encodeURIComponent(generationId)}/export?project_id=${encodeURIComponent(projectId)}&format=json`,
-      { signal, ...options }
+      { signal, maxBytes: 67108864, ...options }
     );
     return validatePreparedDiagram(data);
   },

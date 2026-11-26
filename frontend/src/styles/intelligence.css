@@ -490,6 +490,15 @@
   min-height: 520px;
 }
 
+.local-diagram-jump {
+  max-width: min(100%, 420px);
+  padding: 8px 10px;
+  border: 1px solid #415269;
+  border-radius: 6px;
+  color: #e2e8f0;
+  background: #1d2a3c;
+}
+
 .diagram-status-placeholder {
   display: flex;
   align-items: center;

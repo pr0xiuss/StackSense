@@ -21,7 +21,7 @@ describe('ReportPanel Component', () => {
     vi.clearAllMocks();
 
     reportService.getReports.mockResolvedValue({
-      reports: [
+      items: [
         { report_id: 'automatic', name: 'Comprehensive System Architecture' },
       ],
     });
@@ -29,9 +29,9 @@ describe('ReportPanel Component', () => {
     reportService.getReportSummary.mockResolvedValue({
       report_id: 'automatic',
       name: 'Comprehensive System Architecture',
-      ready: true,
-      active_generation_id: 'gen-rep-active-1',
-      active_digest: 'digest-sha256-active',
+      availability: 'READY',
+      reference: { generation_id: 'gen-rep-active-1' },
+      pdf_sha256: 'digest-sha256-active',
       page_count: 24,
     });
 
@@ -39,15 +39,15 @@ describe('ReportPanel Component', () => {
       items: [
         {
           generation_id: 'gen-rep-active-1',
-          created_at: new Date().toISOString(),
+          accepted_at: new Date().toISOString(),
           status: 'READY',
-          digest: 'digest-sha256-active',
+          pdf_sha256: 'digest-sha256-active',
         },
         {
           generation_id: 'gen-rep-hist-2',
-          created_at: new Date(Date.now() - 3600000).toISOString(),
+          accepted_at: new Date(Date.now() - 3600000).toISOString(),
           status: 'SUPERSEDED',
-          digest: 'digest-sha256-hist',
+          pdf_sha256: 'digest-sha256-hist',
         },
       ],
       next_cursor: null,
@@ -86,7 +86,7 @@ describe('ReportPanel Component', () => {
     render(<ReportPanel versionId={versionId} projectId={projectId} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Download Verified PDF Report/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Download Verified PDF Report/i })).toBeEnabled();
     });
 
     const downloadBtn = screen.getByRole('button', { name: /Download Verified PDF Report/i });
@@ -111,7 +111,7 @@ describe('ReportPanel Component', () => {
     render(<ReportPanel versionId={versionId} projectId={projectId} />);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Download Verified PDF Report/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Download Verified PDF Report/i })).toBeEnabled();
     });
 
     const downloadBtn = screen.getByRole('button', { name: /Download Verified PDF Report/i });

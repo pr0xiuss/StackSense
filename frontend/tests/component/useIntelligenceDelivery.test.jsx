@@ -64,13 +64,9 @@ describe('useIntelligenceDelivery Hook', () => {
 
   it('stops polling when terminal state is reached', async () => {
     const terminalSummary = {
-      state: 'SUCCEEDED',
-      completed_work_items: 6,
-      total_work_items: 6,
-      receipt_digest: 'abc123digest',
-      work_summary: [
-        { work_id: 'w1', kind: 'CONTAINER_ISOLATION', status: 'SUCCEEDED' },
-        { work_id: 'w2', kind: 'COMPONENT_COMMUNICATION', status: 'SUCCEEDED' },
+      diagrams: [
+        { work_id: 'w1', kind: 'diagram', state: 'COMPLETED' },
+        { work_id: 'w2', kind: 'diagram', state: 'COMPLETED' },
       ],
     };
 
@@ -148,11 +144,8 @@ describe('useIntelligenceDelivery Hook', () => {
 
   it('triggers manual idempotent retry and immediately refreshes status', async () => {
     const failedSummary = {
-      state: 'FAILED',
-      completed_work_items: 3,
-      total_work_items: 6,
-      work_summary: [
-        { work_id: 'w-failed', kind: 'CROSS_BOUNDARY', status: 'FAILED', error_message: 'Timeout' },
+      diagrams: [
+        { work_id: 'w-failed', kind: 'diagram', state: 'FAILED', retry_allowed: true },
       ],
     };
 
@@ -189,13 +182,14 @@ describe('useIntelligenceDelivery Hook', () => {
 
     // Trigger retry
     await act(async () => {
-      await result.current.retryWorkItem('w-failed');
+      await result.current.retryWorkItem(failedSummary.diagrams[0]);
     });
 
     expect(deliveryService.retryDelivery).toHaveBeenCalledWith(
       versionId,
       expect.objectContaining({
-        work_id: 'w-failed',
+        resource_type: 'diagram',
+        resource_id: 'w-failed',
         idempotency_key: expect.any(String),
       }),
       { projectId }

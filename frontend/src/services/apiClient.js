@@ -586,6 +586,14 @@ export async function apiDownload(endpoint, options = {}) {
       'invalid_content_type'
     );
   }
+  const declaredLength = response.headers.get('content-length');
+  if (!declaredLength || !/^\d+$/.test(declaredLength) || Number(declaredLength) > maxBytes) {
+    throw new ApiError('Downloaded artifact has an invalid length.', 502, 'invalid_content_length');
+  }
+  const contentEncoding = response.headers.get('content-encoding');
+  if (contentEncoding && contentEncoding.toLowerCase() !== 'identity') {
+    throw new ApiError('Encoded artifacts are not supported.', 502, 'invalid_content_encoding');
+  }
 
   let totalBytes = 0;
   const chunks = [];
@@ -620,6 +628,9 @@ export async function apiDownload(endpoint, options = {}) {
     }
     chunks.push(arr);
   }
+  if (totalBytes !== Number(declaredLength)) {
+    throw new ApiError('Downloaded artifact length does not match its header.', 502, 'invalid_content_length');
+  }
 
   const fullBuffer = new Uint8Array(totalBytes);
   let offset = 0;
@@ -641,11 +652,14 @@ export async function apiDownload(endpoint, options = {}) {
     computedSha256Hex = hashArr.map((b) => b.toString(16).padStart(2, '0')).join('');
     computedSha256B64 = btoa(String.fromCharCode(...hashArr));
   }
+  if (!computedSha256Hex) {
+    throw new ApiError('Secure artifact verification is unavailable in this browser.', 503, 'digest_unavailable');
+  }
 
   // Verify against expected digest if provided
   if (options.expectedDigest && computedSha256Hex) {
-    const cleanExpected = options.expectedDigest.replace(/"/g, '').toLowerCase();
-    if (cleanExpected !== computedSha256Hex && cleanExpected !== computedSha256B64) {
+    const cleanExpected = options.expectedDigest.replace(/"/g, '');
+    if (cleanExpected.toLowerCase() !== computedSha256Hex && cleanExpected !== computedSha256B64) {
       throw new ApiError(
         'Downloaded artifact digest does not match expected generation digest.',
         502,
@@ -654,22 +668,18 @@ export async function apiDownload(endpoint, options = {}) {
     }
   }
 
-  // Verify against Content-Digest header if present
+  // Verify the required producer digest before exposing the downloaded bytes.
   const contentDigestHeader = response.headers.get('content-digest');
-  if (contentDigestHeader && computedSha256Hex) {
-    const match =
-      contentDigestHeader.match(/sha-256=:(.*?):/i) ||
-      contentDigestHeader.match(/sha-256=([a-f0-9]+)/i);
-    if (match) {
-      const digestVal = match[1];
-      if (digestVal !== computedSha256B64 && digestVal.toLowerCase() !== computedSha256Hex) {
-        throw new ApiError(
-          'Downloaded artifact Content-Digest header mismatch.',
-          502,
-          'digest_mismatch'
-        );
-      }
-    }
+  const match = contentDigestHeader?.match(/^sha-256=:([A-Za-z0-9+/]{43}=):$/i);
+  if (!match) {
+    throw new ApiError('Downloaded artifact is missing a valid digest.', 502, 'digest_mismatch');
+  }
+  if (match[1] !== computedSha256B64) {
+    throw new ApiError(
+      'Downloaded artifact Content-Digest header mismatch.',
+      502,
+      'digest_mismatch'
+    );
   }
 
   // Safe filename resolution

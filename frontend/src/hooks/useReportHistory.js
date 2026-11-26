@@ -29,11 +29,13 @@ export function useReportHistory(versionId, {
   const downloadAbortRef = useRef(null);
 
   const isMountedRef = useRef(true);
+  const generationRequestRef = useRef(0);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      generationRequestRef.current += 1;
       downloadAbortRef.current?.abort();
     };
   }, []);
@@ -50,7 +52,7 @@ export function useReportHistory(versionId, {
       setCollection(col);
 
       // Determine active reportId: provided, or first in collection, or default 'automatic'
-      const activeId = defaultReportId || col.reports?.[0]?.report_id || col.items?.[0]?.report_id || 'automatic';
+      const activeId = defaultReportId || col.items?.[0]?.report_id || null;
       setReportId(activeId);
     } catch (err) {
       if (!isMountedRef.current) return;
@@ -69,6 +71,7 @@ export function useReportHistory(versionId, {
   // 2. Fetch ReportSummary and Generations for the resolved reportId
   const loadGenerations = useCallback(async (targetReportId, targetCursor = null, targetIndex = 0) => {
     if (!versionId || !projectId || !targetReportId) return;
+    const request = ++generationRequestRef.current;
 
     try {
       const [sum, genPage] = await Promise.all([
@@ -80,7 +83,7 @@ export function useReportHistory(versionId, {
         }),
       ]);
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || request !== generationRequestRef.current) return;
 
       setSummary(sum);
       setGenerationsPage(genPage);
@@ -91,17 +94,23 @@ export function useReportHistory(versionId, {
       }
 
       // Default selection to active generation if not set
-      setSelectedGenerationId((prev) => prev || sum.active_generation_id || genPage.items?.[0]?.generation_id || null);
+      setSelectedGenerationId((prev) => prev || sum.reference?.generation_id || genPage.items?.[0]?.generation_id || null);
     } catch (err) {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || request !== generationRequestRef.current) return;
       setError(err?.message || 'Failed to load report generations.');
     }
   }, [versionId, projectId]);
 
   useEffect(() => {
+    setSummary(null);
+    setGenerationsPage(null);
+    setSelectedGenerationId(null);
+    setCursorStack([null]);
+    setCursorIndex(0);
     if (reportId) {
       loadGenerations(reportId, null, 0);
     }
+    return () => { generationRequestRef.current += 1; };
   }, [reportId, loadGenerations]);
 
   // Pagination navigation
@@ -120,7 +129,7 @@ export function useReportHistory(versionId, {
 
   // Download PDF binary
   const downloadPdf = useCallback(async (targetGenId = null) => {
-    const genId = targetGenId || selectedGenerationId || summary?.active_generation_id;
+    const genId = targetGenId || selectedGenerationId || summary?.reference?.generation_id;
     if (!versionId || !projectId || !reportId || !genId) {
       setDownloadError('Missing version, report, or generation identifier for download.');
       return;
@@ -135,7 +144,8 @@ export function useReportHistory(versionId, {
 
     try {
       const selectedGen = generationsPage?.items?.find((g) => g.generation_id === genId);
-      const expectedDigest = selectedGen?.digest || (genId === summary?.active_generation_id ? summary?.active_digest : null);
+      const expectedDigest = selectedGen?.pdf_sha256 || (genId === summary?.reference?.generation_id ? summary?.pdf_sha256 : null);
+      if (!expectedDigest) throw new Error('The selected generation has no verified PDF digest.');
 
       await reportService.downloadReport(versionId, reportId, genId, {
         projectId,

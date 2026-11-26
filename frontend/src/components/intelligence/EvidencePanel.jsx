@@ -67,8 +67,8 @@ export function EvidencePanel({
           {evidencePage && evidencePage.items?.length > 0 && (
             <div className="evidence-records-list">
               {evidencePage.items.map((item, idx) => {
-                const strengthKey = item.strength || item.confidence_tier || 'HEURISTIC';
-                const isOpposing = Boolean(item.is_opposing || item.opposing);
+                const strengthKey = item.strength || item.confidence_tier || 'unknown';
+                const isOpposing = item.polarity === 'opposing';
 
                 return (
                   <div
@@ -86,17 +86,14 @@ export function EvidencePanel({
                         </span>
                       )}
 
-                      {item.extractor_name && (
-                        <span className="extractor-tag">{item.extractor_name}</span>
+                      {item.producer_id && (
+                        <span className="extractor-tag">{item.producer_id}</span>
                       )}
                     </div>
 
-                    {item.coordinates && (
+                    {item.path && (
                       <div className="evidence-coordinates">
-                        <code>{item.coordinates.file_path || item.coordinates.path}</code>
-                        {item.coordinates.line_start && (
-                          <span> L{item.coordinates.line_start}–L{item.coordinates.line_end || item.coordinates.line_start}</span>
-                        )}
+                        <code>{item.path}</code>
                       </div>
                     )}
 

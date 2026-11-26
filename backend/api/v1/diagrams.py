@@ -112,9 +112,13 @@ class DiagramRoute(APIRoute):
             try:
                 limits = get_diagram_limits()
                 request.state.diagram_deadline = monotonic() + (
-                    limits.view_seconds
-                    if request.method == "POST"
-                    else limits.read_seconds
+                    limits.build_seconds
+                    if request.url.path.endswith("/local-preview")
+                    else (
+                        limits.view_seconds
+                        if request.method == "POST"
+                        else limits.read_seconds
+                    )
                 )
                 keys = list(request.query_params.keys())
                 if any(len(request.query_params.getlist(k)) != 1 for k in keys):
@@ -307,6 +311,30 @@ def template_status(
     generation_id: UUID | None = None,
 ) -> DiagramSummary:
     return summary(access, template, factory, runtime, generation_id)
+
+
+@router.get(PREFIX + "/{template}/local-preview")
+def local_preview(template: DiagramTemplate, access: A) -> dict[str, Any]:
+    """Opt-in local-only rendering; never a published or sealed generation."""
+    from backend.platform.config import get_settings
+
+    if (
+        not get_settings().stacksense_local_diagrams
+        or get_settings().app_env != "development"
+    ):
+        raise ValueError("diagram_not_found")
+    from backend.platform.dependency_injection import get_database_settings
+    from backend.platform.diagrams.local_layout import render_local_diagram
+
+    spec, layout, data = render_local_diagram(
+        access.record, template, get_database_settings().database_url.get_secret_value()
+    )
+    return {
+        "mode": "local_unpublished",
+        "spec": spec.model_dump(mode="json"),
+        "layout": layout.model_dump(mode="json"),
+        "svg_base64": base64.b64encode(data).decode(),
+    }
 
 
 @router.get(PREFIX + "/{template}/generations", response_model=GenerationPage)

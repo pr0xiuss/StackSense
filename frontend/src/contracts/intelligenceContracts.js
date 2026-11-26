@@ -93,7 +93,7 @@ export function validateDeliverySummary(data) {
  */
 export function validateRetryAccepted(data) {
   assertObject(data, 'RetryAccepted');
-  assertBoolean(data.accepted, 'RetryAccepted.accepted');
+  assertString(data.state, 'RetryAccepted.state');
   if (data.work_id !== undefined && data.work_id !== null) {
     assertUuid(data.work_id, 'RetryAccepted.work_id');
   }
@@ -119,7 +119,9 @@ export function validateSearchPage(data) {
   assertBoolean(data.has_more, 'SearchPage.has_more');
   for (const item of data.items) {
     assertObject(item, 'SearchHit');
-    assertString(item.entity_id || item.document_id || item.id, 'SearchHit.id');
+    assertString(item.knowledge_key, 'SearchHit.knowledge_key', false);
+    assertString(item.canonical_reference, 'SearchHit.canonical_reference', false);
+    assertString(item.title, 'SearchHit.title', false);
     if (item.score !== undefined && item.score !== null) {
       assertNumber(item.score, 'SearchHit.score');
     }
@@ -132,7 +134,7 @@ export function validateSearchPage(data) {
  */
 export function validateSearchReprojectionAccepted(data) {
   assertObject(data, 'SearchReprojectionAccepted');
-  assertBoolean(data.accepted, 'SearchReprojectionAccepted.accepted');
+  assertString(data.state, 'SearchReprojectionAccepted.state');
   return data;
 }
 
@@ -194,7 +196,8 @@ export function validateDiagramCollection(data) {
  */
 export function validateDiagramSummary(data) {
   assertObject(data, 'DiagramSummary');
-  assertObject(data.delivery_scope, 'DiagramSummary.delivery_scope');
+  assertObject(data.canonical_scope, 'DiagramSummary.canonical_scope');
+  if (data.delivery_scope !== null) assertObject(data.delivery_scope, 'DiagramSummary.delivery_scope');
   assertString(data.availability, 'DiagramSummary.availability');
   assertString(data.readability, 'DiagramSummary.readability');
   return data;
@@ -206,7 +209,6 @@ export function validateDiagramSummary(data) {
 export function validateGenerationPage(data) {
   assertObject(data, 'GenerationPage');
   assertArray(data.items, 'GenerationPage.items');
-  assertBoolean(data.has_more, 'GenerationPage.has_more');
   return data;
 }
 
@@ -241,7 +243,6 @@ export function validateDiagramViewResponse(data) {
 export function validateMemberPage(data) {
   assertObject(data, 'MemberPage');
   assertArray(data.items, 'MemberPage.items');
-  assertBoolean(data.has_more, 'MemberPage.has_more');
   return data;
 }
 
@@ -260,7 +261,7 @@ export function validateReportCollection(data) {
 export function validateReportSummary(data) {
   assertObject(data, 'ReportSummary');
   assertUuid(data.report_id || data.id, 'ReportSummary.report_id');
-  assertString(data.profile, 'ReportSummary.profile');
+  assertObject(data.profile, 'ReportSummary.profile');
   assertString(data.readability, 'ReportSummary.readability');
   return data;
 }
@@ -271,7 +272,6 @@ export function validateReportSummary(data) {
 export function validateReportGenerationPage(data) {
   assertObject(data, 'ReportGenerationPage');
   assertArray(data.items, 'ReportGenerationPage.items');
-  assertBoolean(data.has_more, 'ReportGenerationPage.has_more');
   return data;
 }
 

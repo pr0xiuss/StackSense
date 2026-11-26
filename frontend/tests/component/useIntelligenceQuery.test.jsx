@@ -97,6 +97,8 @@ describe('useIntelligenceQuery Hook', () => {
       useIntelligenceQuery(versionId, { projectId })
     );
 
+    act(() => result.current.setSearchQuery('service'));
+
     await act(async () => {
       await result.current.executeSearch();
     });
@@ -123,7 +125,7 @@ describe('useIntelligenceQuery Hook', () => {
     act(() => {
       result.current.setSelectorType('entity_name');
       result.current.setSelectorValue('DatabaseService');
-      result.current.setOperation('RELATIONSHIPS');
+      result.current.setOperation('relationships');
     });
 
     await act(async () => {
@@ -133,9 +135,9 @@ describe('useIntelligenceQuery Hook', () => {
     expect(knowledgeService.queryKnowledge).toHaveBeenCalledWith(
       versionId,
       {
-        subject: { kind: 'entity_name', name: 'DatabaseService' },
-        operation: 'RELATIONSHIPS',
-        max_hops: 1,
+        subject: { selector_type: 'entity_name', record_kind: 'entity', name: 'DatabaseService' },
+        operation: 'relationships',
+        graph_depth: 1,
       },
       expect.objectContaining({ projectId })
     );

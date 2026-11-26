@@ -1,5 +1,6 @@
 """Owned FastAPI boundary, real C2 objects; no claim of physical deployment."""
 
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -86,6 +87,42 @@ def boundary():
     exact = base + f"/generations/{value.descriptor.reference.generation_id}"
     with TestClient(app) as client:
         yield client, app, record, value, calls, base, exact
+
+
+def test_local_preview_is_development_only_and_unpublished(boundary, monkeypatch):
+    from backend.platform import config
+    from backend.platform.diagrams import local_layout
+
+    client, _, record, value, _, base, _ = boundary
+    monkeypatch.setattr(api, "get_diagram_limits", DiagramLimits)
+    monkeypatch.setattr(
+        config,
+        "get_settings",
+        lambda: SimpleNamespace(stacksense_local_diagrams=True, app_env="development"),
+    )
+    monkeypatch.setattr(
+        local_layout,
+        "render_local_diagram",
+        lambda *args: (value.spec, value.layout, b"<svg/>"),
+    )
+    response = client.get(
+        base + "/local-preview", params={"project_id": str(record.project_id)}
+    )
+    assert response.status_code == 200
+    assert response.json()["mode"] == "local_unpublished"
+    assert response.json()["svg_base64"] == "PHN2Zy8+"
+    assert response.json()["spec"]["semantic_digest"] == value.spec.semantic_digest
+    monkeypatch.setattr(
+        config,
+        "get_settings",
+        lambda: SimpleNamespace(stacksense_local_diagrams=True, app_env="production"),
+    )
+    assert (
+        client.get(
+            base + "/local-preview", params={"project_id": str(record.project_id)}
+        ).status_code
+        == 404
+    )
 
 
 @pytest.mark.parametrize("member", ["spec", "layout"])

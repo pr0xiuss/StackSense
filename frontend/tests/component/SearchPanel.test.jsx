@@ -10,7 +10,9 @@ describe('SearchPanel Component', () => {
     searchFilters: { entity_kinds: [], statuses: [] },
     setSearchFilters: vi.fn(),
     searchStatus: {
-      freshness_state: 'READY',
+      freshness: 'current',
+      resource_state: 'READY',
+      is_readable: true,
       indexed_documents_count: 50,
       active_generation_id: 'gen-12345678',
     },
@@ -33,7 +35,7 @@ describe('SearchPanel Component', () => {
     expect(screen.getByRole('button', { name: /^Search$/i })).toBeInTheDocument();
     expect(screen.getByText('Indexed Documents:')).toBeInTheDocument();
     expect(screen.getByText('50')).toBeInTheDocument();
-    expect(screen.getByText('READY')).toBeInTheDocument();
+    expect(screen.getByText(/READY · current · readable/)).toBeInTheDocument();
   });
 
   it('submits search when search button is clicked or form is submitted', () => {
@@ -52,7 +54,7 @@ describe('SearchPanel Component', () => {
     fireEvent.click(serviceChip);
 
     expect(defaultProps.setSearchFilters).toHaveBeenCalledWith({
-      entity_kinds: ['SERVICE'],
+      entity_kinds: ['service'],
       statuses: [],
     });
   });
@@ -61,8 +63,11 @@ describe('SearchPanel Component', () => {
     const searchPage = {
       items: [
         {
-          id: 'ent-1',
-          name: 'PaymentGateway',
+          knowledge_key: 'key-1',
+          canonical_reference: 'architecture://payment',
+          document_kind: 'entity',
+          title: 'PaymentGateway',
+          evidence_ids: ['11111111-1111-4111-8111-111111111111'],
           kind: 'SERVICE',
           status: 'ACTIVE',
           score: 8.45,
@@ -82,15 +87,13 @@ describe('SearchPanel Component', () => {
     const inspectBtn = screen.getByRole('button', { name: /Knowledge Query/i });
     fireEvent.click(inspectBtn);
     expect(defaultProps.onInspectSubject).toHaveBeenCalledWith({
-      type: 'exact_id',
-      id: 'ent-1',
-      name: 'PaymentGateway',
+      logical_id: 'architecture://payment',
     });
 
     const evidenceBtn = screen.getByRole('button', { name: /Evidence/i });
     fireEvent.click(evidenceBtn);
     expect(defaultProps.onOpenEvidence).toHaveBeenCalledWith({
-      entity_id: 'ent-1',
+      evidence_ids: ['11111111-1111-4111-8111-111111111111'],
       name: 'PaymentGateway',
     });
   });

@@ -27,6 +27,7 @@ export function useIntelligenceDiagram(versionId, {
   const [prepared, setPrepared] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [statusUnavailable, setStatusUnavailable] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
 
   const isMountedRef = useRef(true);
@@ -62,6 +63,8 @@ export function useIntelligenceDiagram(versionId, {
 
     setLoading(true);
     setError(null);
+    setStatusUnavailable(false);
+    setSummary(null);
 
     try {
       // A. Get summary
@@ -74,44 +77,36 @@ export function useIntelligenceDiagram(versionId, {
       if (!isMountedRef.current || controller.signal.aborted) return;
       setSummary(sum);
 
-      const activeGenId = targetGenId || sum.active_generation_id || sum.generations?.[0]?.generation_id;
+      const activeGenId = sum.reference?.generation_id;
       if (!activeGenId) {
         setPrepared(null);
-        setError(`No prepared diagram generation available for ${targetTemplate}.`);
+        setSelectedGenerationId(null);
+        setError(`Diagram ${sum.availability.toLowerCase().replaceAll('_', ' ')}${sum.reason ? `: ${sum.reason}` : '.'}`);
         return;
       }
-
-      setSelectedGenerationId(activeGenId);
-
-      // B. Fetch Spec and Layout concurrently
-      const [spec, layout] = await Promise.all([
-        diagramService.getDiagramSpec(versionId, targetTemplate, activeGenId, {
-          projectId,
-          signal: controller.signal,
-        }),
-        diagramService.getDiagramLayout(versionId, targetTemplate, activeGenId, {
-          projectId,
-          signal: controller.signal,
-        }),
-      ]);
+      if (targetGenId && targetGenId !== activeGenId) throw new Error('Diagram generation changed.');
+      const result = await diagramService.exportDiagramJson(versionId, targetTemplate, activeGenId, {
+        projectId,
+        signal: controller.signal,
+      });
 
       if (!isMountedRef.current || controller.signal.aborted) return;
 
-      // C. Assemble prepared diagram object matching DiagramView contract
-      setPrepared({
-        spec,
-        layout,
-        base_generation_id: activeGenId,
-        base_digest: spec.digest || '',
-        template: targetTemplate,
-      });
+      const ref = result.descriptor.reference;
+      if (ref.generation_id !== activeGenId || ref.scope.project_id !== projectId ||
+          ref.scope.architecture_version_id !== versionId || result.spec.template !== targetTemplate) {
+        throw new Error('Diagram scope or generation mismatch.');
+      }
+      setSelectedGenerationId(activeGenId);
+      setPrepared(result);
       setError(null);
     } catch (err) {
       if (!isMountedRef.current || controller.signal.aborted) return;
       setPrepared(null);
+      setStatusUnavailable(err?.status === 503 || err?.status === 504);
       setError(err?.message || `Failed to load diagram for ${targetTemplate}.`);
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && !controller.signal.aborted) {
         setLoading(false);
       }
     }
@@ -184,9 +179,14 @@ export function useIntelligenceDiagram(versionId, {
   }, [versionId, projectId, template, selectedGenerationId]);
 
   const switchTemplate = useCallback((nextTemplate) => {
+    if (nextTemplate === template) return;
+    setLoading(true);
+    setError(null);
+    setStatusUnavailable(false);
+    setSummary(null);
     setTemplate(nextTemplate);
     setSelectedGenerationId(null);
-  }, []);
+  }, [template]);
 
   const switchGeneration = useCallback((genId) => {
     setSelectedGenerationId(genId);
@@ -202,6 +202,7 @@ export function useIntelligenceDiagram(versionId, {
     prepared,
     loading,
     error,
+    statusUnavailable,
     exportLoading,
     requestView,
     requestMembers,

@@ -98,6 +98,15 @@ def test_schemas_presence(contracts_fixture: dict[str, Any]) -> None:
         assert "properties" in schema or "$defs" in schema or "type" in schema
 
 
+def test_exported_schemas_match_current_producers(
+    contracts_fixture: dict[str, Any],
+) -> None:
+    from tests.p5.transport.export_contract_fixtures import MODELS_TO_EXPORT
+
+    for name, model in MODELS_TO_EXPORT.items():
+        assert contracts_fixture["schemas"][name] == model.model_json_schema(), name
+
+
 def test_enums_presence_and_values(contracts_fixture: dict[str, Any]) -> None:
     enums = contracts_fixture.get("enums", {})
     assert "DiagramTemplate" in enums

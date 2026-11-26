@@ -35,13 +35,13 @@ describe('Intelligence Services Tests', () => {
     });
 
     it('calls retryDelivery and validates accepted', async () => {
-      apiClient.post.mockResolvedValueOnce({ accepted: true, work_id: versionId });
+      apiClient.post.mockResolvedValueOnce({ state: 'PENDING', work_id: versionId });
       const res = await deliveryService.retryDelivery(
         versionId,
         { resource_type: 'diagram', resource_id: versionId, idempotency_key: versionId },
         { projectId }
       );
-      expect(res.accepted).toBe(true);
+      expect(res.state).toBe('PENDING');
       expect(apiClient.post).toHaveBeenCalledWith(
         `/architecture-versions/${versionId}/delivery/retry?project_id=${projectId}`,
         expect.any(Object),
@@ -107,6 +107,7 @@ describe('Intelligence Services Tests', () => {
       await diagramService.getDiagrams(versionId, { projectId });
 
       apiClient.get.mockResolvedValueOnce({
+        canonical_scope: { project_id: projectId },
         delivery_scope: { project_id: projectId },
         availability: 'READY',
         readability: 'COMPLETE',
@@ -134,7 +135,7 @@ describe('Intelligence Services Tests', () => {
 
       apiClient.get.mockResolvedValueOnce({
         report_id: reportId,
-        profile: 'overview',
+        profile: { slot: { kind: 'report' } },
         readability: 'COMPLETE',
       });
       await reportService.getReportSummary(versionId, reportId, { projectId });

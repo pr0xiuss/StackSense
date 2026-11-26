@@ -654,9 +654,6 @@ class AnalysisGatewayService {
         controller.abort();
       }
     };
-    if (clientReq && typeof clientReq.on === 'function') {
-      clientReq.on('close', clientCloseHandler);
-    }
     if (clientRes && typeof clientRes.on === 'function') {
       clientRes.on('close', clientCloseHandler);
     }
@@ -742,6 +739,10 @@ class AnalysisGatewayService {
           },
         });
       }
+      const contentEncoding = response.headers.get('content-encoding');
+      if (contentEncoding && contentEncoding.toLowerCase() !== 'identity') {
+        return clientRes.status(502).json({ error: { code: 'intelligence_upstream_invalid', message: 'Encoded artifact responses are not supported.', details: {} } });
+      }
 
       const hash = crypto.createHash('sha256');
       let totalBytes = 0;
@@ -820,28 +821,24 @@ class AnalysisGatewayService {
       const computedSha256B64 = sha256Buffer.toString('base64');
 
       const upstreamDigest = response.headers.get('content-digest');
-      if (upstreamDigest) {
-        const match =
-          upstreamDigest.match(/sha-256=:(.*?):/i) ||
-          upstreamDigest.match(/sha-256=([a-f0-9]+)/i);
-        if (match) {
-          const digestVal = match[1];
-          if (
-            digestVal !== computedSha256B64 &&
-            digestVal.toLowerCase() !== computedSha256Hex.toLowerCase()
-          ) {
-            return clientRes.status(502).json({
-              error: {
-                code: 'intelligence_upstream_invalid',
-                message: 'Artifact Content-Digest mismatch.',
-                details: {},
-              },
-            });
-          }
-        }
+      const digestMatch = upstreamDigest?.match(/^sha-256=:([A-Za-z0-9+/]{43}=):$/i);
+      if (!digestMatch) {
+        return clientRes.status(502).json({ error: { code: 'intelligence_upstream_invalid', message: 'Missing or malformed artifact Content-Digest.', details: {} } });
+      }
+      if (digestMatch[1] !== computedSha256B64) {
+        return clientRes.status(502).json({
+          error: {
+            code: 'intelligence_upstream_invalid',
+            message: 'Artifact Content-Digest mismatch.',
+            details: {},
+          },
+        });
       }
 
       const upstreamLength = response.headers.get('content-length');
+      if (!upstreamLength || !/^\d+$/.test(upstreamLength)) {
+        return clientRes.status(502).json({ error: { code: 'intelligence_upstream_invalid', message: 'Missing or malformed artifact Content-Length.', details: {} } });
+      }
       if (upstreamLength) {
         const expectedLen = parseInt(upstreamLength, 10);
         if (!isNaN(expectedLen) && expectedLen !== totalBytes) {
@@ -889,13 +886,25 @@ class AnalysisGatewayService {
 
       const readStream = fs.createReadStream(tempFilePath);
       await new Promise((resolve, reject) => {
+        const abortRelay = () => {
+          readStream.destroy();
+          clientRes.destroy();
+          resolve();
+        };
+        controller.signal.addEventListener('abort', abortRelay, { once: true });
+        if (controller.signal.aborted) return abortRelay();
         readStream.pipe(clientRes);
         readStream.on('error', (err) => {
           clientRes.destroy();
           reject(err);
         });
-        clientRes.on('finish', resolve);
-        clientRes.on('close', resolve);
+        const finish = () => {
+          controller.signal.removeEventListener('abort', abortRelay);
+          readStream.destroy();
+          resolve();
+        };
+        clientRes.on('finish', finish);
+        clientRes.on('close', finish);
       });
     } catch (err) {
       if (clientRes.headersSent) {

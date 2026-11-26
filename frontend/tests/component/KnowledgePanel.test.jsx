@@ -9,7 +9,7 @@ describe('KnowledgePanel Component', () => {
     setSelectorType: vi.fn(),
     selectorValue: '',
     setSelectorValue: vi.fn(),
-    operation: 'LOOKUP',
+    operation: 'lookup',
     setOperation: vi.fn(),
     knowledgeResponse: null,
     knowledgeLoading: false,
@@ -40,11 +40,12 @@ describe('KnowledgePanel Component', () => {
 
   it('renders ambiguity card when response state is AMBIGUOUS', () => {
     const ambiguousResponse = {
-      resolution_state: 'AMBIGUOUS',
+      resolved_subject: { state: 'ambiguous',
       candidates: [
-        { id: 'cand-1', name: 'UserService', kind: 'SERVICE', coordinates: { file_path: 'user.py' } },
-        { id: 'cand-2', name: 'UserServiceTest', kind: 'TEST', coordinates: { file_path: 'test_user.py' } },
+        { record_id: 'cand-1', name: 'UserService', kind: 'SERVICE', coordinates: { file_path: 'user.py' } },
+        { record_id: 'cand-2', name: 'UserServiceTest', kind: 'TEST', coordinates: { file_path: 'test_user.py' } },
       ],
+      },
     };
 
     render(
@@ -62,7 +63,7 @@ describe('KnowledgePanel Component', () => {
     expect(selectButtons).toHaveLength(2);
     fireEvent.click(selectButtons[0]);
 
-    expect(defaultProps.setSelectorType).toHaveBeenCalledWith('exact_id');
+    expect(defaultProps.setSelectorType).toHaveBeenCalledWith('record_id');
     expect(defaultProps.setSelectorValue).toHaveBeenCalledWith('cand-1');
   });
 
@@ -70,16 +71,16 @@ describe('KnowledgePanel Component', () => {
     const resolvedResponse = {
       resolution_state: 'RESOLVED',
       resolved_subject: {
-        id: '11111111-1111-4111-8111-111111111111',
-        name: 'OrdersService',
-        kind: 'SERVICE',
+        state: 'resolved',
+        selected_id: '11111111-1111-4111-8111-111111111111',
+        selected_kind: 'SERVICE',
         status: 'ACTIVE',
       },
       relationships: [
         {
-          id: 'rel-99',
+          record_id: 'rel-99',
           kind: 'DEPENDS_ON',
-          target_name: 'InventoryService',
+          target_logical_id: 'InventoryService',
           direction: 'OUTGOING',
         },
       ],
@@ -107,7 +108,7 @@ describe('KnowledgePanel Component', () => {
     const contextBtn = screen.getByRole('button', { name: /Assemble Context Bundle/i });
     fireEvent.click(contextBtn);
     expect(defaultProps.onAssembleContext).toHaveBeenCalledWith([
-      { kind: 'exact_id', id: '11111111-1111-4111-8111-111111111111' },
+      { selector_type: 'record_id', record_kind: 'entity', record_id: '11111111-1111-4111-8111-111111111111' },
     ]);
   });
 

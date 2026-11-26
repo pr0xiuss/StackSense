@@ -148,6 +148,7 @@ export default function RepositoryIntelligencePage({
                 <DiagramPanel
                   versionId={versionId}
                   projectId={projectId}
+                  architectureModelUrl={`#/projects/${projectId}/repositories/${repositoryId}/analyses/${analysisId}/architecture/${versionId}`}
                   onSelectSubject={(ref) => queryHook.openEvidence({
                     entity_id: ref.id,
                     name: ref.name || ref.id,
@@ -179,9 +180,9 @@ export default function RepositoryIntelligencePage({
                   onPrevPage={queryHook.prevSearchPage}
                   onInspectSubject={(subj) => {
                     handleTabChange('knowledge');
-                    queryHook.setSelectorType(subj.type || 'exact_id');
-                    queryHook.setSelectorValue(subj.id || subj.name);
-                    setTimeout(() => queryHook.executeKnowledgeQuery(), 0);
+                    queryHook.setSelectorType('logical_id');
+                    queryHook.setSelectorValue(subj.logical_id);
+                    queryHook.executeKnowledgeQuery({ type: 'logical_id', value: subj.logical_id });
                   }}
                   onOpenEvidence={(subj) => queryHook.openEvidence(subj)}
                 />

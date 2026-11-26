@@ -47,8 +47,8 @@ export function ReportPanel({
     );
   }
 
-  const isReady = summary?.ready ?? false;
-  const activeGenId = summary?.active_generation_id;
+  const isReady = summary?.availability === 'READY' && Boolean(summary.reference);
+  const activeGenId = summary?.reference?.generation_id;
 
   return (
     <div className="intelligence-report-panel" role="region" aria-label="Architecture Reports">
@@ -66,7 +66,7 @@ export function ReportPanel({
 
           <div className="report-status-badge-group">
             <span className={`status-pill status-${isReady ? 'succeeded' : 'pending'}`}>
-              {isReady ? 'READY FOR EXPORT' : 'PREPARING'}
+              {isReady ? 'READY FOR EXPORT' : (summary?.availability || collection?.automatic?.status || 'NOT SCHEDULED').replaceAll('_', ' ')}
             </span>
           </div>
         </div>
@@ -79,11 +79,11 @@ export function ReportPanel({
               {activeGenId ? activeGenId.slice(0, 10) + '…' : 'None'}
             </span>
           </div>
-          {summary?.active_digest && (
+          {summary?.pdf_sha256 && (
             <div className="report-meta-item">
               <span className="meta-label">SHA-256 Digest:</span>
-              <span className="meta-value mono-cell" title={summary.active_digest}>
-                {summary.active_digest.slice(0, 16)}…
+              <span className="meta-value mono-cell" title={summary.pdf_sha256}>
+                {summary.pdf_sha256.slice(0, 16)}…
               </span>
             </div>
           )}
@@ -180,7 +180,7 @@ export function ReportPanel({
                           </div>
                         </td>
                         <td>
-                          {gen.created_at ? new Date(gen.created_at).toLocaleString() : '—'}
+                          {gen.accepted_at ? new Date(gen.accepted_at).toLocaleString() : '—'}
                         </td>
                         <td>
                           <span className={`status-badge status-${(gen.status || 'READY').toLowerCase()}`}>
@@ -188,8 +188,8 @@ export function ReportPanel({
                           </span>
                         </td>
                         <td>
-                          <span className="mono-cell" title={gen.digest}>
-                            {gen.digest ? gen.digest.slice(0, 12) + '…' : '—'}
+                          <span className="mono-cell" title={gen.pdf_sha256}>
+                            {gen.pdf_sha256 ? gen.pdf_sha256.slice(0, 12) + '…' : '—'}
                           </span>
                         </td>
                         <td>

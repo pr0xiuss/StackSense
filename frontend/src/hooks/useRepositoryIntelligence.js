@@ -25,6 +25,7 @@ export function useRepositoryIntelligence({
   const [error, setError] = useState(null);
 
   const reqSeqRef = useRef(0);
+  const abortRef = useRef(null);
 
   const loadContext = useCallback(async () => {
     const currentSeq = ++reqSeqRef.current;
@@ -52,7 +53,9 @@ export function useRepositoryIntelligence({
       return;
     }
 
+    abortRef.current?.abort();
     const controller = new AbortController();
+    abortRef.current = controller;
     const { signal } = controller;
 
     try {
@@ -102,11 +105,14 @@ export function useRepositoryIntelligence({
       }
     }
 
-    return () => controller.abort();
   }, [projectId, repositoryId, analysisId, versionId]);
 
   useEffect(() => {
     loadContext();
+    return () => {
+      reqSeqRef.current += 1;
+      abortRef.current?.abort();
+    };
   }, [loadContext]);
 
   return {

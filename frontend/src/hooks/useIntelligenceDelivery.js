@@ -8,7 +8,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { deliveryService } from '../services/deliveryService.js';
 
-const TERMINAL_STATES = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED']);
+const TERMINAL_STATES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
 
 export function useIntelligenceDelivery(versionId, {
   projectId,
@@ -30,11 +30,8 @@ export function useIntelligenceDelivery(versionId, {
   // Helper to test if a delivery summary is terminal
   const isTerminal = useCallback((summary) => {
     if (!summary) return false;
-    if (TERMINAL_STATES.has(summary.state)) return true;
-    if (Array.isArray(summary.work_summary) && summary.work_summary.length > 0) {
-      return summary.work_summary.every((w) => TERMINAL_STATES.has(w.status));
-    }
-    return false;
+    const work = [...(summary.diagrams || []), summary.search, summary.report].filter(Boolean);
+    return work.length > 0 && work.every((item) => TERMINAL_STATES.has(item.state));
   }, []);
 
   const fetchStatus = useCallback(async (isInitial = false) => {
@@ -130,8 +127,8 @@ export function useIntelligenceDelivery(versionId, {
   }, [versionId, projectId, enabled]);
 
   // Trigger manual idempotent retry
-  const retryWorkItem = useCallback(async (workItemId) => {
-    if (!versionId || !projectId || !workItemId) {
+  const retryWorkItem = useCallback(async (item) => {
+    if (!versionId || !projectId || !item?.work_id || !item?.kind) {
       throw new Error('versionId, projectId, and workItemId are required to retry');
     }
 
@@ -144,7 +141,8 @@ export function useIntelligenceDelivery(versionId, {
         : `retry-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
       const payload = {
-        work_id: workItemId,
+        resource_type: item.kind,
+        resource_id: item.work_id,
         idempotency_key: idempotencyKey,
       };
 

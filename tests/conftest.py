@@ -80,33 +80,6 @@ anyio.to_thread.run_sync = _run_sync_inline_for_python314  # type: ignore[assign
 fastapi.testclient.TestClient = _Python314TestClient  # type: ignore[misc]
 TestClient = _Python314TestClient
 
-# Graceful fallback for optional renderers (fontTools, pypdf, reportlab) in dev venvs
-for _mod in (
-    "fontTools",
-    "fontTools.pens",
-    "fontTools.pens.basePen",
-    "fontTools.ttLib",
-    "pypdf",
-    "pypdf.generic",
-    "reportlab",
-    "reportlab.lib",
-    "reportlab.lib.pagesizes",
-    "reportlab.lib.styles",
-    "reportlab.pdfbase",
-    "reportlab.pdfbase.ttfonts",
-    "reportlab.pdfgen",
-    "reportlab.platypus",
-):
-    try:
-        __import__(_mod)
-    except ModuleNotFoundError:
-        import sys
-        from unittest.mock import MagicMock
-
-        _m = MagicMock()
-        _m.__name__ = _mod
-        sys.modules[_mod] = _m
-
 from backend.api.app import app
 from backend.platform.dependency_injection import get_database
 from backend.platform.identity.application.current_user import (

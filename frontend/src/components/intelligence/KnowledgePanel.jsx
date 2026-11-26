@@ -3,14 +3,15 @@ import React from 'react';
 const SELECTOR_TYPES = [
   { value: 'entity_name', label: 'Entity Name' },
   { value: 'logical_id', label: 'Logical Identifier' },
-  { value: 'exact_id', label: 'Canonical UUID' },
+  { value: 'record_id', label: 'Canonical UUID' },
 ];
 
 const OPERATIONS = [
-  { value: 'LOOKUP', label: 'Lookup' },
-  { value: 'RELATIONSHIPS', label: 'Relationships' },
-  { value: 'NEIGHBORHOOD', label: 'Neighborhood (2-hop)' },
-  { value: 'PATH', label: 'Dependency Paths' },
+  { value: 'lookup', label: 'Lookup' },
+  { value: 'relationships', label: 'Relationships' },
+  { value: 'dependencies', label: 'Dependencies' },
+  { value: 'dependents', label: 'Dependents' },
+  { value: 'containment', label: 'Containment' },
 ];
 
 export function KnowledgePanel({
@@ -36,13 +37,19 @@ export function KnowledgePanel({
   };
 
   const handleSelectCandidate = (candidate) => {
-    setSelectorType('exact_id');
-    setSelectorValue(candidate.id || candidate.entity_id);
-    onExecuteQuery?.();
+    setSelectorType('record_id');
+    setSelectorValue(candidate.record_id);
+    onExecuteQuery?.({ type: 'record_id', value: candidate.record_id });
   };
 
-  const isAmbiguous = knowledgeResponse?.resolution_state === 'AMBIGUOUS';
-  const resolved = knowledgeResponse?.resolved_subject || knowledgeResponse?.subject;
+  const resolution = knowledgeResponse?.resolved_subject;
+  const isAmbiguous = resolution?.state === 'ambiguous';
+  const resolved = resolution?.state === 'resolved' ? {
+    id: resolution.selected_id,
+    logical_id: resolution.selected_logical_id,
+    kind: resolution.selected_kind,
+    name: selectorValue,
+  } : null;
 
   return (
     <div className="intelligence-knowledge-panel" role="region" aria-label="Knowledge & Context">
@@ -126,9 +133,12 @@ export function KnowledgePanel({
             <span>Resolving target subject and querying canonical context…</span>
           </div>
         )}
+        {resolution && resolution.state !== 'resolved' && resolution.state !== 'ambiguous' && (
+          <p role="status">Resolution: {resolution.state.replaceAll('_', ' ')}</p>
+        )}
 
         {/* Ambiguity Resolution */}
-        {isAmbiguous && knowledgeResponse?.candidates && (
+        {isAmbiguous && resolution.candidates && (
           <div className="ambiguity-warning-card" role="region" aria-label="Multiple Candidates Found">
             <h4>Multiple Matching Elements Found</h4>
             <p className="ambiguity-desc">
@@ -136,8 +146,8 @@ export function KnowledgePanel({
               Select a specific candidate to continue:
             </p>
             <div className="candidates-list">
-              {knowledgeResponse.candidates.map((cand) => (
-                <div key={cand.id || cand.logical_id} className="candidate-row">
+              {resolution.candidates.map((cand) => (
+                <div key={cand.record_id} className="candidate-row">
                   <div className="candidate-info">
                     <span className="candidate-name">{cand.name || cand.logical_id}</span>
                     <span className="candidate-kind">{cand.kind}</span>
@@ -192,7 +202,7 @@ export function KnowledgePanel({
                     className="btn-action btn-context"
                     disabled={contextLoading}
                     onClick={() => onAssembleContext([
-                      { kind: 'exact_id', id: resolved.id },
+                      { selector_type: 'record_id', record_kind: 'entity', record_id: resolved.id },
                     ])}
                   >
                     {contextLoading ? 'Assembling…' : 'Assemble Context Bundle'}
@@ -217,18 +227,18 @@ export function KnowledgePanel({
                     </thead>
                     <tbody>
                       {knowledgeResponse.relationships.map((rel, idx) => (
-                        <tr key={rel.id || idx}>
+                        <tr key={rel.record_id || idx}>
                           <td><code>{rel.kind || rel.type}</code></td>
-                          <td>{rel.target_name || rel.target_id || '—'}</td>
-                          <td><span className="direction-badge">{rel.direction || 'OUTGOING'}</span></td>
+                          <td>{rel.target_logical_id || rel.target_name || rel.target_id || '—'}</td>
+                          <td><span className="direction-badge">{rel.source_logical_id ? 'source → target' : '—'}</span></td>
                           <td>
-                            {onOpenEvidence && rel.id && (
+                            {onOpenEvidence && rel.record_id && (
                               <button
                                 type="button"
                                 className="btn-table-action"
                                 onClick={() => onOpenEvidence({
-                                  relationship_id: rel.id,
-                                  name: `${rel.kind} -> ${rel.target_name || rel.target_id}`,
+                                  relationship_id: rel.record_id,
+                                  name: `${rel.kind} → ${rel.target_logical_id}`,
                                 })}
                               >
                                 Evidence
@@ -273,7 +283,7 @@ export function KnowledgePanel({
               {contextBundle.coverage && (
                 <div className="bundle-stat">
                   <span className="stat-label">Coverage:</span>
-                  <span className="stat-val">{contextBundle.coverage.completeness_state || 'COMPLETE'}</span>
+                  <span className="stat-val">{contextBundle.coverage.completeness_state || 'See coverage details'}</span>
                 </div>
               )}
             </div>

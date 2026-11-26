@@ -40,28 +40,28 @@ describe('intelligenceContracts Unit Tests', () => {
     });
 
     it('validates RetryAccepted', () => {
-      const valid = { accepted: true, work_id: uuidV4 };
+      const valid = { state: 'PENDING', work_id: uuidV4 };
       expect(validateRetryAccepted(valid)).toBe(valid);
-      expect(() => validateRetryAccepted({ accepted: 'not-bool' })).toThrow(ContractValidationError);
+      expect(() => validateRetryAccepted({ state: null })).toThrow(ContractValidationError);
     });
   });
 
   describe('C1 Search Contracts', () => {
     it('validates SearchStatus and SearchReprojectionAccepted', () => {
       expect(validateSearchStatus({ capabilities: { lexical: true } })).toBeDefined();
-      expect(validateSearchReprojectionAccepted({ accepted: true })).toBeDefined();
+      expect(validateSearchReprojectionAccepted({ state: 'PENDING' })).toBeDefined();
     });
 
     it('validates SearchPage with items and finite scores', () => {
       const valid = {
-        items: [{ entity_id: uuidV4, score: 0.95, rank_tier: 1 }],
+        items: [{ knowledge_key: 'key', canonical_reference: 'architecture://entity', title: 'Service', score: 0.95, rank_tier: 1 }],
         total_hits: 1,
         has_more: false,
       };
       expect(validateSearchPage(valid)).toBe(valid);
 
       const invalidScore = {
-        items: [{ entity_id: uuidV4, score: Infinity }],
+        items: [{ knowledge_key: 'key', canonical_reference: 'architecture://entity', title: 'Service', score: Infinity }],
         total_hits: 1,
         has_more: false,
       };
@@ -107,11 +107,13 @@ describe('intelligenceContracts Unit Tests', () => {
       expect(validateDiagramCollection(validCol)).toBe(validCol);
 
       const validSum = {
+        canonical_scope: { project_id: uuidV4 },
         delivery_scope: { project_id: uuidV4 },
         availability: 'READY',
         readability: 'COMPLETE',
       };
       expect(validateDiagramSummary(validSum)).toBe(validSum);
+      expect(validateDiagramSummary({ ...validSum, delivery_scope: null, availability: 'NOT_SCHEDULED' })).toBeDefined();
     });
 
     it('validates GenerationPage', () => {
@@ -127,7 +129,7 @@ describe('intelligenceContracts Unit Tests', () => {
 
       const validSum = {
         report_id: uuidV4,
-        profile: 'overview',
+        profile: { slot: { kind: 'report' } },
         readability: 'COMPLETE',
       };
       expect(validateReportSummary(validSum)).toBe(validSum);

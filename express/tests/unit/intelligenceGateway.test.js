@@ -367,7 +367,7 @@ describe('AnalysisGatewayService Intelligence Mode & streamArtifact Unit Tests',
 
     it('rejects with 502 when Content-Digest mismatches computed hash', async () => {
       const pdfBytes = Buffer.from('%PDF-1.4 Mock PDF Content');
-      const wrongB64 = Buffer.from('wrong-sha256-digest-bytes-value-1234').toString('base64');
+      const wrongB64 = crypto.createHash('sha256').update('wrong').digest('base64');
 
       const mockFetch = vi.fn().mockResolvedValue({
         status: 200,
@@ -404,6 +404,41 @@ describe('AnalysisGatewayService Intelligence Mode & streamArtifact Unit Tests',
           }),
         })
       );
+    });
+
+    it('rejects missing digest rather than generating a trusted digest', async () => {
+      const pdfBytes = Buffer.from('%PDF-1.4 example');
+      const gateway = new AnalysisGatewayService(mockConfig, vi.fn().mockResolvedValue({
+        status: 200, ok: true,
+        headers: new Map([['content-type', 'application/pdf'], ['content-length', String(pdfBytes.length)]]),
+        body: Readable.from([pdfBytes]),
+      }));
+      const clientRes = mockClientRes();
+      await gateway.streamArtifact({
+        path: '/reports/example', user: sampleUser, role: 'VIEWER',
+        projectId: sampleProjectId, clientRes, expectedMediaType: 'application/pdf',
+      });
+      expect(clientRes.status).toHaveBeenCalledWith(502);
+      expect(clientRes.writeHead).not.toHaveBeenCalled();
+    });
+
+    it('stops a stalled downstream at the relay deadline and releases admission', async () => {
+      const { Writable } = require('stream');
+      const pdfBytes = Buffer.from('%PDF-1.4 example');
+      const digest = crypto.createHash('sha256').update(pdfBytes).digest('base64');
+      const gateway = new AnalysisGatewayService(mockConfig, vi.fn().mockResolvedValue({
+        status: 200, ok: true,
+        headers: new Map([['content-type', 'application/pdf'], ['content-length', String(pdfBytes.length)], ['content-digest', `sha-256=:${digest}:`]]),
+        body: Readable.from([pdfBytes]),
+      }));
+      const response = new Writable({ write(_chunk, _encoding, _callback) {} });
+      response.writeHead = () => {};
+      await gateway.streamArtifact({
+        path: '/reports/example', user: sampleUser, role: 'VIEWER', projectId: sampleProjectId,
+        clientRes: response, expectedMediaType: 'application/pdf', timeoutMs: 50,
+      });
+      expect(response.destroyed).toBe(true);
+      expect(gateway.activeArtifactRelays).toBe(0);
     });
   });
 });

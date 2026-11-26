@@ -108,6 +108,20 @@ describe('Intelligence Product Journey Integration Tests (Batch 3)', () => {
     });
   });
 
+  it('forwards local diagram preview with project authorization', async () => {
+    upstreamResponseHandler = (req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ mode: 'local_unpublished', svg_base64: 'PHN2Zy8+' }));
+    };
+    const url = `/api/v1/architecture-versions/${versionId}/diagrams/system_overview/local-preview?project_id=${project._id}`;
+    const response = await request(app).get(url).set('x-user-id', viewerId);
+    expect(response.status).toBe(200);
+    expect(response.body.mode).toBe('local_unpublished');
+    expect(receivedRequests[0].url).toContain('/diagrams/system_overview/local-preview');
+    const forbidden = await request(app).get(url).set('x-user-id', outsiderId);
+    expect(forbidden.status).toBe(403);
+  });
+
   it('successfully executes the full intelligence journey from delivery to report download', async () => {
     // 1. Delivery Status
     upstreamResponseHandler = (req, res) => {
@@ -177,6 +191,7 @@ describe('Intelligence Product Journey Integration Tests (Batch 3)', () => {
       res.writeHead(200, {
         'Content-Type': 'image/svg+xml',
         'Content-Digest': `sha-256=:${svgHash}:`,
+        'Content-Length': Buffer.byteLength(svgContent),
       });
       res.end(svgContent);
     };
@@ -294,6 +309,7 @@ describe('Intelligence Product Journey Integration Tests (Batch 3)', () => {
       res.writeHead(200, {
         'Content-Type': 'application/pdf',
         'Content-Digest': `sha-256=:${pdfHash}:`,
+        'Content-Length': pdfData.length,
       });
       res.end(pdfData);
     };

@@ -42,17 +42,21 @@ export function DeliveryStatus({
     return null;
   }
 
-  const stateClass = (delivery.state || 'PENDING').toLowerCase();
+  const work = [...(delivery.diagrams || []), delivery.search, delivery.report].filter(Boolean);
+  const completed = work.filter((item) => item.state === 'COMPLETED').length;
+  const state = work.some((item) => item.state === 'FAILED') ? 'FAILED' :
+    work.length && completed === work.length ? 'COMPLETED' : delivery.eligibility || 'PENDING';
+  const stateClass = state.toLowerCase();
 
   return (
     <div className={`delivery-status-banner delivery-status-${stateClass}`} role="region" aria-label="Delivery Status">
       <div className="delivery-header-row">
         <div className="delivery-state-indicator">
           <span className={`status-pill status-${stateClass}`}>
-            {delivery.state || 'PENDING'}
+            {state.replaceAll('_', ' ')}
           </span>
           <span className="delivery-summary-text">
-            Projection Delivery: {delivery.completed_work_items ?? 0} of {delivery.total_work_items ?? 0} items completed
+            Projection Delivery: {completed} of {work.length} items completed
           </span>
         </div>
 
@@ -69,26 +73,26 @@ export function DeliveryStatus({
         </div>
       )}
 
-      {Array.isArray(delivery.work_summary) && delivery.work_summary.length > 0 && (
+      {work.length > 0 && (
         <div className="delivery-items-grid">
-          {delivery.work_summary.map((item) => {
-            const itemStatusClass = (item.status || 'PENDING').toLowerCase();
-            const isFailed = item.status === 'FAILED';
+          {work.map((item) => {
+            const itemStatusClass = item.state.toLowerCase();
+            const isFailed = item.state === 'FAILED' && item.retry_allowed;
 
             return (
               <div key={item.work_id || item.kind} className={`delivery-item-card item-${itemStatusClass}`}>
                 <div className="delivery-item-header">
                   <span className="item-kind" title={item.kind}>
-                    {item.kind ? item.kind.replace(/_/g, ' ') : 'WORK ITEM'}
+                    {(item.template || item.kind).replace(/_/g, ' ')}
                   </span>
                   <span className={`status-badge status-${itemStatusClass}`}>
-                    {item.status}
+                    {item.state}
                   </span>
                 </div>
 
-                {item.error_message && (
-                  <p className="item-error-msg" title={item.error_message}>
-                    {item.error_message}
+                {item.reason && (
+                  <p className="item-error-msg" title={item.reason}>
+                    {item.reason}
                   </p>
                 )}
 
@@ -98,7 +102,7 @@ export function DeliveryStatus({
                       type="button"
                       className="btn-retry-work"
                       disabled={retrying}
-                      onClick={() => onRetry(item.work_id)}
+                      onClick={() => onRetry(item).catch(() => {})}
                       title={`Retry ${item.kind}`}
                     >
                       {retrying ? 'Retrying…' : 'Retry Item'}

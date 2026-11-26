@@ -132,6 +132,14 @@ router.get(
   intelligenceController.getDiagramSummary
 );
 
+router.get(
+  '/diagrams/:template/local-preview',
+  validateVersionIdParam,
+  validateDiagramTemplateParam,
+  validateExactProjectOnlyQuery,
+  intelligenceController.getLocalDiagramPreview
+);
+
 /**
  * 11. GET /api/v1/architecture-versions/:versionId/diagrams/:template/generations
  */
